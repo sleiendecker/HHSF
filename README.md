@@ -119,7 +119,7 @@ Each box is saved as it arrives and cached in `data/raw/`, so re-running resumes
 make analyze
 ```
 
-For every stream this works out the head (elevation drop), a reliable low flow and the continuous power it could supply, and saves them to the `hydro_corridors` table as a new numbered run. Low flows come from the USGS StreamStats service. Where it can't help (small streams, or the service is down), streams on the Sequatchie River side borrow the low flow measured at the USGS gauge near Whitwell, scaled by drainage area and marked low confidence. Answers are cached in `data/cache/`, so a re-run only asks for what's missing. The first full run can take an hour or more while StreamStats answers; if it's down, the run finishes in seconds with the fallback estimates, clearly flagged. What each number means and where it comes from: [docs/ASSUMPTIONS.md](docs/ASSUMPTIONS.md).
+For every stream this works out the head (elevation drop), a reliable low flow and the continuous power it could supply, and saves them to the `hydro_corridors` table as a new numbered run. Low flows come from the USGS StreamStats service. Where it can't help (small streams, or the service is down), streams on the Sequatchie River side borrow the low flow measured at the USGS gauge near Whitwell, scaled by drainage area and marked low confidence. Answers are cached in `data/cache/`, so a re-run only asks for what's missing. The first full run takes about 30 minutes while StreamStats answers; if it's down, the run finishes in seconds with the fallback estimates, clearly flagged. What each number means and where it comes from: [docs/ASSUMPTIONS.md](docs/ASSUMPTIONS.md).
 
 ### 6. Open the map
 
