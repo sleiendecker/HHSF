@@ -4,7 +4,7 @@ import typer
 from alembic import command
 from alembic.config import Config
 
-from hhsf.analysis import gauges, hydro, run, streamstats
+from hhsf.analysis import gauges, hydro, run, scoring, scoring_run, streamstats
 from hhsf.core.config import REPO_ROOT, hydrography_source, load_aoi
 from hhsf.core.db import engine
 from hhsf.ingest import boundary, hydrography, nhdplus_bulk
@@ -16,6 +16,8 @@ app.add_typer(db_app, name="db")
 analyze_app = typer.Typer(help="Compute results from loaded data", no_args_is_help=True)
 app.add_typer(ingest_app, name="ingest")
 app.add_typer(analyze_app, name="analyze")
+score_app = typer.Typer(help="Score and rank analysis results", no_args_is_help=True)
+app.add_typer(score_app, name="score")
 
 AOI_OPTION = typer.Option("sequatchie_tn", help="AOI key from config/aoi/")
 SOURCE_OPTION = typer.Option(
@@ -124,6 +126,50 @@ def analyze_hydro(
         f"estimate reach the 1 kW target ({summary['meets_power_target_medium_confidence']} "
         "of them at medium confidence)."
     )
+
+
+@score_app.command("hydro")
+def score_hydro(
+    aoi: str = AOI_OPTION,
+    profile: str = typer.Option("hydro_v1", help="Scoring profile from config/scoring_profiles/"),
+    run_id: int | None = typer.Option(
+        None, help="Hydro run to score. Default: the AOI's latest finished one."
+    ),
+    show: int = typer.Option(20, help="How many of the top corridors to print"),
+) -> None:
+    """Score and rank a hydro run's corridors; saved as a new run (see docs/SCORING.md)."""
+    area = load_aoi(aoi)
+    p = scoring.load_profile(profile)
+    eng = engine()
+    try:
+        score_run_id, hydro_run_id, summary = scoring_run.score_hydro(eng, area, p, run_id)
+    except scoring_run.NoHydroRun as e:
+        raise typer.BadParameter(str(e)) from e
+    status, tiers = summary["status"], summary["ranked_by_tier"]
+    typer.echo(
+        f"Run {score_run_id} scored hydro run {hydro_run_id} with profile {p.version}: "
+        f"{summary['corridors']} corridors."
+    )
+    typer.echo(
+        f"  ranked: {tiers.get('medium', 0)} medium confidence, {tiers.get('low', 0)} low "
+        f"confidence, {tiers.get('head_only', 0)} head only (no flow estimate)"
+    )
+    typer.echo(
+        f"  filtered out: {status.get(scoring.BELOW_POWER_TARGET, 0)} below "
+        f"{p.power_target_w / 1000:g} kW, {status.get(scoring.BELOW_MIN_HEAD, 0)} head-only "
+        f"below {p.head_only.min_net_head_ft:g} ft, {status.get(scoring.NOT_SCORABLE, 0)} "
+        "missing data"
+    )
+    if show <= 0:
+        return
+    with eng.connect() as conn:
+        rows = scoring_run.top(conn, score_run_id, show)
+    typer.echo(f"\n{'rank':>4}  {'tier':<9} {'score':>5}  {'head ft':>7}  {'power W':>8}  stream")
+    for r in rows:
+        score = f"{r.hydro_score:5.1f}" if r.hydro_score is not None else "  -  "
+        watts = f"{r.firm_power_w:8,.0f}" if r.firm_power_w is not None else "       -"
+        name = r.stream_name or f"(unnamed, NHDPlus {r.nhdplusid})"
+        typer.echo(f"{r.rank:>4}  {r.tier:<9} {score}  {r.net_head_ft:7.0f}  {watts}  {name}")
 
 
 if __name__ == "__main__":
