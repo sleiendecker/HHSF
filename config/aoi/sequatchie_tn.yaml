@@ -1,0 +1,7 @@
+# Area of interest: one county. Add more AOIs as new files; no code changes needed.
+key: sequatchie_tn
+name: Sequatchie County, TN
+county_geoid: "47153"   # state FIPS 47 + county FIPS 153
+# Streams that touch the county within this distance are kept, so reaches
+# crossing the county line aren't cut off.
+buffer_m: 500
