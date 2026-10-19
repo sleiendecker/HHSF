@@ -5,3 +5,6 @@ county_geoid: "47153"   # state FIPS 47 + county FIPS 153
 # Streams that touch the county within this distance are kept, so reaches
 # crossing the county line aren't cut off.
 buffer_m: 500
+# NHDPlus HR regions (HU4) the county spans: Cumberland (Collins River side) and
+# Middle Tennessee-Hiwassee (Sequatchie River side). Optional; looked up if missing.
+huc4: ["0513", "0602"]

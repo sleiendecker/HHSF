@@ -10,6 +10,7 @@ dependencies = [
     "psycopg[binary]>=3.2",
     "pydantic>=2.8",
     "pydantic-settings>=2.4",
+    "pyogrio>=0.10",
     "pyproj>=3.6",
     "pyyaml>=6.0",
     "shapely>=2.0",

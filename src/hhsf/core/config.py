@@ -22,6 +22,8 @@ class AOI(BaseModel):
     name: str
     county_geoid: str
     buffer_m: float = 0
+    # NHDPlus HR regions covering the county. Looked up from WBD when not listed.
+    huc4: list[str] = []
 
 
 class DataSource(BaseModel):
@@ -44,6 +46,14 @@ def load_aoi(key: str) -> AOI:
     return AOI.model_validate(yaml.safe_load(path.read_text()))
 
 
+def _data_sources() -> dict:
+    return yaml.safe_load((CONFIG_DIR / "data_sources.yaml").read_text())
+
+
 def load_data_source(key: str) -> DataSource:
-    sources = yaml.safe_load((CONFIG_DIR / "data_sources.yaml").read_text())
-    return DataSource.model_validate({"key": key, **sources[key]})
+    return DataSource.model_validate({"key": key, **_data_sources()[key]})
+
+
+def hydrography_source() -> str:
+    """Which NHDPlus HR source to ingest from by default: "bulk" or "service"."""
+    return _data_sources().get("hydrography_source", "bulk")

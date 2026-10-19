@@ -96,7 +96,20 @@ This starts PostGIS and Martin in Docker and creates the database tables. Data i
 make ingest
 ```
 
-This downloads the Sequatchie County boundary and streams from USGS and Census and loads them into the database. **It can take a while: anywhere from a few minutes to about an hour**, depending on how responsive the USGS service is (see [Known issues and blockers](#known-issues-and-blockers)). If it fails partway, run it again. Finished pieces are cached in `data/raw/` and reused.
+This downloads the Sequatchie County boundary from Census and the stream data from USGS, then loads them into the database. The first run downloads about **270 MB** of USGS stream files (one per river basin the county touches) and takes **a minute or two** on a typical connection; after that the files are reused from `data/raw/` and a re-run takes about 30 seconds. Streams are saved as each file is read, so the map starts filling in before the run finishes. If it fails partway, run it again: nothing is lost or duplicated.
+
+<details>
+<summary>Using the USGS web service instead of the file download</summary>
+
+The older path queries the USGS web service box by box instead of downloading files. It's much slower (30 minutes to an hour for one county) and often times out, but downloads far less:
+
+```bash
+uv run hhsf ingest hydrography --source service
+```
+
+Each box is saved as it arrives and cached in `data/raw/`, so re-running resumes where it stopped. To make it the default, set `hydrography_source: service` in `config/data_sources.yaml`. Both paths load the same streams with the same IDs.
+
+</details>
 
 ### 5. Open the map
 
@@ -122,6 +135,7 @@ Run `make` to list all commands.
 | `make up` | Start the database and tile server, apply migrations |
 | `make ingest` | Download and load data for the default area |
 | `make ingest AOI=<key>` | Same, for another area defined in `config/aoi/` |
+| `uv run hhsf ingest hydrography --source service` | Reload streams from the USGS web service instead of the file download |
 | `make web` | Run the map at <http://localhost:5173> |
 | `make test` | Run all tests (Docker must be running) |
 | `make lint` | Check code style |
@@ -137,8 +151,8 @@ uv run hhsf --help
 
 | File | What it controls |
 | --- | --- |
-| `config/aoi/*.yaml` | Areas of interest. One file per county: Census ID and a buffer distance. Add a file to analyze another county; no code changes needed. |
-| `config/data_sources.yaml` | Where each dataset is downloaded from, plus license and version notes |
+| `config/aoi/*.yaml` | Areas of interest. One file per county: Census ID, a buffer distance and (optionally) the river basins (HU4 codes) it spans. Add a file to analyze another county; no code changes needed. If you leave out `huc4`, the basins are looked up automatically. |
+| `config/data_sources.yaml` | Where each dataset is downloaded from, plus license and version notes. `hydrography_source` picks the stream source: `bulk` (file download, default) or `service` (web service). |
 | `.env` (optional) | Override the database connection (`DATABASE_URL`). Copy from `.env.example`. Only needed if you change the database port. |
 
 ## Project structure
@@ -174,7 +188,7 @@ hydro-homestead/
 | Data | Source | License |
 | --- | --- | --- |
 | County boundaries | [US Census TIGERweb](https://tigerweb.geo.census.gov/) | Public domain |
-| Streams, elevations, drainage area, flow estimates | [USGS NHDPlus High Resolution](https://www.usgs.gov/national-hydrography/nhdplus-high-resolution) (final release, via the National Map web service) | Public domain |
+| Streams, elevations, drainage area, flow estimates | [USGS NHDPlus High Resolution](https://www.usgs.gov/national-hydrography/nhdplus-high-resolution) (final release; HU4 file geodatabases from the National Map, or its web service) | Public domain |
 | Basemap | [OpenFreeMap](https://openfreemap.org/), © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors | ODbL |
 
 Planned sources (soils, flood zones, parcels, roads, building footprints, rainfall) are listed in [site-selection.md §4](site-selection.md).
@@ -185,13 +199,15 @@ Planned sources (soils, flood zones, parcels, roads, building footprints, rainfa
 make test
 ```
 
-Unit tests run without Docker. Integration tests start a temporary PostGIS container, run the migrations, load sample streams, and check that re-loading doesn't create duplicates.
+Unit tests run without Docker. They include reading a tiny synthetic NHDPlus HR file built during the test, so no large files are needed. Integration tests start a temporary PostGIS container, run the migrations, load sample streams, and check that re-loading doesn't create duplicates.
 
 ## Known issues and blockers
 
 ### Current
 
-- **The USGS stream service is slow and unreliable.** It often takes minutes per request or returns `504 Gateway Timeout`, especially for large areas. The ingest works around this by splitting the county into small boxes, retrying failures and caching each finished box, so re-running `make ingest` resumes where it stopped. A full county can still take up to an hour on a bad day. **Fallback if it gets worse:** switch to the bulk NHDPlus HR file download (a few GB per region), which avoids the service entirely.
+- **The USGS stream web service is slow and unreliable, so it's no longer the default.** It often takes minutes per request or returns `504 Gateway Timeout`; one county took about 30 minutes. `make ingest` now downloads the NHDPlus HR file for each river basin (HU4 region) instead: about 270 MB for Sequatchie County (Cumberland `0513`: 193 MB, Middle Tennessee-Hiwassee `0602`: 74 MB), cached in `data/raw/nhdplus_hr_bulk/`. Both sources load the same 989 perennial reaches with identical IDs and attributes. The web service path is still there (`--source service`) and now saves each box as it arrives.
+- **Some regions are large downloads.** Basin files range from about 75 MB to over 2 GB (e.g. Lower Ohio `0512`: 2.4 GB). Check the sizes before adding an AOI in a new basin; the ingest prints each file's size as it starts downloading.
+- **Use the "VPU/Current" USGS files, not "Beta".** USGS also publishes older "Beta" files. For the Tennessee River basin (`0602`) they give many streams different IDs from the web service, which would break anything matched on IDs later. `config/data_sources.yaml` points at the current folder.
 - **Flow estimates are mean annual flow only.** The streams carry USGS's estimated *average* flow, which overstates what a turbine can count on year-round. Sizing for the 1 kW minimum needs a *reliable low-flow* estimate (the flow met 90% of the time), which means integrating USGS StreamStats. That's next on the roadmap.
 
 ### Upcoming (will block later milestones)
@@ -208,7 +224,9 @@ Unit tests run without Docker. Integration tests start a temporary PostGIS conta
 | --- | --- |
 | `make up` fails with "port is already allocated" | Another program is using 5433 or 3100. Change the left-hand port in `docker-compose.yml`; for 5433, also set `DATABASE_URL` in `.env`. |
 | `make up` fails with "Cannot connect to the Docker daemon" | Start Docker Desktop or OrbStack. |
-| `make ingest` fails with "Query failed after 4 attempts" | The USGS service timed out. Run `make ingest` again; finished pieces are reused. |
+| `make ingest` fails during a download | Run it again. Partial downloads are never reused; finished files in `data/raw/nhdplus_hr_bulk/` are. |
+| A downloaded file seems broken (errors opening a `.zip`) | Delete it from `data/raw/nhdplus_hr_bulk/` and run `make ingest` again. |
+| `--source service` fails with "Query failed after 4 attempts" | The USGS service timed out. Run it again; finished boxes are reused. |
 | The map shows no streams | Check `make ingest` finished, and that <http://localhost:3100/catalog> lists `streams`. |
 | Tests fail to start a container | Docker must be running for integration tests. Run `uv run pytest tests/unit` to skip them. |
 

@@ -69,11 +69,12 @@ def query_geojson_tiled(
     bbox: BBox,
     cache_dir: Path,
     cell_deg: float = 0.1,
-) -> Iterator[dict[str, Any]]:
+) -> Iterator[list[dict[str, Any]]]:
     """Features intersecting bbox, fetched as a grid of small boxes.
 
-    Features crossing box edges come back more than once; callers should
-    de-duplicate on a stable ID.
+    Yields one list of features per box as soon as it arrives, so callers can
+    save progress box by box. Features crossing box edges come back more than
+    once; callers should de-duplicate on a stable ID.
     """
     xmin, ymin, xmax, ymax = bbox
     cols = max(1, round((xmax - xmin) / cell_deg))
@@ -85,7 +86,9 @@ def query_geojson_tiled(
             yield from _query_box(url, params, (x0, y0, x0 + dx, y0 + dy), cache_dir / f"{i}_{j}")
 
 
-def _query_box(url: str, params: dict[str, Any], box: BBox, cache_dir: Path):
+def _query_box(
+    url: str, params: dict[str, Any], box: BBox, cache_dir: Path
+) -> Iterator[list[dict[str, Any]]]:
     xmin, ymin, xmax, ymax = box
     body = query_once(
         url,
@@ -99,7 +102,7 @@ def _query_box(url: str, params: dict[str, Any], box: BBox, cache_dir: Path):
         cache_dir / "result.geojson",
     )
     if not _exceeded_limit(body):
-        yield from body.get("features", [])
+        yield body.get("features", [])
         return
     # Too many features for one response: split into quarters and try again.
     xmid, ymid = (xmin + xmax) / 2, (ymin + ymax) / 2
