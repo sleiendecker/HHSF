@@ -2,10 +2,12 @@
 
 NHDPlus HR is the final, frozen release (USGS moved to 3DHP). It ships the
 value-added attributes later stages need (drainage area, smoothed elevations,
-flow estimates), so we pull them now. Keep NHDPlus specifics in this module so a
-3DHP source can replace it later.
+flow estimates), so we pull them now. Keep NHDPlus specifics in this module (web
+service, shared parsing and loading) and nhdplus_bulk.py (file downloads) so a
+3DHP source can replace them later.
 """
 
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -79,16 +81,22 @@ def _as_multiline(geom: BaseGeometry) -> MultiLineString:
 
 
 def parse_feature(feature: dict[str, Any]) -> StreamRecord:
-    props = feature["properties"]
-    geom = _as_multiline(shape(feature["geometry"]))
+    """A GeoJSON feature in the service's shape (lowercase NHDPlus field names)."""
+    return parse_record(feature["properties"], shape(feature["geometry"]))
+
+
+def parse_record(props: dict[str, Any], geom: BaseGeometry) -> StreamRecord:
+    """Lowercase NHDPlus attributes plus a storage-CRS geometry, from either source."""
+    geom = _as_multiline(geom)
     max_cm = _value(props, "maxelevsmo")
     min_cm = _value(props, "minelevsmo")
+    order = props.get("streamorde")
     return StreamRecord(
         nhdplusid=int(props["nhdplusid"]),
         permanent_identifier=props.get("permanent_identifier"),
         stream_name=props.get("gnis_name"),
         fcode=int(props["fcode"]),
-        stream_order=props.get("streamorde"),
+        stream_order=int(order) if order is not None else None,
         length_m=crs.length_m(geom),
         drainage_area_sqkm=_value(props, "totdasqkm"),
         max_elev_m=units.cm_to_m(max_cm) if max_cm is not None else None,
@@ -110,34 +118,56 @@ def county_area(conn: Connection, aoi: AOI) -> BaseGeometry:
     return wkb.loads(bytes(row[0]))
 
 
-def fetch_perennial(aoi: AOI, area: BaseGeometry) -> list[StreamRecord]:
-    """Perennial flowlines touching the AOI (plus its buffer)."""
+def keep_area(aoi: AOI, area: BaseGeometry) -> BaseGeometry:
+    """The county plus its buffer, in the analysis CRS. Reaches touching it are kept."""
+    return crs.to_analysis(area).buffer(aoi.buffer_m)
+
+
+def select_perennial(
+    records: Iterable[StreamRecord], keep: BaseGeometry, seen: set[int]
+) -> list[StreamRecord]:
+    """Perennial reaches touching `keep` (analysis CRS) that aren't in `seen` yet.
+
+    Adds the kept IDs to `seen`, so a reach that shows up in several query boxes
+    or HU4 regions is only kept once.
+    """
+    kept = []
+    for record in records:
+        if (
+            record.nhdplusid not in seen
+            and is_perennial(record.fcode)
+            and keep.intersects(crs.to_analysis(record.geom))
+        ):
+            seen.add(record.nhdplusid)
+            kept.append(record)
+    return kept
+
+
+def fetch_perennial(aoi: AOI, area: BaseGeometry) -> Iterator[list[StreamRecord]]:
+    """Perennial flowlines touching the AOI (plus its buffer), from the web service.
+
+    Yields one batch per query box as it arrives, so each can be saved right away.
+    """
     source = load_data_source(SOURCE_KEY)
-    keep_area = crs.to_analysis(area).buffer(aoi.buffer_m)
-    features = query_geojson_tiled(
+    keep = keep_area(aoi, area)
+    boxes = query_geojson_tiled(
         source.url,
         {"where": f"fcode={FCODE_PERENNIAL}", "outFields": ",".join(FIELDS)},
-        bbox=crs.to_storage(keep_area).bounds,
+        bbox=crs.to_storage(keep).bounds,
         cache_dir=DATA_DIR / "raw" / SOURCE_KEY / aoi.key,
     )
-    records: dict[int, StreamRecord] = {}
-    for feature in features:
-        if feature.get("geometry") is None:
-            continue
-        record = parse_feature(feature)
+    seen: set[int] = set()
+    for features in boxes:
+        records = (parse_feature(f) for f in features if f.get("geometry") is not None)
         # Query boxes are rectangles; keep only reaches that touch the real area.
-        if (
-            record.nhdplusid not in records
-            and is_perennial(record.fcode)
-            and keep_area.intersects(crs.to_analysis(record.geom))
-        ):
-            records[record.nhdplusid] = record
-    return list(records.values())
+        yield select_perennial(records, keep, seen)
 
 
-def load_streams(conn: Connection, records: list[StreamRecord]) -> int:
+def load_streams(
+    conn: Connection, records: list[StreamRecord], source_key: str = SOURCE_KEY
+) -> int:
     """Upsert stream records keyed on nhdplusid. Re-running never duplicates rows."""
-    record_source(conn, load_data_source(SOURCE_KEY))
+    record_source(conn, load_data_source(source_key))
     if not records:
         return 0
     conn.execute(
@@ -165,6 +195,7 @@ def load_streams(conn: Connection, records: list[StreamRecord]) -> int:
                 slope = EXCLUDED.slope,
                 mean_flow_cfs = EXCLUDED.mean_flow_cfs,
                 geom = EXCLUDED.geom,
+                source_key = EXCLUDED.source_key,
                 ingested_at = now()
             """
         ),
@@ -183,7 +214,7 @@ def load_streams(conn: Connection, records: list[StreamRecord]) -> int:
                 "slope": r.slope,
                 "mean_flow_cfs": r.mean_flow_cfs,
                 "wkb": r.geom.wkb,
-                "source_key": SOURCE_KEY,
+                "source_key": source_key,
             }
             for r in records
         ],

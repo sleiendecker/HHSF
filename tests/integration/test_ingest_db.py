@@ -53,9 +53,8 @@ def test_loads_only_perennial_in_storage_crs(engine, sample_features):
     assert srids == [4326]
     assert all_perennial
     with engine.connect() as conn:
-        assert conn.execute(text("SELECT source_key FROM data_sources")).scalars().all() == [
-            "nhdplus_hr"
-        ]
+        sources = conn.execute(text("SELECT source_key FROM streams")).scalars().all()
+        assert set(sources) == {"nhdplus_hr"}
 
 
 def test_reload_does_not_duplicate(engine, sample_features):
@@ -65,3 +64,12 @@ def test_reload_does_not_duplicate(engine, sample_features):
             hydrography.load_streams(conn, records)
     with engine.connect() as conn:
         assert conn.execute(text("SELECT count(*) FROM streams")).scalar() == 2
+
+
+def test_reload_from_another_source_updates_provenance(engine, sample_features):
+    records = [hydrography.parse_feature(f) for f in sample_features[:2]]
+    with engine.begin() as conn:
+        hydrography.load_streams(conn, records)
+        hydrography.load_streams(conn, records, source_key="nhdplus_hr_bulk")
+        keys = conn.execute(text("SELECT DISTINCT source_key FROM streams")).scalars().all()
+    assert keys == ["nhdplus_hr_bulk"]

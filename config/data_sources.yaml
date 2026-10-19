@@ -1,4 +1,10 @@
 # Where each dataset comes from. Endpoints change; keep them here, not in code.
+
+# Where `hhsf ingest hydrography` gets streams by default (override with --source):
+#   bulk:    download one NHDPlus HR file per HU4 region (fast, reliable; default)
+#   service: query the USGS web service box by box (slow, often times out)
+hydrography_source: bulk
+
 tiger_counties:
   description: US Census TIGERweb county boundaries
   url: https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/State_County/MapServer/1/query
@@ -12,3 +18,20 @@ nhdplus_hr:
   url: https://hydro.nationalmap.gov/arcgis/rest/services/NHDPlus_HR/MapServer/3/query
   license: Public domain (US Government work)
   version: NHDPlus HR final release (MapServer)
+
+nhdplus_hr_bulk:
+  description: >-
+    USGS NHDPlus High Resolution file geodatabases, one zip per HU4 region
+    (NHDFlowline + NHDPlusFlowlineVAA + NHDPlusEROMMA). The "VPU/Current" folder holds
+    the release the MapServer serves; the older "Beta" folder has different IDs in places.
+  url: https://prd-tnm.s3.amazonaws.com/StagedProducts/Hydrography/NHDPlusHR/VPU/Current/GDB/
+  license: Public domain (US Government work)
+  version: NHDPlus HR final release (HU4 file geodatabase)
+
+wbd_hu4:
+  description: >-
+    USGS Watershed Boundary Dataset HU4 regions. Only used to work out which
+    NHDPlus HR files cover an AOI that doesn't list its huc4 codes.
+  url: https://hydro.nationalmap.gov/arcgis/rest/services/wbd/MapServer/2/query
+  license: Public domain (US Government work)
+  version: WBD current
