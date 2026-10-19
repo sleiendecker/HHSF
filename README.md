@@ -10,6 +10,7 @@ This is different from a real estate search. It starts from the terrain and wate
 
 - Full requirements and engineering plan: [site-selection.md](site-selection.md)
 - Open judgment calls and current answers (power target, search radius, scoring assumptions): [docs/DECISIONS.md](docs/DECISIONS.md)
+- How head, flow and power are calculated, and every assumption behind them: [docs/ASSUMPTIONS.md](docs/ASSUMPTIONS.md)
 
 ## Status
 
@@ -17,10 +18,11 @@ This is different from a real estate search. It starts from the terrain and wate
 
 | Works now | Not built yet |
 | --- | --- |
-| Loads the county boundary and every perennial (year-round) stream in the county into a local database | Hydro corridor detection (finding the steepest usable stretch of each stream) |
-| Records each stream's elevation drop, length, slope, drainage area and estimated mean flow | Reliable low-flow estimates and firm power (watts) |
+| Loads the county boundary and every perennial (year-round) stream in the county into a local database | Hydro corridor detection (finding the steepest usable stretch of each stream; today each whole stream is one corridor) |
+| Records each stream's elevation drop, length, slope, drainage area and estimated mean flow | Live low-flow (Q90) values: StreamStats was partly down when this was built, so flows are a flagged fallback for now |
 | Map viewer: click any stream to see its numbers | Scoring, ranking and the shortlist |
-| Tests for unit conversions, coordinate math, the perennial filter and database loading | Parcels, ownership, soils, flood zones, roads, reports |
+| Hydro analysis: head, reliable low flow (Q90 from USGS StreamStats, with a flagged fallback) and firm power for every stream, saved as a numbered run | Corridors on the map |
+| Tests for unit conversions, coordinate math, the perennial filter, database loading and the hydro calculations | Parcels, ownership, soils, flood zones, roads, reports |
 
 ## How it works
 
@@ -111,7 +113,15 @@ Each box is saved as it arrives and cached in `data/raw/`, so re-running resumes
 
 </details>
 
-### 5. Open the map
+### 5. Run the hydro analysis
+
+```bash
+make analyze
+```
+
+For every stream this works out the head (elevation drop), a reliable low flow and the continuous power it could supply, and saves them to the `hydro_corridors` table as a new numbered run. Low flows come from the USGS StreamStats service; its answers are cached in `data/cache/streamstats/`, so a re-run only asks for what's missing. The first full run can take about 20 minutes if StreamStats is working; if it's down, the run finishes in seconds using a less reliable flow estimate, clearly flagged. What each number means and where it comes from: [docs/ASSUMPTIONS.md](docs/ASSUMPTIONS.md).
+
+### 6. Open the map
 
 ```bash
 make web
@@ -136,6 +146,8 @@ Run `make` to list all commands.
 | `make ingest` | Download and load data for the default area |
 | `make ingest AOI=<key>` | Same, for another area defined in `config/aoi/` |
 | `uv run hhsf ingest hydrography --source service` | Reload streams from the USGS web service instead of the file download |
+| `make analyze` | Compute head, low flow and firm power for every stream (after `make ingest`) |
+| `uv run hhsf analyze hydro --no-streamstats` | Same, without calling StreamStats (every flow is the low-confidence fallback) |
 | `make web` | Run the map at <http://localhost:5173> |
 | `make test` | Run all tests (Docker must be running) |
 | `make lint` | Check code style |
@@ -152,7 +164,8 @@ uv run hhsf --help
 | File | What it controls |
 | --- | --- |
 | `config/aoi/*.yaml` | Areas of interest. One file per county: Census ID, a buffer distance and (optionally) the river basins (HU4 codes) it spans. Add a file to analyze another county; no code changes needed. If you leave out `huc4`, the basins are looked up automatically. |
-| `config/data_sources.yaml` | Where each dataset is downloaded from, plus license and version notes. `hydrography_source` picks the stream source: `bulk` (file download, default) or `service` (web service). |
+| `config/data_sources.yaml` | Where each dataset is downloaded from, plus license and version notes. `hydrography_source` picks the stream source: `bulk` (file download, default) or `service` (web service). The `streamstats` section lists its endpoints and how hard to call it. |
+| `config/hydro.yaml` | Hydro analysis assumptions: efficiency, net-head and diversion allowances, the 1 kW target, and which StreamStats statistic to use. Values come from [docs/DECISIONS.md](docs/DECISIONS.md); change them here and re-run. |
 | `.env` (optional) | Override the database connection (`DATABASE_URL`). Copy from `.env.example`. Only needed if you change the database port. |
 
 ## Project structure
@@ -162,17 +175,20 @@ hydro-homestead/
 ├── README.md
 ├── site-selection.md        # Requirements and engineering plan
 ├── docs/DECISIONS.md        # Judgment calls and their current answers
+├── docs/ASSUMPTIONS.md      # How hydro numbers are calculated
 ├── Makefile                 # Common commands
 ├── docker-compose.yml       # PostGIS + Martin
 ├── pyproject.toml           # Python dependencies and tool settings
 ├── alembic.ini
 ├── config/
 │   ├── aoi/                 # Areas of interest
-│   └── data_sources.yaml    # Dataset endpoints and licenses
+│   ├── data_sources.yaml    # Dataset endpoints and licenses
+│   └── hydro.yaml           # Hydro analysis assumptions
 ├── src/hhsf/                # Python pipeline
 │   ├── cli.py               # `hhsf` command-line tool
 │   ├── core/                # Config, database, coordinate systems, units
-│   └── ingest/              # Downloading and loading each dataset
+│   ├── ingest/              # Downloading and loading each dataset
+│   └── analysis/            # Hydro calculations, StreamStats client, analysis runs
 ├── migrations/versions/     # Database table definitions
 ├── martin/martin.yaml       # Which tables the tile server publishes
 ├── frontend/                # React + MapLibre map app
@@ -188,6 +204,7 @@ hydro-homestead/
 | Data | Source | License |
 | --- | --- | --- |
 | County boundaries | [US Census TIGERweb](https://tigerweb.geo.census.gov/) | Public domain |
+| Low-flow estimates (Q90) | [USGS StreamStats](https://streamstats.usgs.gov/) with the Tennessee regression equations (USGS SIR 2009-5159) | Public domain |
 | Streams, elevations, drainage area, flow estimates | [USGS NHDPlus High Resolution](https://www.usgs.gov/national-hydrography/nhdplus-high-resolution) (final release; HU4 file geodatabases from the National Map, or its web service) | Public domain |
 | Basemap | [OpenFreeMap](https://openfreemap.org/), © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors | ODbL |
 
@@ -199,7 +216,13 @@ Planned sources (soils, flood zones, parcels, roads, building footprints, rainfa
 make test
 ```
 
-Unit tests run without Docker. They include reading a tiny synthetic NHDPlus HR file built during the test, so no large files are needed. Integration tests start a temporary PostGIS container, run the migrations, load sample streams, and check that re-loading doesn't create duplicates.
+Unit tests run without Docker. They include reading a tiny synthetic NHDPlus HR file built during the test, so no large files are needed, and the head, flow and power calculations against a fake StreamStats service (no network). Integration tests start a temporary PostGIS container, run the migrations, load sample streams, check that re-loading doesn't create duplicates, and run the hydro analysis.
+
+To see test coverage of the calculation code:
+
+```bash
+uv run pytest --cov=hhsf.analysis --cov-report=term-missing
+```
 
 ## Known issues and blockers
 
@@ -208,11 +231,12 @@ Unit tests run without Docker. They include reading a tiny synthetic NHDPlus HR 
 - **The USGS stream web service is slow and unreliable, so it's no longer the default.** It often takes minutes per request or returns `504 Gateway Timeout`; one county took about 30 minutes. `make ingest` now downloads the NHDPlus HR file for each river basin (HU4 region) instead: about 270 MB for Sequatchie County (Cumberland `0513`: 193 MB, Middle Tennessee-Hiwassee `0602`: 74 MB), cached in `data/raw/nhdplus_hr_bulk/`. Both sources load the same 989 perennial reaches with identical IDs and attributes. The web service path is still there (`--source service`) and now saves each box as it arrives.
 - **Some regions are large downloads.** Basin files range from about 75 MB to over 2 GB (e.g. Lower Ohio `0512`: 2.4 GB). Check the sizes before adding an AOI in a new basin; the ingest prints each file's size as it starts downloading.
 - **Use the "VPU/Current" USGS files, not "Beta".** USGS also publishes older "Beta" files. For the Tennessee River basin (`0602`) they give many streams different IDs from the web service, which would break anything matched on IDs later. `config/data_sources.yaml` points at the current folder.
-- **Flow estimates are mean annual flow only.** The streams carry USGS's estimated *average* flow, which overstates what a turbine can count on year-round. Sizing for the 1 kW minimum needs a *reliable low-flow* estimate (the flow met 90% of the time), which means integrating USGS StreamStats. That's next on the roadmap.
+- **StreamStats' basin-characteristics service was down (502 errors) on 2026-10-18.** Without it there is no Q90, so every eligible stream currently uses the NHDPlus *mean* flow instead, marked low confidence (mean flow overstates what a turbine can rely on). Run `make analyze` again once it's back; finished answers are cached. USGS asks for no more than 4 simultaneous requests, which the tool respects.
+- **Most streams are too small for the low-flow equations.** Tennessee's equations only apply to basins of 1.3 sq mi or more; 635 of Sequatchie's 989 perennial reaches are smaller. They keep their head but get no flow or power estimate (`below_applicability`), as [DECISIONS.md D-09](docs/DECISIONS.md) says. A fallback for small basins is worth discussing.
+- **Power is per whole stream reach.** Until the steepest-stretch search (D-08) exists, power assumes a penstock the length of the whole reach, which overstates long reaches (the largest is over 200 kW). See [docs/ASSUMPTIONS.md](docs/ASSUMPTIONS.md).
 
 ### Upcoming (will block later milestones)
 
-- **Small headwater streams have uncertain flow.** Tennessee's low-flow equations have large error margins and don't apply below a minimum drainage area, and many promising micro-hydro sites are that small. They'll be kept and flagged as low confidence rather than dropped ([DECISIONS.md D-09](docs/DECISIONS.md)).
 - **The 1-hour drive radius needs data we don't have yet.** It needs a road network and a routing tool to calculate drive times (D-02).
 - **Parcel and ownership data have gaps and restrictions.** Hamilton County (Chattanooga itself) isn't in the Tennessee statewide parcel layer and needs its own source. Owner names and addresses are personal information under assessor terms of use, so they should be stored carefully and not shared publicly.
 - **Some decisions are still open.** Minimum acreage, budget and privacy weighting (D-03) are needed once parcels are added.
@@ -227,6 +251,7 @@ Unit tests run without Docker. They include reading a tiny synthetic NHDPlus HR 
 | `make ingest` fails during a download | Run it again. Partial downloads are never reused; finished files in `data/raw/nhdplus_hr_bulk/` are. |
 | A downloaded file seems broken (errors opening a `.zip`) | Delete it from `data/raw/nhdplus_hr_bulk/` and run `make ingest` again. |
 | `--source service` fails with "Query failed after 4 attempts" | The USGS service timed out. Run it again; finished boxes are reused. |
+| `make analyze` says "StreamStats looks unavailable" | The USGS service is down or overloaded. The run still finishes with flagged fallback flows; run it again later to get Q90. |
 | The map shows no streams | Check `make ingest` finished, and that <http://localhost:3100/catalog> lists `streams`. |
 | Tests fail to start a container | Docker must be running for integration tests. Run `uv run pytest tests/unit` to skip them. |
 
@@ -234,8 +259,8 @@ Unit tests run without Docker. They include reading a tiny synthetic NHDPlus HR 
 
 From [site-selection.md §7](site-selection.md):
 
-1. ~~Project skeleton, database, stream ingest, map~~ (this version)
-2. Hydro analysis: steepest usable stretch per stream, reliable low flow from StreamStats, firm power
+1. ~~Project skeleton, database, stream ingest, map~~
+2. ~~Hydro analysis: head, reliable low flow from StreamStats, firm power per stream~~ (this version). Still to do: the steepest usable stretch within each stream (needs terrain data), and live Q90 values once StreamStats is back
 3. Scoring and ranking against the 1 kW minimum, with an explanation for every score
 4. Exports (CSV, GeoJSON) and a summary report
 5. Then: parcels and ownership, soils, flood zones, roads and drive time, and the full Chattanooga region

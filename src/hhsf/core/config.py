@@ -50,6 +50,11 @@ def _data_sources() -> dict:
     return yaml.safe_load((CONFIG_DIR / "data_sources.yaml").read_text())
 
 
+def data_source_settings(key: str) -> dict:
+    """Everything config/data_sources.yaml says about one source, as a plain dict."""
+    return _data_sources()[key]
+
+
 def load_data_source(key: str) -> DataSource:
     return DataSource.model_validate({"key": key, **_data_sources()[key]})
 

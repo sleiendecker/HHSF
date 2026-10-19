@@ -11,23 +11,11 @@ from hhsf.ingest import hydrography
 pytestmark = pytest.mark.integration
 
 
-@pytest.fixture(scope="module")
-def db_url():
-    from testcontainers.postgres import PostgresContainer
-
-    with PostgresContainer("imresamu/postgis:17-3.5", driver="psycopg") as pg:
-        url = pg.get_connection_url()
-        cfg = Config(str(REPO_ROOT / "alembic.ini"))
-        cfg.set_main_option("sqlalchemy.url", url)
-        command.upgrade(cfg, "head")
-        yield url
-
-
 @pytest.fixture
 def engine(db_url):
     eng = create_engine(db_url)
     with eng.begin() as conn:
-        conn.execute(text("TRUNCATE streams"))
+        conn.execute(text("TRUNCATE streams CASCADE"))
     return eng
 
 
