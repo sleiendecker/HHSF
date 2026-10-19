@@ -1,4 +1,9 @@
 # Vector tile sources for the map. Each table is published explicitly.
+
+# No tile cache: data changes whenever an ingest runs, and cached tiles would
+# keep showing the old (or empty) map until the server restarts.
+cache_size_mb: 0
+
 postgres:
   connection_string: ${DATABASE_URL}
   auto_publish: false

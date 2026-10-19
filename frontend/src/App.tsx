@@ -77,12 +77,21 @@ export function App() {
         },
       });
 
-      map.on("click", "streams", (e) => {
+      // Invisible wide lines on top so thin streams are easy to click.
+      map.addLayer({
+        id: "streams-hit",
+        type: "line",
+        source: "streams",
+        "source-layer": "streams",
+        paint: { "line-color": "#000", "line-opacity": 0, "line-width": 14 },
+      });
+
+      map.on("click", "streams-hit", (e) => {
         const feature = e.features?.[0];
         if (feature) new maplibregl.Popup().setLngLat(e.lngLat).setHTML(popupHtml(feature)).addTo(map);
       });
-      map.on("mouseenter", "streams", () => (map.getCanvas().style.cursor = "pointer"));
-      map.on("mouseleave", "streams", () => (map.getCanvas().style.cursor = ""));
+      map.on("mouseenter", "streams-hit", () => (map.getCanvas().style.cursor = "pointer"));
+      map.on("mouseleave", "streams-hit", () => (map.getCanvas().style.cursor = ""));
     });
 
     return () => map.remove();
