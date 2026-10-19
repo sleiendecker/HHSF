@@ -1,0 +1,30 @@
+# Vector tile sources for the map. Each table is published explicitly.
+postgres:
+  connection_string: ${DATABASE_URL}
+  auto_publish: false
+  tables:
+    streams:
+      schema: public
+      table: streams
+      srid: 4326
+      geometry_column: geom
+      geometry_type: MULTILINESTRING
+      id_column: stream_id
+      properties:
+        stream_name: text
+        stream_order: int2
+        length_m: float8
+        drainage_area_sqkm: float8
+        max_elev_m: float8
+        min_elev_m: float8
+        slope: float8
+        mean_flow_cfs: float8
+    counties:
+      schema: public
+      table: counties
+      srid: 4326
+      geometry_column: geom
+      geometry_type: MULTIPOLYGON
+      id_column: county_id
+      properties:
+        county_name: text
