@@ -11,6 +11,7 @@ htmlcov/
 node_modules/
 frontend/dist/
 *.tsbuildinfo
+frontend/.vite/
 
 # Local data and secrets
 data/
