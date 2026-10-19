@@ -26,3 +26,12 @@ streamstats:
   # Distance above the reach's downstream end to place the pour point, so it
   # doesn't snap to the confluence with the next reach (meters; at most 10% of the reach).
   pour_point_offset_m: 30
+
+# Fallback when StreamStats can't give a Q90: scale a nearby gauge's measured Q90
+# by drainage area. Only used for reaches that drain to the gauge's basin (the
+# AOI file names the gauge and its HUC8). Low confidence. See docs/ASSUMPTIONS.md.
+gauge_transfer:
+  start: "2001-10-01"       # water years 2002-2025: the gauge's complete recent record
+  end: "2025-09-30"
+  min_years: 10
+  ratio_range: [0.5, 1.5]   # reach/gauge area ratios where the method is usually trusted

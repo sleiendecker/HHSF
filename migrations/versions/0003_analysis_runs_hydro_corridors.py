@@ -72,6 +72,8 @@ def upgrade() -> None:
             flow_std_error_pct        DOUBLE PRECISION,           -- regression ASEp
             regression_region         TEXT,                       -- StreamStats region code
             streamstats_drainage_area_sqkm DOUBLE PRECISION,
+            flow_reference_gauge      TEXT,                       -- USGS site, gauge transfers
+            flow_drainage_area_ratio  DOUBLE PRECISION,           -- reach / gauge area
 
             usable_flow_cfs           DOUBLE PRECISION,           -- firm flow x diversion (D-05)
             firm_power_w              DOUBLE PRECISION,           -- NULL when flow or head is NULL

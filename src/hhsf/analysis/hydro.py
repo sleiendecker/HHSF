@@ -21,6 +21,7 @@ HEAD_METHOD = "nhdplus_vaa_smoothed_reach"
 DRAINAGE_AREA_METHOD = "nhdplus_vaa_totdasqkm"
 FLOW_METHOD_STREAMSTATS = "streamstats_q90"
 FLOW_METHOD_EROM = "nhdplus_erom"
+FLOW_METHOD_GAUGE = "gauge_drainage_area_ratio"
 
 
 class StreamStatsSettings(BaseModel):
@@ -33,6 +34,15 @@ class StreamStatsSettings(BaseModel):
     pour_point_offset_m: float
 
 
+class GaugeTransferSettings(BaseModel):
+    start: str  # first day of the gauge record used (YYYY-MM-DD)
+    end: str  # last day
+    min_years: float  # refuse a gauge with less record than this
+    # Drainage-area ratios (reach / gauge) where the method is usually trusted.
+    # Outside it the value is still used, but flagged.
+    ratio_range: tuple[float, float]
+
+
 class HydroAssumptions(BaseModel):
     power_target_w: float
     system_efficiency: float
@@ -41,6 +51,7 @@ class HydroAssumptions(BaseModel):
     water_density_kg_m3: float
     gravity_m_s2: float
     streamstats: StreamStatsSettings
+    gauge_transfer: GaugeTransferSettings
 
 
 def load_assumptions() -> HydroAssumptions:
@@ -99,6 +110,32 @@ class Flow:
     std_error_pct: float | None = None
     regression_region: str | None = None
     streamstats_drainage_area_sqkm: float | None = None
+    reference_gauge: str | None = None  # USGS site number, for gauge transfers
+    drainage_area_ratio: float | None = None  # reach / gauge
+
+
+@dataclass(frozen=True)
+class GaugeReference:
+    """Q90 measured at a stream gauge, for scaling to ungauged reaches."""
+
+    site_no: str
+    q90_cfs: float
+    drainage_area_sqmi: float
+
+
+def gauge_transfer(
+    drainage_area_sqkm: float, gauge: GaugeReference, ratio_range: tuple[float, float]
+) -> tuple[float, float, list[str]]:
+    """Drainage-area ratio method: Q90_reach = Q90_gauge x (A_reach / A_gauge).
+
+    Returns (flow, ratio, flags). It assumes low flow per square mile is the same
+    across the basin, which is least true far from the gauge's size, so ratios
+    outside `ratio_range` are flagged.
+    """
+    ratio = units.sqkm_to_sqmi(drainage_area_sqkm) / gauge.drainage_area_sqmi
+    low, high = ratio_range
+    flags = [] if low <= ratio <= high else [f"area_ratio_outside_{low:g}_{high:g}"]
+    return gauge.q90_cfs * ratio, ratio, flags
 
 
 def below_regression_minimum(drainage_area_sqkm: float, s: StreamStatsSettings) -> bool:
@@ -119,18 +156,26 @@ def firm_flow(
     estimate: LowFlowEstimate | None,
     s: StreamStatsSettings,
     unavailable_reason: str | None = None,
+    gauge: GaugeReference | None = None,
+    ratio_range: tuple[float, float] = (0.5, 1.5),
 ) -> Flow:
-    """Pick the firm flow for a reach.
+    """Pick the firm flow for a reach, best first.
 
     1. StreamStats Q90 inside the regression's applicability: medium confidence.
        (The Tennessee equations' standard error is ~60%, so never "high".)
-    2. Basin below the regression's minimum drainage area: None, below_applicability (D-09).
-    3. StreamStats unavailable or unusable: NHDPlus EROM mean annual flow, low
-       confidence. Mean flow overstates what a turbine can rely on; the flags say so.
+    2. A gauge in the same basin (`gauge`, when the reach drains to it): its Q90
+       scaled by drainage area, low confidence. Also covers basins too small for
+       the regression (D-09), with that flag kept.
+    3. Basin below the regression's minimum drainage area: None, below_applicability.
+    4. Otherwise NHDPlus EROM mean annual flow, low confidence. Mean flow
+       overstates what a turbine can rely on; the flags say so.
     """
-    if drainage_area_sqkm is None:
+    if drainage_area_sqkm is None or drainage_area_sqkm <= 0:
         return Flow(None, None, None, "unavailable", ["missing_drainage_area"])
 
+    common: dict = {}
+    small = below_regression_minimum(drainage_area_sqkm, s)
+    reason = [unavailable_reason or "streamstats_not_used"]
     if estimate is not None:
         ss_sqkm = units.sqmi_to_sqkm(estimate.drainage_area_sqmi)
         common = {
@@ -138,18 +183,11 @@ def firm_flow(
             "streamstats_drainage_area_sqkm": ss_sqkm,
         }
         if drainage_area_mismatch(drainage_area_sqkm, estimate.drainage_area_sqmi, s):
-            unavailable_reason = "streamstats_drainage_area_mismatch"
+            reason = ["streamstats_drainage_area_mismatch"]
         elif estimate.below_min_drainage_area:
-            return Flow(
-                None,
-                None,
-                None,
-                "below_applicability",
-                ["below_regression_min_drainage_area"],
-                **common,
-            )
+            small, reason = True, []
         elif estimate.value_cfs is None:
-            unavailable_reason = "streamstats_no_estimate"
+            reason = ["streamstats_no_estimate"]
         else:
             flags = [f"out_of_range:{code}" for code in estimate.out_of_range]
             return Flow(
@@ -162,17 +200,31 @@ def firm_flow(
                 **common,
             )
 
-    reason = [unavailable_reason or "streamstats_not_used"]
-    if below_regression_minimum(drainage_area_sqkm, s):
-        return Flow(None, None, None, "below_applicability", ["below_regression_min_drainage_area"])
+    if small:
+        reason = ["below_regression_min_drainage_area"]
+    if gauge is not None:
+        value, ratio, ratio_flags = gauge_transfer(drainage_area_sqkm, gauge, ratio_range)
+        return Flow(
+            value,
+            "q90",
+            FLOW_METHOD_GAUGE,
+            "low",
+            [*reason, *ratio_flags],
+            reference_gauge=gauge.site_no,
+            drainage_area_ratio=ratio,
+            **common,
+        )
+    if small:
+        return Flow(None, None, None, "below_applicability", reason, **common)
     if mean_flow_cfs is None:
-        return Flow(None, None, None, "unavailable", [*reason, "missing_mean_flow"])
+        return Flow(None, None, None, "unavailable", [*reason, "missing_mean_flow"], **common)
     return Flow(
         mean_flow_cfs,
         "mean_annual",
         FLOW_METHOD_EROM,
         "low",
         [*reason, "mean_flow_not_q90"],
+        **common,
     )
 
 

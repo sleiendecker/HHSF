@@ -21,7 +21,11 @@ ASSUMPTIONS = hydro.HydroAssumptions(
     water_density_kg_m3=1000,
     gravity_m_s2=9.81,
     streamstats=SETTINGS,
+    gauge_transfer=hydro.GaugeTransferSettings(
+        start="2001-10-01", end="2025-09-30", min_years=10, ratio_range=(0.5, 1.5)
+    ),
 )
+GAUGE = hydro.GaugeReference("03571000", q90_cfs=80.0, drainage_area_sqmi=400.0)
 BIG_SQKM = 10.0  # 3.9 sq mi: above the 1.3 sq mi regression minimum
 SMALL_SQKM = 2.0  # 0.77 sq mi: below it
 
@@ -209,3 +213,58 @@ def test_pour_point_on_short_reach_stays_within_ten_percent():
     line = crs.to_storage(LineString([(1_000_000, 1_400_000), (1_000_100, 1_400_000)]))
     p = crs.to_analysis(hydro.pour_point(MultiLineString([line]), 30))
     assert p.distance(Point(1_000_090, 1_400_000)) < 0.01
+
+
+# --- gauge transfer ---
+
+
+def test_gauge_transfer_scales_q90_by_drainage_area():
+    flow, ratio, flags = hydro.gauge_transfer(units.sqmi_to_sqkm(4.0), GAUGE, (0.5, 1.5))
+    assert ratio == pytest.approx(0.01)
+    assert flow == pytest.approx(0.8)  # 80 cfs x 4/400
+    assert flags == ["area_ratio_outside_0.5_1.5"]
+
+
+def test_gauge_transfer_inside_ratio_range_has_no_ratio_flag():
+    _, ratio, flags = hydro.gauge_transfer(units.sqmi_to_sqkm(300.0), GAUGE, (0.5, 1.5))
+    assert ratio == pytest.approx(0.75)
+    assert flags == []
+
+
+def test_gauge_replaces_mean_flow_when_streamstats_is_down():
+    f = hydro.firm_flow(BIG_SQKM, 5.0, None, SETTINGS, "streamstats_unavailable", GAUGE, (0.5, 1.5))
+    assert f.firm_flow_cfs == pytest.approx(80.0 * units.sqkm_to_sqmi(BIG_SQKM) / 400)
+    assert f.statistic == "q90"
+    assert f.method == hydro.FLOW_METHOD_GAUGE
+    assert f.confidence == "low"
+    assert f.flags == ["streamstats_unavailable", "area_ratio_outside_0.5_1.5"]
+    assert f.reference_gauge == "03571000"
+    assert f.drainage_area_ratio == pytest.approx(units.sqkm_to_sqmi(BIG_SQKM) / 400)
+
+
+def test_gauge_covers_basins_too_small_for_the_regression_with_flag_kept():
+    f = hydro.firm_flow(SMALL_SQKM, 1.0, None, SETTINGS, None, GAUGE, (0.5, 1.5))
+    assert f.firm_flow_cfs is not None
+    assert f.method == hydro.FLOW_METHOD_GAUGE
+    assert f.confidence == "low"
+    assert f.flags[0] == "below_regression_min_drainage_area"
+
+
+def test_streamstats_below_minimum_uses_gauge_when_available():
+    est = estimate(value_cfs=None, below_min_drainage_area=True, drainage_area_sqmi=1.2)
+    f = hydro.firm_flow(units.sqmi_to_sqkm(1.2), 5.0, est, SETTINGS, None, GAUGE, (0.5, 1.5))
+    assert f.method == hydro.FLOW_METHOD_GAUGE
+    assert f.flags[0] == "below_regression_min_drainage_area"
+    assert f.regression_region == "GC1419"
+
+
+def test_streamstats_q90_beats_the_gauge():
+    f = hydro.firm_flow(BIG_SQKM, 5.0, estimate(), SETTINGS, None, GAUGE, (0.5, 1.5))
+    assert f.method == hydro.FLOW_METHOD_STREAMSTATS
+    assert f.reference_gauge is None
+
+
+def test_zero_drainage_area_is_unavailable_even_with_a_gauge():
+    f = hydro.firm_flow(0.0, 1.0, None, SETTINGS, None, GAUGE, (0.5, 1.5))
+    assert f.firm_flow_cfs is None
+    assert f.confidence == "unavailable"

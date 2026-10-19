@@ -95,3 +95,18 @@ def test_wants_streamstats_uses_regression_minimum():
     s = ASSUMPTIONS.streamstats
     assert run.wants_streamstats(reach(da_sqkm=units.sqmi_to_sqkm(1.3)), s)
     assert not run.wants_streamstats(reach(da_sqkm=None), s)
+
+
+def test_gauge_is_used_only_for_reaches_in_its_basin():
+    from shapely.geometry import box
+
+    from hhsf.analysis.gauges import GaugeTransfer
+    from tests.unit.test_hydro import GAUGE
+
+    inside = GaugeTransfer(GAUGE, box(1_000_500, 1_399_000, 1_002_000, 1_401_000), {})
+    outside = GaugeTransfer(GAUGE, box(0, 0, 1, 1), {})
+    c = run.analyze_reach(reach(), ASSUMPTIONS, None, gauge=inside)
+    assert c.flow.method == hydro.FLOW_METHOD_GAUGE
+    assert c.flow.flags[0] == "streamstats_disabled"
+    c = run.analyze_reach(reach(), ASSUMPTIONS, None, gauge=outside)
+    assert c.flow.method == hydro.FLOW_METHOD_EROM

@@ -61,3 +61,22 @@ streamstats:
   # Stop calling StreamStats for the rest of a run after this many reaches in a row
   # fail because the service is down (502, timeouts); they fall back to NHDPlus EROM.
   max_consecutive_failures: 3
+
+nwis:
+  description: >-
+    USGS NWIS daily mean discharge (parameter 00060) and site info, for the
+    reference gauge's measured Q90. USGS is moving these "waterservices" endpoints
+    to api.waterdata.usgs.gov; switch there if they stop answering.
+  url: https://waterservices.usgs.gov/nwis/
+  license: Public domain (US Government work)
+  version: NWIS daily values, approved data only
+  daily_values: https://waterservices.usgs.gov/nwis/dv/
+  site: https://waterservices.usgs.gov/nwis/site/
+
+wbd_hu8:
+  description: >-
+    USGS Watershed Boundary Dataset HUC8 subbasins. Decides which reaches drain
+    to the reference gauge's basin.
+  url: https://hydro.nationalmap.gov/arcgis/rest/services/wbd/MapServer/4/query
+  license: Public domain (US Government work)
+  version: WBD current

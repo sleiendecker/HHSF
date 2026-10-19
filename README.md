@@ -19,9 +19,9 @@ This is different from a real estate search. It starts from the terrain and wate
 | Works now | Not built yet |
 | --- | --- |
 | Loads the county boundary and every perennial (year-round) stream in the county into a local database | Hydro corridor detection (finding the steepest usable stretch of each stream; today each whole stream is one corridor) |
-| Records each stream's elevation drop, length, slope, drainage area and estimated mean flow | Live low-flow (Q90) values: StreamStats was partly down when this was built, so flows are a flagged fallback for now |
+| Records each stream's elevation drop, length, slope, drainage area and estimated mean flow | Low-flow estimates for small streams on the Collins River side of the county |
 | Map viewer: click any stream to see its numbers | Scoring, ranking and the shortlist |
-| Hydro analysis: head, reliable low flow (Q90 from USGS StreamStats, with a flagged fallback) and firm power for every stream, saved as a numbered run | Corridors on the map |
+| Hydro analysis: head, reliable low flow (Q90 from USGS StreamStats, or scaled from the Whitwell stream gauge where StreamStats can't help) and firm power for every stream, saved as a numbered run | Corridors on the map |
 | Tests for unit conversions, coordinate math, the perennial filter, database loading and the hydro calculations | Parcels, ownership, soils, flood zones, roads, reports |
 
 ## How it works
@@ -119,7 +119,7 @@ Each box is saved as it arrives and cached in `data/raw/`, so re-running resumes
 make analyze
 ```
 
-For every stream this works out the head (elevation drop), a reliable low flow and the continuous power it could supply, and saves them to the `hydro_corridors` table as a new numbered run. Low flows come from the USGS StreamStats service; its answers are cached in `data/cache/streamstats/`, so a re-run only asks for what's missing. The first full run can take about 20 minutes if StreamStats is working; if it's down, the run finishes in seconds using a less reliable flow estimate, clearly flagged. What each number means and where it comes from: [docs/ASSUMPTIONS.md](docs/ASSUMPTIONS.md).
+For every stream this works out the head (elevation drop), a reliable low flow and the continuous power it could supply, and saves them to the `hydro_corridors` table as a new numbered run. Low flows come from the USGS StreamStats service. Where it can't help (small streams, or the service is down), streams on the Sequatchie River side borrow the low flow measured at the USGS gauge near Whitwell, scaled by drainage area and marked low confidence. Answers are cached in `data/cache/`, so a re-run only asks for what's missing. The first full run can take an hour or more while StreamStats answers; if it's down, the run finishes in seconds with the fallback estimates, clearly flagged. What each number means and where it comes from: [docs/ASSUMPTIONS.md](docs/ASSUMPTIONS.md).
 
 ### 6. Open the map
 
@@ -147,7 +147,8 @@ Run `make` to list all commands.
 | `make ingest AOI=<key>` | Same, for another area defined in `config/aoi/` |
 | `uv run hhsf ingest hydrography --source service` | Reload streams from the USGS web service instead of the file download |
 | `make analyze` | Compute head, low flow and firm power for every stream (after `make ingest`) |
-| `uv run hhsf analyze hydro --no-streamstats` | Same, without calling StreamStats (every flow is the low-confidence fallback) |
+| `uv run hhsf analyze hydro --no-streamstats` | Same, without calling StreamStats (every flow is a low-confidence fallback) |
+| `uv run hhsf analyze hydro --no-gauge` | Same, without the stream gauge fallback |
 | `make web` | Run the map at <http://localhost:5173> |
 | `make test` | Run all tests (Docker must be running) |
 | `make lint` | Check code style |
@@ -163,7 +164,7 @@ uv run hhsf --help
 
 | File | What it controls |
 | --- | --- |
-| `config/aoi/*.yaml` | Areas of interest. One file per county: Census ID, a buffer distance and (optionally) the river basins (HU4 codes) it spans. Add a file to analyze another county; no code changes needed. If you leave out `huc4`, the basins are looked up automatically. |
+| `config/aoi/*.yaml` | Areas of interest. One file per county: Census ID, a buffer distance, (optionally) the river basins (HU4 codes) it spans, and (optionally) a reference stream gauge for low flows. Add a file to analyze another county; no code changes needed. If you leave out `huc4`, the basins are looked up automatically. |
 | `config/data_sources.yaml` | Where each dataset is downloaded from, plus license and version notes. `hydrography_source` picks the stream source: `bulk` (file download, default) or `service` (web service). The `streamstats` section lists its endpoints and how hard to call it. |
 | `config/hydro.yaml` | Hydro analysis assumptions: efficiency, net-head and diversion allowances, the 1 kW target, and which StreamStats statistic to use. Values come from [docs/DECISIONS.md](docs/DECISIONS.md); change them here and re-run. |
 | `.env` (optional) | Override the database connection (`DATABASE_URL`). Copy from `.env.example`. Only needed if you change the database port. |
@@ -205,6 +206,7 @@ hydro-homestead/
 | --- | --- | --- |
 | County boundaries | [US Census TIGERweb](https://tigerweb.geo.census.gov/) | Public domain |
 | Low-flow estimates (Q90) | [USGS StreamStats](https://streamstats.usgs.gov/) with the Tennessee regression equations (USGS SIR 2009-5159) | Public domain |
+| Measured stream flow | [USGS NWIS](https://waterdata.usgs.gov/) daily flows at gauge 03571000 (Sequatchie River near Whitwell), and [WBD](https://www.usgs.gov/national-hydrography/watershed-boundary-dataset) basin boundaries | Public domain |
 | Streams, elevations, drainage area, flow estimates | [USGS NHDPlus High Resolution](https://www.usgs.gov/national-hydrography/nhdplus-high-resolution) (final release; HU4 file geodatabases from the National Map, or its web service) | Public domain |
 | Basemap | [OpenFreeMap](https://openfreemap.org/), © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors | ODbL |
 
@@ -231,8 +233,9 @@ uv run pytest --cov=hhsf.analysis --cov-report=term-missing
 - **The USGS stream web service is slow and unreliable, so it's no longer the default.** It often takes minutes per request or returns `504 Gateway Timeout`; one county took about 30 minutes. `make ingest` now downloads the NHDPlus HR file for each river basin (HU4 region) instead: about 270 MB for Sequatchie County (Cumberland `0513`: 193 MB, Middle Tennessee-Hiwassee `0602`: 74 MB), cached in `data/raw/nhdplus_hr_bulk/`. Both sources load the same 989 perennial reaches with identical IDs and attributes. The web service path is still there (`--source service`) and now saves each box as it arrives.
 - **Some regions are large downloads.** Basin files range from about 75 MB to over 2 GB (e.g. Lower Ohio `0512`: 2.4 GB). Check the sizes before adding an AOI in a new basin; the ingest prints each file's size as it starts downloading.
 - **Use the "VPU/Current" USGS files, not "Beta".** USGS also publishes older "Beta" files. For the Tennessee River basin (`0602`) they give many streams different IDs from the web service, which would break anything matched on IDs later. `config/data_sources.yaml` points at the current folder.
-- **StreamStats' basin-characteristics service was down (502 errors) on 2026-10-18.** Without it there is no Q90, so every eligible stream currently uses the NHDPlus *mean* flow instead, marked low confidence (mean flow overstates what a turbine can rely on). Run `make analyze` again once it's back; finished answers are cached. USGS asks for no more than 4 simultaneous requests, which the tool respects.
-- **Most streams are too small for the low-flow equations.** Tennessee's equations only apply to basins of 1.3 sq mi or more; 635 of Sequatchie's 989 perennial reaches are smaller. They keep their head but get no flow or power estimate (`below_applicability`), as [DECISIONS.md D-09](docs/DECISIONS.md) says. A fallback for small basins is worth discussing.
+- **StreamStats is sometimes down or slow.** Its basin-characteristics service returned 502 errors all day on 2026-10-18 and was back on 2026-10-19. When it's down, streams fall back to the gauge estimate (Sequatchie River side) or the NHDPlus *mean* flow (Collins River side), both marked low confidence; run `make analyze` again later. Finished answers are cached. USGS asks for no more than 4 simultaneous requests, which the tool respects.
+- **The gauge fallback is rough.** It assumes every square mile yields the same low flow as the 402 sq mi Whitwell basin, while the streams here are under 70 sq mi. Where both exist, it gives a median of about **10× StreamStats' low flow**, probably because the gauge's basin includes the spring-fed limestone valley. Treat gauge-based numbers as an upper bound. Details in [docs/ASSUMPTIONS.md](docs/ASSUMPTIONS.md).
+- **Most streams are too small for the low-flow equations.** Tennessee's equations only apply to basins of 1.3 sq mi or more; 635 of Sequatchie's 989 perennial reaches are smaller. On the Sequatchie River side they now get the low-confidence gauge estimate; on the Collins River side they keep their head but get no flow or power estimate (`below_applicability`), as [DECISIONS.md D-09](docs/DECISIONS.md) says.
 - **Power is per whole stream reach.** Until the steepest-stretch search (D-08) exists, power assumes a penstock the length of the whole reach, which overstates long reaches (the largest is over 200 kW). See [docs/ASSUMPTIONS.md](docs/ASSUMPTIONS.md).
 
 ### Upcoming (will block later milestones)
@@ -260,7 +263,7 @@ uv run pytest --cov=hhsf.analysis --cov-report=term-missing
 From [site-selection.md §7](site-selection.md):
 
 1. ~~Project skeleton, database, stream ingest, map~~
-2. ~~Hydro analysis: head, reliable low flow from StreamStats, firm power per stream~~ (this version). Still to do: the steepest usable stretch within each stream (needs terrain data), and live Q90 values once StreamStats is back
+2. ~~Hydro analysis: head, reliable low flow from StreamStats, firm power per stream~~ (this version). Still to do: the steepest usable stretch within each stream (needs terrain data), and a gauge for the Collins River side
 3. Scoring and ranking against the 1 kW minimum, with an explanation for every score
 4. Exports (CSV, GeoJSON) and a summary report
 5. Then: parcels and ownership, soils, flood zones, roads and drive time, and the full Chattanooga region

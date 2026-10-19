@@ -4,7 +4,7 @@ import typer
 from alembic import command
 from alembic.config import Config
 
-from hhsf.analysis import hydro, run, streamstats
+from hhsf.analysis import gauges, hydro, run, streamstats
 from hhsf.core.config import REPO_ROOT, hydrography_source, load_aoi
 from hhsf.core.db import engine
 from hhsf.ingest import boundary, hydrography, nhdplus_bulk
@@ -85,17 +85,37 @@ def analyze_hydro(
         help="Ask USGS StreamStats for Q90 low flow. Without it, every reach uses the "
         "NHDPlus mean flow, flagged low confidence.",
     ),
+    use_gauge: bool = typer.Option(
+        True,
+        "--gauge/--no-gauge",
+        help="Where StreamStats can't help, scale the AOI's reference gauge's measured "
+        "Q90 by drainage area (low confidence).",
+    ),
     limit: int | None = typer.Option(None, help="Only analyze the first N reaches (for testing)"),
 ) -> None:
     """Head, firm flow and firm power for every perennial reach; saved as a new run."""
     area = load_aoi(aoi)
-    source = service = None
+    assumptions = hydro.load_assumptions()
+    source = service = gauge = None
     if use_streamstats:
         service = streamstats.load_service_config()
-        source = streamstats.StreamStats(hydro.load_assumptions().streamstats, service)
+        source = streamstats.StreamStats(assumptions.streamstats, service)
         typer.echo("Asking StreamStats for low flows (responses are cached in data/cache/).")
+    if use_gauge and area.reference_gauge is not None:
+        try:
+            gauge = gauges.load_transfer(area.reference_gauge, assumptions.gauge_transfer)
+        except (gauges.GaugeError, RuntimeError) as e:
+            typer.echo(f"  Skipping gauge {area.reference_gauge.site_no}: {e}")
+        else:
+            r = gauge.record
+            typer.echo(
+                f"Gauge {r['site_no']}: Q90 {r['q90_cfs']:.1f} cfs from {r['approved_days']} days "
+                f"({r['period'][0]} to {r['period'][1]}), {r['drainage_area_sqmi']:g} sq mi."
+            )
     typer.echo(f"Analyzing perennial streams in {area.name}...")
-    run_id, summary = run.run_hydro(engine(), area, source, service, limit, echo=typer.echo)
+    run_id, summary = run.run_hydro(
+        engine(), area, source, service, limit, echo=typer.echo, gauge=gauge
+    )
     typer.echo(f"Run {run_id} saved {summary['reaches']} hydro corridors.")
     typer.echo(f"  flow method: {summary['flow_method']}")
     typer.echo(f"  flow confidence: {summary['flow_confidence']}")

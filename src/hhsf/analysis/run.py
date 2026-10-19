@@ -17,6 +17,7 @@ from shapely.geometry.base import BaseGeometry
 from sqlalchemy import Connection, Engine, text
 
 from hhsf.analysis import hydro
+from hhsf.analysis.gauges import GaugeTransfer
 from hhsf.analysis.streamstats import (
     LowFlowSource,
     PointFailed,
@@ -108,6 +109,7 @@ def analyze_reach(
     a: hydro.HydroAssumptions,
     source: LowFlowSource | None,
     breaker: _Breaker | None = None,
+    gauge: GaugeTransfer | None = None,
 ) -> Corridor:
     h = hydro.head(reach.max_elev_m, reach.min_elev_m, a.net_head_factor)
     estimate, reason = None, "streamstats_disabled" if source is None else None
@@ -127,7 +129,13 @@ def analyze_reach(
             except PointFailed:
                 reason = "streamstats_point_failed"
     flow = hydro.firm_flow(
-        reach.drainage_area_sqkm, reach.mean_flow_cfs, estimate, a.streamstats, reason
+        reach.drainage_area_sqkm,
+        reach.mean_flow_cfs,
+        estimate,
+        a.streamstats,
+        reason,
+        gauge.reference if gauge is not None and gauge.covers(reach.geom) else None,
+        a.gauge_transfer.ratio_range,
     )
     return Corridor(reach, h, flow, hydro.firm_power(flow, h, a))
 
@@ -138,28 +146,40 @@ def analyze_reaches(
     source: LowFlowSource | None,
     service: ServiceConfig | None = None,
     echo: Callable[[str], None] = print,
+    gauge: GaugeTransfer | None = None,
 ) -> list[Corridor]:
     workers = service.max_concurrent_requests if service else 1
     breaker = _Breaker(service.max_consecutive_failures if service else 3)
     corridors: list[Corridor] = []
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        jobs = pool.map(lambda r: analyze_reach(r, a, source, breaker), reaches)
+        jobs = pool.map(lambda r: analyze_reach(r, a, source, breaker, gauge), reaches)
         for i, corridor in enumerate(jobs, 1):
             corridors.append(corridor)
             if i % 50 == 0 or i == len(reaches):
                 echo(f"  analyzed {i}/{len(reaches)} reaches")
     if source is not None and breaker.open:
-        echo("  StreamStats looks unavailable; remaining reaches use the NHDPlus mean flow.")
+        echo("  StreamStats looks unavailable; remaining reaches use the fallback flows.")
     return corridors
 
 
-def start_run(conn: Connection, aoi: AOI, a: hydro.HydroAssumptions, use_streamstats: bool) -> int:
+def start_run(
+    conn: Connection,
+    aoi: AOI,
+    a: hydro.HydroAssumptions,
+    use_streamstats: bool,
+    gauge: GaugeTransfer | None = None,
+) -> int:
     sources = dict(conn.execute(text("SELECT source_key, version FROM data_sources")).all())
-    if use_streamstats:
-        streamstats = load_data_source("streamstats")
-        record_source(conn, streamstats)
-        sources["streamstats"] = streamstats.version
-    params = {"hydro": a.model_dump(), "use_streamstats": use_streamstats}
+    used = (["streamstats"] if use_streamstats else []) + (["nwis", "wbd_hu8"] if gauge else [])
+    for key in used:
+        source = load_data_source(key)
+        record_source(conn, source)
+        sources[key] = source.version
+    params = {
+        "hydro": a.model_dump(),
+        "use_streamstats": use_streamstats,
+        "reference_gauge": gauge.record if gauge else None,
+    }
     return conn.execute(
         text(
             """
@@ -190,6 +210,7 @@ def save_corridors(conn: Connection, run_id: int, corridors: list[Corridor]) -> 
                 drainage_area_sqkm, drainage_area_method,
                 mean_flow_cfs, firm_flow_cfs, flow_statistic, flow_method, flow_confidence,
                 flow_flags, flow_std_error_pct, regression_region, streamstats_drainage_area_sqkm,
+                flow_reference_gauge, flow_drainage_area_ratio,
                 usable_flow_cfs, firm_power_w, power_confidence
             )
             SELECT
@@ -198,6 +219,7 @@ def save_corridors(conn: Connection, run_id: int, corridors: list[Corridor]) -> 
                 s.drainage_area_sqkm, :drainage_area_method,
                 s.mean_flow_cfs, :firm_flow_cfs, :flow_statistic, :flow_method, :flow_confidence,
                 :flow_flags, :flow_std_error_pct, :regression_region, :ss_drainage_area_sqkm,
+                :reference_gauge, :drainage_area_ratio,
                 :usable_flow_cfs, :firm_power_w, :power_confidence
             FROM streams s WHERE s.stream_id = :stream_id
             """
@@ -219,6 +241,8 @@ def save_corridors(conn: Connection, run_id: int, corridors: list[Corridor]) -> 
                 "flow_std_error_pct": c.flow.std_error_pct,
                 "regression_region": c.flow.regression_region,
                 "ss_drainage_area_sqkm": c.flow.streamstats_drainage_area_sqkm,
+                "reference_gauge": c.flow.reference_gauge,
+                "drainage_area_ratio": c.flow.drainage_area_ratio,
                 "usable_flow_cfs": c.power.usable_flow_cfs,
                 "firm_power_w": c.power.firm_power_w,
                 "power_confidence": c.power.confidence,
@@ -252,17 +276,21 @@ def run_hydro(
     service: ServiceConfig | None = None,
     limit: int | None = None,
     echo: Callable[[str], None] = print,
+    gauge: GaugeTransfer | None = None,
 ) -> tuple[int, dict]:
     """Analyze every perennial reach in the AOI and save one run. Returns (run_id, summary)."""
     a = hydro.load_assumptions()
     with eng.begin() as conn:
         reaches = load_reaches(conn, aoi)[:limit]
-        run_id = start_run(conn, aoi, a, source is not None)
+        run_id = start_run(conn, aoi, a, source is not None, gauge)
     try:
         if source is not None:
             eligible = sum(wants_streamstats(r, a.streamstats) for r in reaches)
             echo(f"  {eligible} of {len(reaches)} reaches are large enough for StreamStats")
-        corridors = analyze_reaches(reaches, a, source, service, echo)
+        if gauge is not None:
+            covered = sum(gauge.covers(r.geom) for r in reaches)
+            echo(f"  {covered} of {len(reaches)} reaches drain to gauge {gauge.reference.site_no}")
+        corridors = analyze_reaches(reaches, a, source, service, echo, gauge)
         summary = summarize(corridors, a)
         with eng.begin() as conn:
             save_corridors(conn, run_id, corridors)

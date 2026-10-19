@@ -80,3 +80,31 @@ def test_runs_are_kept_side_by_side(engine, sample_features):
             text("SELECT run_id, count(*) FROM hydro_corridors GROUP BY run_id ORDER BY 1")
         ).all()
     assert [tuple(c) for c in counts] == [(first, 1), (second, 1)]
+
+
+def test_gauge_transfer_is_saved_with_its_gauge(engine, sample_features):
+    from hhsf.analysis.gauges import GaugeTransfer
+    from hhsf.analysis.hydro import GaugeReference
+    from hhsf.core import crs
+
+    records = [hydrography.parse_feature(f) for f in sample_features[:1]]
+    with engine.begin() as conn:
+        hydrography.load_streams(conn, records)
+    basin = crs.to_analysis(box(-85.5, 35.3, -85.3, 35.5))
+    gauge = GaugeTransfer(GaugeReference("03571000", 77.2, 402.0), basin, {"site_no": "03571000"})
+    run_id, _ = run.run_hydro(engine, AREA, source=None, echo=lambda _: None, gauge=gauge)
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(
+                "SELECT flow_method, flow_reference_gauge, flow_drainage_area_ratio, firm_flow_cfs"
+                " FROM hydro_corridors WHERE run_id = :r"
+            ),
+            {"r": run_id},
+        ).one()
+        params = conn.execute(
+            text("SELECT params FROM analysis_runs WHERE run_id = :r"), {"r": run_id}
+        ).scalar_one()
+    assert row.flow_method == "gauge_drainage_area_ratio"
+    assert row.flow_reference_gauge == "03571000"
+    assert row.firm_flow_cfs == pytest.approx(77.2 * row.flow_drainage_area_ratio)
+    assert params["reference_gauge"] == {"site_no": "03571000"}
