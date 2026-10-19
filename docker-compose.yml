@@ -1,4 +1,4 @@
-# Local services: the PostGIS database.
+# Local services. Start with `make up` (it runs migrations before the tile server).
 services:
   db:
     # Multi-arch build of the official PostGIS image (native on Apple Silicon and x86).
@@ -16,6 +16,20 @@ services:
       interval: 2s
       timeout: 3s
       retries: 30
+
+  tiles:
+    # Serves PostGIS tables as vector tiles for the map.
+    image: ghcr.io/maplibre/martin:1.16.1
+    command: ["--config", "/config/martin.yaml"]
+    environment:
+      DATABASE_URL: postgresql://hhsf:hhsf@db:5432/hhsf
+    ports:
+      - "3100:3000"
+    volumes:
+      - ./martin:/config:ro
+    depends_on:
+      db:
+        condition: service_healthy
 
 volumes:
   pgdata:

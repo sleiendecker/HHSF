@@ -1,0 +1,33 @@
+# Common tasks. Run `make` to list them.
+.DEFAULT_GOAL := help
+AOI ?= sequatchie_tn
+
+help:  ## List available commands
+	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  make %-10s %s\n", $$1, $$2}'
+
+setup:  ## Install Python and frontend dependencies
+	uv sync
+	cd frontend && npm install
+
+up:  ## Start the database, apply migrations, start the tile server
+	docker compose up -d --wait db
+	uv run hhsf db upgrade
+	docker compose up -d tiles
+
+ingest:  ## Download and load data for an AOI (default: sequatchie_tn)
+	uv run hhsf ingest all --aoi $(AOI)
+
+web:  ## Run the map at http://localhost:5173
+	cd frontend && npm run dev
+
+test:  ## Run tests (integration tests need Docker running)
+	uv run pytest
+
+lint:  ## Check code style
+	uv run ruff check .
+	uv run ruff format --check .
+
+down:  ## Stop services (data is kept)
+	docker compose down
+
+.PHONY: help setup up ingest web test lint down
