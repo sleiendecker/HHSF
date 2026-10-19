@@ -1,0 +1,33 @@
+{
+  "type": "FeatureCollection",
+  "_comment": "Synthetic test data in the NHDPlus HR service's shape. Not real reaches.",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {"type": "LineString", "coordinates": [[-85.40, 35.40], [-85.39, 35.39]]},
+      "properties": {
+        "nhdplusid": 25000100000001.0, "permanent_identifier": "test-1", "gnis_name": "Test Creek",
+        "fcode": 46006, "streamorde": 2, "totdasqkm": 8.98, "maxelevsmo": 55271, "minelevsmo": 44670,
+        "slope": 0.0649, "qema": 9.13
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {"type": "MultiLineString", "coordinates": [[[-85.39, 35.39], [-85.38, 35.385]], [[-85.38, 35.385], [-85.37, 35.38]]]},
+      "properties": {
+        "nhdplusid": 25000100000002.0, "permanent_identifier": "test-2", "gnis_name": null,
+        "fcode": 46006, "streamorde": 1, "totdasqkm": 2.88, "maxelevsmo": 54236, "minelevsmo": 54085,
+        "slope": -9998, "qema": 3.32
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {"type": "LineString", "coordinates": [[-85.41, 35.41], [-85.40, 35.40]]},
+      "properties": {
+        "nhdplusid": 25000100000003.0, "permanent_identifier": "test-3", "gnis_name": null,
+        "fcode": 46003, "streamorde": 1, "totdasqkm": 0.5, "maxelevsmo": 56000, "minelevsmo": 55271,
+        "slope": 0.01, "qema": 0.4
+      }
+    }
+  ]
+}
