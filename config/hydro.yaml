@@ -2,7 +2,7 @@
 # explained in docs/ASSUMPTIONS.md. Every run copies these into analysis_runs.params,
 # so changing one here and re-running never rewrites an earlier run.
 
-power_target_w: 1000        # D-01: 1.0 kW continuous minimum (used for the run summary)
+power_target_w: 1000        # D-01: 1.0 kW continuous minimum (run summary only; the filter is in config/scoring_profiles/)
 system_efficiency: 0.5      # D-06: water to delivered electricity
 net_head_factor: 0.85       # D-07: net head as a share of gross head (penstock losses)
 diversion_fraction: 0.5     # D-05: share of firm flow that can be diverted

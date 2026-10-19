@@ -107,7 +107,7 @@ firm_power_W = ρ · g · Q · H · η
 - η = 0.5 is the whole system (turbine, generator, controller, transmission). With gross head it reproduces the D-01 rule of thumb, *watts ≈ head (ft) × flow (gpm) ÷ 10*; on top of that this tool also takes the 85% net-head and 50% diversion allowances, so its numbers are deliberately conservative.
 - Put together, firm power ≈ **0.21 × ρ·g·Q90·H_gross**.
 - `power_confidence` follows the flow: `medium` for StreamStats Q90, `low` for anything else, `unavailable` (NULL power) when flow or head is NULL.
-- The 1 kW target (D-01) is only reported in the run summary here. Filtering and scoring against it is the next phase.
+- The 1 kW target (D-01) is only reported in the run summary here. Filtering and scoring against it happen in `hhsf score hydro`; see [SCORING.md](SCORING.md).
 
 ## StreamStats
 
