@@ -17,6 +17,11 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://hhsf:hhsf@localhost:5433/hhsf"
 
 
+class ReferenceGauge(BaseModel):
+    site_no: str  # USGS site number
+    huc8: str  # the gauge's 8-digit basin; only reaches inside it use the gauge
+
+
 class AOI(BaseModel):
     key: str
     name: str
@@ -24,6 +29,7 @@ class AOI(BaseModel):
     buffer_m: float = 0
     # NHDPlus HR regions covering the county. Looked up from WBD when not listed.
     huc4: list[str] = []
+    reference_gauge: ReferenceGauge | None = None
 
 
 class DataSource(BaseModel):
@@ -48,6 +54,11 @@ def load_aoi(key: str) -> AOI:
 
 def _data_sources() -> dict:
     return yaml.safe_load((CONFIG_DIR / "data_sources.yaml").read_text())
+
+
+def data_source_settings(key: str) -> dict:
+    """Everything config/data_sources.yaml says about one source, as a plain dict."""
+    return _data_sources()[key]
 
 
 def load_data_source(key: str) -> DataSource:

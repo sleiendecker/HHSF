@@ -1,0 +1,37 @@
+# Hydro analysis assumptions. Each value comes from docs/DECISIONS.md and is
+# explained in docs/ASSUMPTIONS.md. Every run copies these into analysis_runs.params,
+# so changing one here and re-running never rewrites an earlier run.
+
+power_target_w: 1000        # D-01: 1.0 kW continuous minimum (used for the run summary)
+system_efficiency: 0.5      # D-06: water to delivered electricity
+net_head_factor: 0.85       # D-07: net head as a share of gross head (penstock losses)
+diversion_fraction: 0.5     # D-05: share of firm flow that can be diverted
+water_density_kg_m3: 1000
+gravity_m_s2: 9.81
+
+streamstats:
+  region: TN
+  statistic_group: 5        # Flow-Duration Statistics
+  statistic_code: D90       # D-04: flow met or exceeded 90% of the time (Q90)
+  # Low-flow regression regions that cover the AOI, in order of preference.
+  # GC1419 = Central and East Tennessee (SIR 2009-5159); GC1418 = West Tennessee.
+  regression_regions: [GC1419, GC1418]
+  # Smallest basin the GC1419 equations apply to (square miles). Used to skip
+  # StreamStats for basins that are too small anyway, and when it is unavailable.
+  min_drainage_area_sqmi: 1.3
+  # StreamStats snaps the pour point to its own stream grid. If the basin it
+  # delineates differs from the NHDPlus drainage area by more than this share,
+  # it probably snapped to another stream, so the estimate is not used.
+  max_drainage_area_mismatch: 0.25
+  # Distance above the reach's downstream end to place the pour point, so it
+  # doesn't snap to the confluence with the next reach (meters; at most 10% of the reach).
+  pour_point_offset_m: 30
+
+# Fallback when StreamStats can't give a Q90: scale a nearby gauge's measured Q90
+# by drainage area. Only used for reaches that drain to the gauge's basin (the
+# AOI file names the gauge and its HUC8). Low confidence. See docs/ASSUMPTIONS.md.
+gauge_transfer:
+  start: "2001-10-01"       # water years 2002-2025: the gauge's complete recent record
+  end: "2025-09-30"
+  min_years: 10
+  ratio_range: [0.5, 1.5]   # reach/gauge area ratios where the method is usually trusted

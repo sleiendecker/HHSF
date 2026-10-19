@@ -35,3 +35,48 @@ wbd_hu4:
   url: https://hydro.nationalmap.gov/arcgis/rest/services/wbd/MapServer/2/query
   license: Public domain (US Government work)
   version: WBD current
+
+streamstats:
+  description: >-
+    USGS StreamStats: watershed delineation, basin characteristics and the Tennessee
+    regional regression equations (Law and others, SIR 2009-5159) for low-flow and
+    flow-duration statistics. Used for firm (Q90) flow; see docs/ASSUMPTIONS.md.
+  url: https://streamstats.usgs.gov/
+  license: Public domain (US Government work)
+  version: ss-delineate v1.2.0, ss-hydro v1, NSS services (checked 2026-10-18)
+  # The four calls per pour point, in order (USGS "Flow Statistics Workflow", Jan 2026).
+  # The older /streamstatsservices/ endpoints are gone (404).
+  endpoints:
+    delineate: https://streamstats.usgs.gov/ss-delineate/v1/delineate/sshydro/{region}  # GET ?lat=&lon=
+    regression_regions: https://streamstats.usgs.gov/nssservices/regressionregions/bylocation  # POST watershed geometry
+    scenarios: https://streamstats.usgs.gov/nssservices/scenarios  # GET ?regions=&statisticgroups=&regressionregions=
+    basin_characteristics: https://streamstats.usgs.gov/ss-hydro/v1/basin-characteristics/calculate  # POST delineation response
+    estimate: https://streamstats.usgs.gov/nssservices/scenarios/estimate  # POST ?regions=
+  # USGS asks for "no more than four simultaneous requests" and may change enforcement
+  # at any time. No numeric per-second limit is published and no rate-limit headers
+  # are returned. Each pour point is ~4 calls of ~3-4 s each.
+  max_concurrent_requests: 4
+  timeout_s: 120
+  retries: 2
+  # Stop calling StreamStats for the rest of a run after this many reaches in a row
+  # fail because the service is down (502, timeouts); they fall back to NHDPlus EROM.
+  max_consecutive_failures: 3
+
+nwis:
+  description: >-
+    USGS NWIS daily mean discharge (parameter 00060) and site info, for the
+    reference gauge's measured Q90. USGS is moving these "waterservices" endpoints
+    to api.waterdata.usgs.gov; switch there if they stop answering.
+  url: https://waterservices.usgs.gov/nwis/
+  license: Public domain (US Government work)
+  version: NWIS daily values, approved data only
+  daily_values: https://waterservices.usgs.gov/nwis/dv/
+  site: https://waterservices.usgs.gov/nwis/site/
+
+wbd_hu8:
+  description: >-
+    USGS Watershed Boundary Dataset HUC8 subbasins. Decides which reaches drain
+    to the reference gauge's basin.
+  url: https://hydro.nationalmap.gov/arcgis/rest/services/wbd/MapServer/4/query
+  license: Public domain (US Government work)
+  version: WBD current
