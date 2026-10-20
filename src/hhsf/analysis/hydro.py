@@ -32,6 +32,12 @@ class StreamStatsSettings(BaseModel):
     min_drainage_area_sqmi: float
     max_drainage_area_mismatch: float
     pour_point_offset_m: float
+    # When the basin at the outlet is the wrong one, try again at these shares of
+    # the reach's length up from its downstream end, in order (first match wins).
+    pour_point_retry_shares: list[float] = []
+    # Skip a retry point whose drainage area is below this share of the outlet's,
+    # so scaling the answer back to the outlet stays a small step.
+    min_pour_point_area_share: float = 0.5
 
 
 class GaugeTransferSettings(BaseModel):
@@ -110,6 +116,9 @@ class LowFlowEstimate:
     std_error_pct: float | None = None
     below_min_drainage_area: bool = False
     out_of_range: tuple[str, ...] = ()  # other basin characteristics outside the limits
+    # NHDPlus drainage area where the pour point was, when it was moved up the reach
+    # because the outlet snapped to the wrong basin (None: at the reach's outlet).
+    point_drainage_area_sqkm: float | None = None
 
 
 @dataclass(frozen=True)
@@ -174,7 +183,10 @@ def firm_flow(
     """Pick the firm flow for a reach, best first.
 
     1. StreamStats Q90 inside the regression's applicability: medium confidence.
-       (The Tennessee equations' standard error is ~60%, so never "high".)
+       (The Tennessee equations' standard error is ~60%, so never "high".) If the
+       pour point was moved up the reach (`estimate.point_drainage_area_sqkm`), its
+       basin is checked against the drainage area there and the Q90 is scaled to
+       the outlet by drainage area; still medium, flagged.
     2. A gauge in the same basin (`gauge`, when the reach drains to it): its Q90
        scaled by drainage area, low confidence. Also covers basins too small for
        the regression (D-09), with that flag kept.
@@ -194,7 +206,8 @@ def firm_flow(
             "regression_region": estimate.regression_region,
             "streamstats_drainage_area_sqkm": ss_sqkm,
         }
-        if drainage_area_mismatch(drainage_area_sqkm, estimate.drainage_area_sqmi, s):
+        point_sqkm = estimate.point_drainage_area_sqkm or drainage_area_sqkm
+        if drainage_area_mismatch(point_sqkm, estimate.drainage_area_sqmi, s):
             reason = ["streamstats_drainage_area_mismatch"]
         elif estimate.below_min_drainage_area:
             small, reason = True, []
@@ -202,11 +215,16 @@ def firm_flow(
             reason = ["streamstats_no_estimate"]
         else:
             flags = [f"out_of_range:{code}" for code in estimate.out_of_range]
+            value = estimate.value_cfs
+            if estimate.point_drainage_area_sqkm is not None:
+                # Moved up the reach: scale to the outlet by drainage area (as for a gauge).
+                value *= drainage_area_sqkm / point_sqkm
+                flags.append("streamstats_pour_point_moved")
             return Flow(
-                estimate.value_cfs,
+                value,
                 "q90",
                 FLOW_METHOD_STREAMSTATS,
-                "low" if flags else "medium",
+                "low" if estimate.out_of_range else "medium",
                 flags,
                 std_error_pct=estimate.std_error_pct,
                 **common,
@@ -274,8 +292,30 @@ def pour_point(geom: BaseGeometry, offset_m: float) -> Point:
     outlet. Stepping back a little keeps StreamStats from snapping to the
     confluence with the next reach. The step is at most 10% of the reach.
     """
+    line = _last_line(geom)
+    distance = line.length - min(offset_m, 0.1 * line.length)
+    return crs.to_storage(line.interpolate(distance))
+
+
+def point_up_reach(geom: BaseGeometry, share: float) -> Point:
+    """The point `share` of the reach's length up from its downstream end (storage CRS)."""
+    line = _last_line(geom)
+    return crs.to_storage(line.interpolate(line.length * (1 - share)))
+
+
+def drainage_area_up_reach(outlet_sqkm: float, upstream_sqkm: float | None, share: float) -> float:
+    """Drainage area `share` of the way up a reach, by straight-line interpolation.
+
+    NHDPlus gives the area at the reach's outlet; at its top it is what the
+    reaches flowing into it drain (`upstream_sqkm`; none for a headwater, which
+    starts from nothing). The land in between is assumed to join evenly.
+    """
+    top = upstream_sqkm or 0.0
+    return outlet_sqkm - share * (outlet_sqkm - top)
+
+
+def _last_line(geom: BaseGeometry) -> BaseGeometry:
     line = crs.to_analysis(geom)
     if line.geom_type == "MultiLineString":
         line = line.geoms[-1]
-    distance = line.length - min(offset_m, 0.1 * line.length)
-    return crs.to_storage(line.interpolate(distance))
+    return line

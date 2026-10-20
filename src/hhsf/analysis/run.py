@@ -8,6 +8,7 @@ within the D-08 penstock length (analysis/stretch.py); without one it's the whol
 reach, with head from NHDPlus (the method before terrain was added).
 """
 
+import dataclasses
 import json
 import subprocess
 import threading
@@ -48,6 +49,8 @@ class Reach:
     min_elev_m: float | None
     mean_flow_cfs: float | None
     geom: BaseGeometry
+    # What the reaches flowing into this one drain (None: a headwater, nothing flows in).
+    upstream_drainage_area_sqkm: float | None = None
 
 
 @dataclass
@@ -75,18 +78,31 @@ def code_version() -> str:
 
 
 def load_reaches(conn: Connection, aoi: AOI) -> list[Reach]:
-    """Perennial reaches touching the AOI's county plus its buffer."""
+    """Perennial reaches touching the AOI's county plus its buffer.
+
+    A reach's upstream drainage area is the sum over the streams (any kind) whose
+    downstream end is its upstream end; flowlines are drawn upstream to downstream.
+    """
     keep = keep_area(aoi, county_area(conn, aoi))
     rows = conn.execute(
         text(
             """
-            SELECT stream_id, nhdplusid, length_m, drainage_area_sqkm, max_elev_m,
-                   min_elev_m, mean_flow_cfs, ST_AsBinary(geom)
-            FROM streams WHERE perennial ORDER BY stream_id
+            SELECT s.stream_id, s.nhdplusid, s.length_m, s.drainage_area_sqkm, s.max_elev_m,
+                   s.min_elev_m, s.mean_flow_cfs, ST_AsBinary(s.geom), up.drainage_area_sqkm
+            FROM streams s
+            LEFT JOIN LATERAL (
+                SELECT sum(u.drainage_area_sqkm) AS drainage_area_sqkm FROM streams u
+                WHERE u.geom && ST_StartPoint(ST_GeometryN(s.geom, 1))
+                  AND ST_Equals(
+                      ST_EndPoint(ST_GeometryN(u.geom, ST_NumGeometries(u.geom))),
+                      ST_StartPoint(ST_GeometryN(s.geom, 1))
+                  )
+            ) up ON true
+            WHERE s.perennial ORDER BY s.stream_id
             """
         )
     ).all()
-    reaches = [Reach(*row[:7], wkb.loads(bytes(row[7]))) for row in rows]
+    reaches = [Reach(*row[:7], wkb.loads(bytes(row[7])), row[8]) for row in rows]
     return [r for r in reaches if keep.intersects(crs.to_analysis(r.geom))]
 
 
@@ -112,6 +128,40 @@ class _Breaker:
     def record(self, ok: bool) -> None:
         with self.lock:
             self.consecutive = 0 if ok else self.consecutive + 1
+
+
+def streamstats_low_flow(
+    reach: Reach, s: hydro.StreamStatsSettings, source: LowFlowSource
+) -> hydro.LowFlowEstimate:
+    """StreamStats at the reach's outlet, moving up the reach if it found the wrong basin.
+
+    StreamStats snaps the pour point to its own stream grid, which doesn't always
+    line up with the NHDPlus flowline: near a confluence it can land on the bigger
+    stream, elsewhere on a hillside cell draining almost nothing. If the outlet's
+    basin doesn't match NHDPlus, try the `pour_point_retry_shares` points up the
+    reach and keep the first whose basin matches the drainage area there. If none
+    does, the outlet's answer is returned and firm_flow() flags the mismatch.
+
+    ServiceUnavailable propagates (the caller's breaker counts it); a retry point
+    the service can't answer for is skipped.
+    """
+    point = hydro.pour_point(reach.geom, s.pour_point_offset_m)
+    estimate = source.low_flow(point.y, point.x)
+    outlet = reach.drainage_area_sqkm
+    if outlet is None or not hydro.drainage_area_mismatch(outlet, estimate.drainage_area_sqmi, s):
+        return estimate
+    for share in s.pour_point_retry_shares:
+        expected = hydro.drainage_area_up_reach(outlet, reach.upstream_drainage_area_sqkm, share)
+        if expected < s.min_pour_point_area_share * outlet:
+            continue
+        point = hydro.point_up_reach(reach.geom, share)
+        try:
+            moved = source.low_flow(point.y, point.x)
+        except PointFailed:
+            continue
+        if not hydro.drainage_area_mismatch(expected, moved.drainage_area_sqmi, s):
+            return dataclasses.replace(moved, point_drainage_area_sqkm=expected)
+    return estimate
 
 
 def whole_reach_head(reach: Reach, a: hydro.HydroAssumptions) -> CorridorHead:
@@ -158,9 +208,8 @@ def analyze_reach(
         if breaker is not None and breaker.open:
             reason = "streamstats_unavailable"
         else:
-            point = hydro.pour_point(reach.geom, a.streamstats.pour_point_offset_m)
             try:
-                estimate = source.low_flow(point.y, point.x)
+                estimate = streamstats_low_flow(reach, a.streamstats, source)
                 if breaker is not None:
                     breaker.record(True)
             except ServiceUnavailable:
@@ -331,6 +380,9 @@ def summarize(corridors: list[Corridor], a: hydro.HydroAssumptions) -> dict:
         "stretch_shorter_than_reach": sum(not s.whole_reach for s in stretches),
         "flow_method": dict(Counter(c.flow.method or "none" for c in corridors)),
         "flow_confidence": dict(Counter(c.flow.confidence for c in corridors)),
+        "streamstats_pour_point_moved": sum(
+            "streamstats_pour_point_moved" in c.flow.flags for c in corridors
+        ),
         "with_power": len(watts),
         "meets_power_target": sum(w >= a.power_target_w for w in watts),
         "meets_power_target_medium_confidence": sum(
