@@ -230,7 +230,7 @@ uv run hhsf --help
 | --- | --- |
 | `config/aoi/*.yaml` | Areas of interest. One file per county: Census ID, a buffer distance, (optionally) the river basins (HU4 codes) it spans, and (optionally) a reference stream gauge for low flows. Add a file to analyze another county; no code changes needed. If you leave out `huc4`, the basins are looked up automatically. |
 | `config/data_sources.yaml` | Where each dataset is downloaded from, plus license and version notes. `hydrography_source` picks the stream source: `bulk` (file download, default) or `service` (web service). The `streamstats` section lists its endpoints and how hard to call it. |
-| `config/hydro.yaml` | Hydro analysis assumptions: the longest penstock a corridor may assume (1,000 ft), efficiency, net-head and diversion allowances, the 1 kW target, and which StreamStats statistic to use. Values come from [docs/DECISIONS.md](docs/DECISIONS.md); change them here and re-run. |
+| `config/hydro.yaml` | Hydro analysis assumptions: the longest penstock a corridor may assume (1,000 ft), efficiency, net-head and diversion allowances, the 1 kW target, which StreamStats statistic to use, and where to ask StreamStats again when it outlines the wrong watershed (`pour_point_retry_shares`, `min_pour_point_area_share`). Values come from [docs/DECISIONS.md](docs/DECISIONS.md); change them here and re-run. |
 | `config/scoring_profiles/*.yaml` | Scoring rules: the 1 kW cutoff, the head and power breakpoints, the 70/30 weights and the confidence tiers. To change one, copy the file to a new version and score again (see [docs/SCORING.md](docs/SCORING.md)). |
 | `.env` (optional) | Override the database connection (`DATABASE_URL`). Copy from `.env.example`. Only needed if you change the database port. |
 
@@ -324,7 +324,8 @@ uv run pytest --cov=hhsf.analysis --cov-report=term-missing
 
 | Problem | Fix |
 | --- | --- |
-| `make up` fails with "port is already allocated" | Another program is using 5433 or 3100. Change the left-hand port in `docker-compose.yml`; for 5433, also set `DATABASE_URL` in `.env`. |
+| `make up` fails with "port is already allocated" | Run `docker compose ls`. If it lists a project other than `hydro-homestead`, that's a second copy of this stack started from another folder (older checkouts named it after the folder): stop it with `docker compose -p <name> down`. Otherwise another program is using 5433 or 3100: change the left-hand port in `docker-compose.yml`, and for 5433 also set `DATABASE_URL` in `.env`. |
+| `make up` fails with "Can't locate revision" | The shared database was migrated by a newer branch than the one checked out (all checkouts and worktrees share one database). Run `make up` from that newer branch, or wait until it's merged and pull `main`. Don't delete the database to get past it; that loses every run. |
 | `make up` fails with "Cannot connect to the Docker daemon" | Start Docker Desktop or OrbStack. |
 | `make ingest` fails during a download | Run it again. Partial downloads are never reused; finished files in `data/raw/nhdplus_hr_bulk/` are. |
 | A downloaded file seems broken (errors opening a `.zip`) | Delete it from `data/raw/nhdplus_hr_bulk/` and run `make ingest` again. |
