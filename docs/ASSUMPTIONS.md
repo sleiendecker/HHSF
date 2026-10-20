@@ -6,21 +6,74 @@ How `hhsf analyze hydro` turns each stream reach into head, firm flow and firm p
 
 ## What one row in `hydro_corridors` is
 
-For now a **corridor is a whole perennial stream reach** (one NHDPlus HR flowline), so there is one row per reach per run. NHDPlus only records elevations at each reach's two ends, so finding the steepest 1,000 ft stretch inside a reach ([D-08](DECISIONS.md#d-08--what-counts-as-one-corridor-measure)) needs a terrain model (3DEP DEM), which isn't loaded yet. The table already has `from_measure` / `to_measure` (percent along the reach, 0 = downstream end) so a later version can store just a sub-stretch without changing the schema. Today they are always 0 and 100.
+A **corridor is the steepest stretch of one perennial stream reach** (one NHDPlus HR flowline) that a single penstock could cover ([D-08](DECISIONS.md#d-08--what-counts-as-one-corridor-measure)): at most **1,000 ft** (`corridor.penstock_length_ft` in `config/hydro.yaml`). There is still one row per reach per run, but its geometry, length, head and power are for that stretch only:
 
-**Consequence:** head and power are for the *whole* reach, as if the penstock ran its full length. On long reaches (main stems especially) that overstates what a homestead system could capture. Treat the power numbers as "how much energy this reach has", not "what one penstock would deliver", until D-08 is built.
+| Column | Meaning |
+| --- | --- |
+| `geom` | Just the stretch, drawn upstream to downstream. Its first point is where an intake would go, its last point where the turbine would go. |
+| `length_m` | The stretch's length along the stream (at most 304.8 m). A reach shorter than that is one stretch, end to end. |
+| `from_measure`, `to_measure` | Where the stretch sits on its reach, in percent along the reach with **0 at the downstream end** (the NHDPlus convention). `from_measure` is the stretch's bottom, `to_measure` its top. A whole reach is 0 to 100. |
+| `head_method` | `dem_3dep_steepest_stretch` for a stretch; `nhdplus_vaa_smoothed_reach` for the older whole-reach method (runs made with `--no-terrain`, and every run before this change). |
+
+Of Sequatchie's 989 perennial reaches, 878 are longer than 1,000 ft, so their corridor is part of the reach; the other 111 are whole reaches.
+
+**Flow stays the reach's.** D-08 only changes where the head comes from. The drainage area, and so the flow, is still measured at the reach's downstream end (its pour point). A stretch near the top of a long reach drains a little less than that, so its flow and power are slightly high. Reaches are short enough (median 880 m) that this is small next to the flow estimate's own error.
+
+### How the steepest stretch is found
+
+Code: `src/hhsf/analysis/stretch.py`. Elevations come from the **USGS 3DEP 1/3 arc-second DEM** (about 10 m cells, meters above NAVD88), loaded by `hhsf ingest terrain` (part of `make ingest`).
+
+1. **Sample** the DEM every **10 m** along the reach (`corridor.sample_spacing_m`), upstream to downstream, measured in EPSG:5070. Each sample takes the value of the DEM cell it falls in.
+2. **Clean the profile** so it never rises going downstream: each sample is lowered to the lowest elevation above it (a "carve"). That removes bumps where a road fill or culvert crosses the stream, or where the NHDPlus line strays onto a bank. Then the profile is kept between NHDPlus's smoothed elevations for the reach's two ends (`max_elev_m`, `min_elev_m`), so **a stretch never drops more than NHDPlus says the whole reach does**.
+3. **Slide a 1,000 ft window** down the cleaned profile, starting at every sample, and keep the one with the most drop. The window's bottom elevation is interpolated between samples, so the stretch is exactly 1,000 ft. If several windows tie (a flat reach, or a uniform slope), the most downstream one wins: it has the most water.
+4. **Gross head** is that drop; net head, firm power and the score follow as below.
+
+If part of a reach is off the DEM or on a cell with no data, its head is NULL with `head_flag = no_terrain_data` (none in Sequatchie: the DEM covers every loaded stream plus about 500 m). If a flowline has pieces that don't join, `head_flag = reach_not_one_line` (none in Sequatchie either).
+
+**What it changed in Sequatchie** (2026-10-19, hydro run 22 vs. the whole-reach run 12):
+
+| | Whole reach | Steepest 1,000 ft |
+| --- | --- | --- |
+| Median gross head | 27 m (88 ft) | 13 m (42 ft) |
+| 90th percentile | 122 m (401 ft) | 64 m (209 ft) |
+| Largest net head ranked with a flow estimate | 1,101 ft | 414 ft |
+| Reaches at or above 1 kW | 66 (14 medium confidence) | 19 (1 medium confidence) |
+
+The biggest stretch drops are real: the streams coming off the Cumberland Plateau escarpment into the Sequatchie Valley fall 150–250 m in under 500 m, and NHDPlus agrees. 31 of the 878 long reaches hit the NHDPlus cap in step 2 (the DEM saw at least the whole reach's drop within one window).
+
+**Limits:**
+
+- **Penstock length is measured along the stream.** A real penstock can cut across bends, so on a winding stream it could reach a little more drop for the same pipe length. The search doesn't try to route a pipe.
+- **10 m cells blur narrow features.** A small waterfall or a ravine narrower than a cell or two can be under- or over-stated by a few meters. Confirm the drop on the visit (or with 1 m LiDAR, later).
+- **The NHDPlus line and the DEM channel don't always line up.** Where the line runs along a bank, samples read high; the carve and the NHDPlus cap remove most of that, but not all.
+
+**Changing the length:** set `corridor.penstock_length_ft` in `config/hydro.yaml`, or for one run, `uv run hhsf analyze hydro --penstock-ft 2000`. The D-08 sensitivity check on 2026-10-19 gave:
+
+| Longest penstock | Reaches at or above 1 kW | of them medium confidence | Head-only corridors ranked |
+| --- | --- | --- | --- |
+| 500 ft | 14 | 0 | 258 |
+| **1,000 ft (default)** | **19** | **1** | **272** |
+| 2,000 ft | 33 | 3 | 275 |
+| Whole reach (old method) | 66 | 14 | 283 |
 
 ## Metrics
 
 ### Gross head (`gross_head_m`)
 
-**Definition** ([site-selection.md B9](../site-selection.md)): the elevation drop between the reach's upstream and downstream ends, from NHDPlus HR **smoothed** elevations:
+**Default (`head_method = dem_3dep_steepest_stretch`):** the drop over the corridor's stretch, from the cleaned 3DEP profile described [above](#how-the-steepest-stretch-is-found):
+
+```
+gross_head_m = elevation at the stretch's top − elevation at its bottom     (3DEP DEM, m)
+```
+
+A flat stretch has head **0**, a real value.
+
+**Whole reach (`head_method = nhdplus_vaa_smoothed_reach`, `--no-terrain` runs and older runs)** ([site-selection.md B9](../site-selection.md)): the elevation drop between the reach's upstream and downstream ends, from NHDPlus HR **smoothed** elevations:
 
 ```
 gross_head_m = max_elev_m − min_elev_m        (NHDPlus maxelevsmo − minelevsmo, cm → m)
 ```
 
-- `head_method = nhdplus_vaa_smoothed_reach`
 - Smoothing makes elevations never rise going downstream, so gross head is never negative. A flat reach has head **0** (29 reaches in Sequatchie), which is a real value, not missing data.
 - If either elevation is missing: NULL, `head_flag = missing_elevation`. If the data says the stream rises downstream: NULL, `head_flag = elevation_rises_downstream`. (Neither happens in Sequatchie today.)
 - Smoothed elevations come from the 10 m-era NHDPlus DEM processing, not survey. Expect errors of a few meters; a site visit (or later, 1 m LiDAR) confirms the real drop.
@@ -33,9 +86,9 @@ net_head_m = gross_head_m × 0.85              (D-07)
 
 A planning allowance for pipe friction in a reasonably sized penstock. Real losses depend on pipe diameter and length and are worked out per site later.
 
-### Reach length (`length_m`)
+### Corridor length (`length_m`)
 
-Copied from `streams.length_m`, which is measured in EPSG:5070 (equal-area, meters) per the CRS contract in `src/hhsf/core/crs.py`.
+The stretch's length along the stream (at most the penstock length), or for a whole-reach corridor, `streams.length_m`. Both are measured in EPSG:5070 (equal-area, meters) per the CRS contract in `src/hhsf/core/crs.py`. The whole reach's length is still in `streams.length_m`.
 
 ### Drainage area (`drainage_area_sqkm`)
 
@@ -124,8 +177,15 @@ Endpoints, limits and timeouts are in [`config/data_sources.yaml`](../config/dat
 - **Status:** on 2026-10-18 steps 1, 2 and 4 worked but step 3 (`ss-hydro`) returned **502 Bad Gateway** all day. It was back on 2026-10-19, and its responses parse correctly (a list of `{code, value}` items). It's slow under load: delineations took up to ~15 s, and a full Sequatchie run took about 30 minutes (2026-10-19).
 - The older `streamstatsservices/` endpoints are gone (404).
 
+## Terrain (3DEP)
+
+- **Source:** USGS 3D Elevation Program, 1/3 arc-second seamless DEM, "current" tiles on the National Map's S3 bucket (`config/data_sources.yaml`, `usgs_3dep_13`). Public domain.
+- **What's downloaded:** USGS publishes 1×1 degree tiles; all of Sequatchie's streams sit in one, `n36w086` (472 MB, last updated 2026-04-29). The tiles are cloud-optimized GeoTIFFs, so `hhsf ingest terrain` reads only the part under the AOI's streams (plus about 500 m) over HTTP: **about 84 MB transferred, saved as a 48 MB file**, `data/raw/usgs_3dep_13/sequatchie_tn.tif`, in about 20 seconds. Re-running reuses the file unless the streams reach past it. The cells are copied as they are (same NAD83 grid, no resampling).
+- **Provenance:** the tile names and last-modified dates go into `data_sources.version` and each run's `data_source_versions`.
+- USGS rebuilds the 1/3 arc-second DEM from the best elevation source it has for each area (LiDAR where it exists), so it can be newer than the elevations NHDPlus HR was built on. Expect the two to differ by a few meters in places; the NHDPlus cap above keeps a stretch from claiming more drop than NHDPlus gives the whole reach.
+
 ## Runs
 
-- Every `hhsf analyze hydro` writes a new `analysis_runs` row (`analysis = 'hydro'`) with the AOI, `git describe` code version, the data source versions, every assumption above (`params`), and a summary of counts. Its corridors carry that `run_id`; earlier runs are never changed.
+- Every `hhsf analyze hydro` writes a new `analysis_runs` row (`analysis = 'hydro'`) with the AOI, `git describe` code version, the data source versions, every assumption above (`params`, including `corridor_method` and the penstock length), and a summary of counts. Its corridors carry that `run_id`; earlier runs are never changed.
 - `status` is `running` while it works, `finished` when saved, `failed` if it crashed (with no corridors).
 - To read the latest run: `SELECT * FROM hydro_corridors WHERE run_id = (SELECT max(run_id) FROM analysis_runs WHERE analysis = 'hydro' AND status = 'finished')`.

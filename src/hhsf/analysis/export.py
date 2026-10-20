@@ -12,7 +12,7 @@ from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
-from hhsf.analysis import scoring
+from hhsf.analysis import scoring, stretch
 from hhsf.core import units
 
 SHORTLIST_CSV = "shortlist.csv"
@@ -51,6 +51,7 @@ SHORTLIST_COLUMNS = [
     "flow_confidence",
     "flow_flags",
     "drainage_area_sqmi",
+    "corridor_length_ft",
     "reach_length_mi",
     "stream_name",
     "nhdplusid",
@@ -87,6 +88,7 @@ class ExportRow:
     outlet_lat: float | None
     explanation: dict
     geometry: dict | None = None  # GeoJSON, EPSG:4326
+    reach_length_m: float | None = None  # the whole reach; length_m is the corridor (stretch)
 
     @property
     def ranked(self) -> bool:
@@ -141,7 +143,8 @@ def record(r: ExportRow) -> dict:
             if r.drainage_area_sqkm is None
             else round(units.sqkm_to_sqmi(r.drainage_area_sqkm), 2)
         ),
-        "reach_length_mi": round(units.m_to_ft(r.length_m) / FT_PER_MI, 2),
+        "corridor_length_ft": round(units.m_to_ft(r.length_m)),
+        "reach_length_mi": round(units.m_to_ft(r.reach_length_m or r.length_m) / FT_PER_MI, 2),
         "stream_name": r.stream_name,
         "nhdplusid": r.nhdplusid,
         "outlet_lat": _round(r.outlet_lat, 5),
@@ -203,7 +206,12 @@ def assumptions(info: RunInfo) -> list[tuple[str, str]]:
     gauge = info.hydro_params.get("reference_gauge")
     p = info.score_params.get("scoring_profile", {})
     weights = p.get("weights", {})
+    penstock_ft = h.get("corridor", {}).get("penstock_length_ft")
     items = [
+        (
+            "Corridor: longest penstock (ft, D-08)",
+            _fmt(penstock_ft) if stretches(info) else "whole stream reach (no elevation model)",
+        ),
         ("System efficiency (water to electricity, D-06)", h.get("system_efficiency")),
         ("Net head as a share of gross head (D-07)", h.get("net_head_factor")),
         ("Share of firm flow that can be diverted (D-05)", h.get("diversion_fraction")),
@@ -262,12 +270,31 @@ def _text(v: object) -> str:
     return str(v)
 
 
+def stretches(info: RunInfo) -> bool:
+    """True if the hydro run's corridors are steepest stretches (D-08), not whole reaches."""
+    return info.hydro_params.get("corridor_method") == stretch.HEAD_METHOD
+
+
+def _corridor_caveat(info: RunInfo) -> str:
+    if not stretches(info):
+        return (
+            "**Head and power are for the whole stream reach.** This run didn't use the "
+            "elevation model, so power assumes a penstock the length of the reach. Long "
+            "reaches are overstated; check the drop over a practical pipe length on the visit."
+        )
+    ft = info.hydro_params.get("hydro", {}).get("corridor", {}).get("penstock_length_ft")
+    return (
+        f"**Head is over the steepest {_fmt(ft)} ft of each stream reach** (D-08), from the "
+        "USGS 10 m elevation model, measured along the stream. Flow is the whole reach's, at "
+        "its downstream end, so a stretch near the top of a long reach has a little less. "
+        "The coordinates are the bottom of the stretch, where a turbine would go. Confirm "
+        "the drop on the visit: 10 m elevations miss small falls and can blur narrow ravines."
+    )
+
+
 def caveats(info: RunInfo) -> list[str]:
     return [
-        "**Head and power are for the whole stream reach.** The search for the steepest "
-        "usable stretch (D-08) isn't built, so power assumes a penstock the length of the "
-        "reach. Long reaches are overstated; check the drop over a practical pipe length "
-        "on the visit.",
+        _corridor_caveat(info),
         "**Gauge-based flows are an upper bound.** Flows scaled from the reference gauge "
         "(`flow_method = gauge_drainage_area_ratio`) came out about 10× StreamStats' Q90 "
         "where both exist, and NHDPlus mean flows (`nhdplus_erom`) by over 100×. Treat "

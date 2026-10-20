@@ -120,11 +120,32 @@ ORDER BY s.rank;
 | Filtered: head-only under 10 ft | 13 |
 | Filtered: missing data | 1 |
 
-Head-only corridors make up most of the ranked list (283 of 349), which is the D-09 "large share" case: a better small-basin flow estimate (for example a Collins River gauge) would help most. The top of the medium tier is reaches with over 800 ft of whole-reach head; that's the D-08 limitation (power and head are per whole reach, not per 1,000 ft penstock), so treat the ordering inside a tier as rough until D-08 is built.
+Head-only corridors make up most of the ranked list (283 of 349), which is the D-09 "large share" case: a better small-basin flow estimate (for example a Collins River gauge) would help most. The top of the medium tier was reaches with over 800 ft of whole-reach head, the D-08 limitation fixed below.
+
+## With the steepest stretch (hydro run 22, profile hydro_v1, 2026-10-19)
+
+Each corridor is now the reach's steepest 1,000 ft stretch (D-08, [ASSUMPTIONS.md](ASSUMPTIONS.md#how-the-steepest-stretch-is-found)), so head and power are what one penstock could capture:
+
+| | Corridors |
+| --- | --- |
+| Ranked, medium confidence | 1 |
+| Ranked, low confidence | 18 |
+| Ranked, head only (D-09) | 272 |
+| Filtered: below 1 kW | 673 |
+| Filtered: head-only under 10 ft | 24 |
+| Filtered: missing data | 1 |
+
+Only one StreamStats-backed stream clears 1 kW over 1,000 ft of pipe: Rogers Branch, 287 ft of net head for about 1.3 kW. With a 2,000 ft penstock the medium tier grows to 3.
+
+The low tier is two different groups:
+
+- **13 stretches on larger Collins River side creeks** (Conner, North Suck, Cain, Soddy and others) with 8–43 ft of head and 1–21 kW. Their flow is the NHDPlus *mean annual* flow, because StreamStats outlined the wrong basin for them (`streamstats_drainage_area_mismatch`) and they're outside the Whitwell gauge's basin. Mean flow runs about 130× StreamStats' Q90 here, so these power numbers are far too high; most would likely fall under 1 kW on a real dry-season flow.
+- **5 plateau-edge streams** with 247–414 ft of head and 1.1–1.5 kW, from the Whitwell gauge transfer (about 10× StreamStats, an upper bound).
+
+The breakpoints (D-11) were set before D-08 existed and may need another look now that heads are smaller.
 
 ## Not built yet
 
 - **FR-3 fallback profile.** §3 of the plan keeps the original weight table (head 40, watershed area 30, length 15, rainfall 15) as a labeled screening profile. It needs its own breakpoints for watershed area and length, and rainfall data (D-10).
-- **D-08 steepest stretch.** Scores use whole-reach head and power.
 - **Sensitivity check.** DECISIONS.md asks how much the top 20 changes under 70/30 vs 50/50 vs 100/0 weights. Each alternative is just a new profile file and a re-score.
 - Scores aren't drawn on the map yet. The tile server publishes the latest score run as `latest_hydro_scores` (with `tier`, `rank` and `status`), ready for the map to color by tier. `make export` writes them to CSV, GeoJSON and a summary report in `data/outputs/`.

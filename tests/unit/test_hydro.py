@@ -20,6 +20,7 @@ ASSUMPTIONS = hydro.HydroAssumptions(
     diversion_fraction=0.5,
     water_density_kg_m3=1000,
     gravity_m_s2=9.81,
+    corridor=hydro.CorridorSettings(penstock_length_ft=1000, sample_spacing_m=10),
     streamstats=SETTINGS,
     gauge_transfer=hydro.GaugeTransferSettings(
         start="2001-10-01", end="2025-09-30", min_years=10, ratio_range=(0.5, 1.5)
@@ -47,6 +48,8 @@ def test_config_matches_decisions():
     assert a.diversion_fraction == 0.5  # D-05
     assert a.power_target_w == 1000  # D-01
     assert a.streamstats.statistic_code == "D90"  # D-04
+    assert a.corridor.penstock_length_ft == 1000  # D-08
+    assert a.corridor.penstock_length_m == pytest.approx(304.8)
 
 
 # --- head ---

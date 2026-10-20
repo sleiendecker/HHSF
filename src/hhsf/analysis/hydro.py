@@ -17,7 +17,7 @@ from shapely.geometry.base import BaseGeometry
 from hhsf.core import crs, units
 from hhsf.core.config import CONFIG_DIR
 
-HEAD_METHOD = "nhdplus_vaa_smoothed_reach"
+HEAD_METHOD = "nhdplus_vaa_smoothed_reach"  # whole reach; the stretch method is in stretch.py
 DRAINAGE_AREA_METHOD = "nhdplus_vaa_totdasqkm"
 FLOW_METHOD_STREAMSTATS = "streamstats_q90"
 FLOW_METHOD_EROM = "nhdplus_erom"
@@ -43,6 +43,17 @@ class GaugeTransferSettings(BaseModel):
     ratio_range: tuple[float, float]
 
 
+class CorridorSettings(BaseModel):
+    """D-08: how a reach's steepest stretch is found (analysis/stretch.py)."""
+
+    penstock_length_ft: float  # longest penstock one corridor may assume
+    sample_spacing_m: float  # distance between elevation samples along the reach
+
+    @property
+    def penstock_length_m(self) -> float:
+        return self.penstock_length_ft / units.FT_PER_M
+
+
 class HydroAssumptions(BaseModel):
     power_target_w: float
     system_efficiency: float
@@ -50,6 +61,7 @@ class HydroAssumptions(BaseModel):
     diversion_fraction: float
     water_density_kg_m3: float
     gravity_m_s2: float
+    corridor: CorridorSettings
     streamstats: StreamStatsSettings
     gauge_transfer: GaugeTransferSettings
 

@@ -108,3 +108,96 @@ def test_gauge_transfer_is_saved_with_its_gauge(engine, sample_features):
     assert row.flow_reference_gauge == "03571000"
     assert row.firm_flow_cfs == pytest.approx(77.2 * row.flow_drainage_area_ratio)
     assert params["reference_gauge"] == {"site_no": "03571000"}
+
+
+@pytest.fixture
+def plane_dem(tmp_path):
+    """A 10 m-ish DEM over the fixture streams: 100 m lower per 0.01 degree south."""
+    import numpy as np
+    import rasterio
+    from rasterio.transform import from_origin
+
+    cell = 1 / 10800  # 3DEP 1/3 arc-second
+    west, north, n = -85.45, 35.45, 1080  # 0.1 degree square
+    lat = north - cell * (np.arange(n) + 0.5)
+    z = np.repeat((450 + (lat - 35.39) * 10_000)[:, None], n, axis=1).astype("float32")
+    path = tmp_path / "dem.tif"
+    with rasterio.open(
+        path,
+        "w",
+        driver="GTiff",
+        width=n,
+        height=n,
+        count=1,
+        dtype="float32",
+        crs="EPSG:4269",
+        transform=from_origin(west, north, cell, cell),
+        nodata=-999999,
+    ) as f:
+        f.write(z, 1)
+    return path
+
+
+def test_dem_run_saves_the_steepest_stretch(engine, sample_features, plane_dem):
+    records = [hydrography.parse_feature(f) for f in sample_features]
+    with engine.begin() as conn:
+        hydrography.load_streams(conn, [r for r in records if hydrography.is_perennial(r.fcode)])
+
+    run_id, summary = run.run_hydro(engine, AREA, source=None, echo=lambda _: None, dem=plane_dem)
+
+    assert summary["head_method"] == {"dem_3dep_steepest_stretch": 2}
+    assert summary["stretch_shorter_than_reach"] == 2
+    with engine.connect() as conn:
+        params = conn.execute(
+            text("SELECT params FROM analysis_runs WHERE run_id = :r"), {"r": run_id}
+        ).scalar_one()
+        rows = conn.execute(
+            text(
+                """
+                SELECT c.nhdplusid, c.head_method, c.gross_head_m, c.from_measure, c.to_measure,
+                       c.length_m, ST_Length(c.geom::geography) AS geom_length_m,
+                       st.length_m AS reach_length_m,
+                       ST_Covers(ST_Buffer(st.geom::geography, 1), c.geom::geography) AS on_reach,
+                       ST_Distance(ST_StartPoint(ST_GeometryN(st.geom, 1))::geography,
+                                   ST_StartPoint(ST_GeometryN(c.geom, 1))::geography) AS top_m
+                FROM hydro_corridors c JOIN streams st USING (stream_id)
+                WHERE c.run_id = :r ORDER BY c.nhdplusid
+                """
+            ),
+            {"r": run_id},
+        ).all()
+    assert params["corridor_method"] == "dem_3dep_steepest_stretch"
+    assert params["hydro"]["corridor"]["penstock_length_ft"] == 1000
+    big, small = rows
+    for r in rows:
+        assert r.head_method == "dem_3dep_steepest_stretch"
+        assert r.length_m == pytest.approx(304.8, abs=0.01)
+        assert r.geom_length_m == pytest.approx(r.length_m, rel=0.01)  # the geometry is the stretch
+        assert r.on_reach
+        assert 0 <= r.from_measure < r.to_measure <= 100
+        assert r.to_measure - r.from_measure == pytest.approx(100 * 304.8 / r.reach_length_m)
+    # Test Creek runs straight down the plane (100 m over the reach), so any stretch drops
+    # the plane's share, give or take one DEM cell's step (< 1 m).
+    assert big.gross_head_m == pytest.approx(100 * 304.8 / big.reach_length_m, abs=1)
+    assert big.top_m == pytest.approx(big.reach_length_m * (1 - big.to_measure / 100), rel=0.01)
+    # The second reach's NHDPlus ends are only 1.51 m apart: the stretch can't drop more.
+    assert small.gross_head_m <= 1.52
+
+
+def test_run_without_dem_keeps_whole_reaches(engine, sample_features):
+    records = [hydrography.parse_feature(f) for f in sample_features[:1]]
+    with engine.begin() as conn:
+        hydrography.load_streams(conn, records)
+    run_id, _ = run.run_hydro(engine, AREA, source=None, echo=lambda _: None)
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(
+                "SELECT c.head_method, c.from_measure, c.to_measure, c.length_m,"
+                " st.length_m AS reach, ST_Equals(c.geom, st.geom) AS same FROM hydro_corridors c"
+                " JOIN streams st USING (stream_id) WHERE run_id = :r"
+            ),
+            {"r": run_id},
+        ).one()
+    assert row.head_method == "nhdplus_vaa_smoothed_reach"
+    assert (row.from_measure, row.to_measure) == (0, 100)
+    assert row.length_m == row.reach and row.same
