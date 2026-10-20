@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import maplibregl, { type MapGeoJSONFeature } from "maplibre-gl";
+import maplibregl, { type ExpressionSpecification, type MapGeoJSONFeature } from "maplibre-gl";
+import { BasemapSwitcher } from "./BasemapSwitcher";
+import { LIGHT_STYLE, addBasemapLayers, saveBasemap, savedBasemap, showBasemap } from "./basemaps";
 import { Legend } from "./Legend";
 import { CFS_TO_GPM, SCORE_LAYERS, scorePopupHtml } from "./scores";
 
-// Free basemap, no API key needed.
-const BASEMAP = "https://tiles.openfreemap.org/styles/positron";
 const TILES = `${window.location.origin}/tiles`;
 
 const M_TO_FT = 3.28084;
@@ -12,6 +12,13 @@ const SQKM_TO_ACRES = 247.105;
 
 function fmt(value: unknown, scale = 1, digits = 0): string {
   return typeof value === "number" ? (value * scale).toLocaleString(undefined, { maximumFractionDigits: digits }) : "—";
+}
+
+// Bigger streams (higher order) draw wider; `extra` widens the line for its halo.
+function streamWidth(extra = 0): ExpressionSpecification {
+  const byOrder = (low: number, high: number): ExpressionSpecification =>
+    ["+", ["interpolate", ["linear"], ["get", "stream_order"], 1, low, 5, high], extra];
+  return ["interpolate", ["linear"], ["zoom"], 9, byOrder(1, 3), 14, byOrder(2.5, 7)];
 }
 
 function popupHtml(f: MapGeoJSONFeature): string {
@@ -36,7 +43,7 @@ function popupHtml(f: MapGeoJSONFeature): string {
 function setScoresVisible(map: maplibregl.Map, visible: boolean) {
   const show = (on: boolean) => (on ? "visible" : "none");
   for (const layer of SCORE_LAYERS) map.setLayoutProperty(layer.id, "visibility", show(visible));
-  map.setLayoutProperty("streams", "visibility", show(!visible));
+  for (const layer of ["streams-halo", "streams"]) map.setLayoutProperty(layer, "visibility", show(!visible));
 }
 
 export function App() {
@@ -44,11 +51,13 @@ export function App() {
   const mapRef = useRef<maplibregl.Map>();
   const [showScores, setShowScores] = useState(true);
   const showScoresRef = useRef(showScores);
+  const [basemap, setBasemap] = useState(savedBasemap);
+  const basemapRef = useRef(basemap);
 
   useEffect(() => {
     const map = new maplibregl.Map({
       container: container.current!,
-      style: BASEMAP,
+      style: LIGHT_STYLE,
       center: [-85.42, 35.36],
       zoom: 10,
     });
@@ -57,6 +66,7 @@ export function App() {
     map.addControl(new maplibregl.ScaleControl({ unit: "imperial" }));
 
     map.on("load", () => {
+      addBasemapLayers(map);
       map.addSource("counties", { type: "vector", tiles: [`${TILES}/counties/{z}/{x}/{y}`] });
       map.addSource("streams", { type: "vector", tiles: [`${TILES}/streams/{z}/{x}/{y}`] });
       map.addSource("scores", {
@@ -72,6 +82,16 @@ export function App() {
         paint: { "line-color": "#555", "line-width": 1.5, "line-dasharray": [3, 2] },
       });
 
+      // A white outline so streams stand out on imagery; showBasemap() sets how strong.
+      map.addLayer({
+        id: "streams-halo",
+        type: "line",
+        source: "streams",
+        "source-layer": "streams",
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": "#fff", "line-opacity": 0, "line-width": streamWidth(2) },
+      });
+
       // Bigger streams (higher order) draw wider and darker.
       map.addLayer({
         id: "streams",
@@ -81,15 +101,7 @@ export function App() {
         layout: { "line-cap": "round", "line-join": "round" },
         paint: {
           "line-color": ["interpolate", ["linear"], ["get", "stream_order"], 1, "#6baed6", 5, "#08306b"],
-          "line-width": [
-            "interpolate",
-            ["linear"],
-            ["zoom"],
-            9,
-            ["interpolate", ["linear"], ["get", "stream_order"], 1, 1, 5, 3],
-            14,
-            ["interpolate", ["linear"], ["get", "stream_order"], 1, 2.5, 5, 7],
-          ],
+          "line-width": streamWidth(),
         },
       });
 
@@ -105,6 +117,7 @@ export function App() {
       // Every perennial stream has a scored corridor, so the scores replace the streams layer when shown.
       for (const layer of SCORE_LAYERS) map.addLayer(layer);
       setScoresVisible(map, showScoresRef.current);
+      showBasemap(map, basemapRef.current);
 
       // With scores on, a click explains the score; with them off, it shows the stream's numbers.
       map.on("click", (e) => {
@@ -130,6 +143,12 @@ export function App() {
     if (mapRef.current?.getLayer("scores-hit")) setScoresVisible(mapRef.current, showScores);
   }, [showScores]);
 
+  useEffect(() => {
+    basemapRef.current = basemap;
+    saveBasemap(basemap);
+    if (mapRef.current?.getLayer("scores-hit")) showBasemap(mapRef.current, basemap);
+  }, [basemap]);
+
   return (
     <>
       <div ref={container} className="map" />
@@ -145,6 +164,7 @@ export function App() {
           Show hydro scores
         </label>
       </div>
+      <BasemapSwitcher value={basemap} onChange={setBasemap} />
       {showScores && <Legend />}
     </>
   );
