@@ -22,7 +22,7 @@ This is different from a real estate search. It starts from the terrain and wate
 | Loads the county boundary, every perennial (year-round) stream in the county and a 10 m elevation model into a local database and `data/raw/` | Low-flow estimates for small streams outside the Sequatchie River's basin (the Collins River side and Walden Ridge's Tennessee River slope) |
 | Records each stream's elevation drop, length, slope, drainage area and estimated mean flow | Parcels, ownership, soils, flood zones, roads |
 | Hydro corridors: the steepest 1,000 ft stretch of each stream (where one penstock would get the most drop), found on the elevation model | |
-| Map viewer: each stream's best stretch colored by its hydro score and styled by confidence, with a legend; click one for its score explained in plain words | |
+| Map viewer: each stream's best stretch colored by its hydro score and styled by confidence, with a legend; click one for its score explained in plain words. Light, satellite or topo map underneath | |
 | Hydro analysis: head over that stretch, reliable low flow (Q90 from USGS StreamStats, or, where StreamStats can't help, scaled from the Whitwell stream gauge or from the typical StreamStats yield of the surrounding river basin) and firm power, saved as a numbered run | |
 | Scoring and ranking: streams under 1 kW dropped, the rest scored 0–100 on power and head with an explanation for each score, and ranked by confidence | |
 | Exports: the ranked shortlist as CSV and GeoJSON, every stream with the reason it was or wasn't listed, and a summary report for planning visits | |
@@ -55,6 +55,7 @@ Public data services ──▶ hhsf (Python) ──▶ PostGIS database ──�
 | Frontend | [React](https://react.dev/) 18, TypeScript, [Vite](https://vite.dev/) | The web app |
 | | [MapLibre GL JS](https://maplibre.org/) | Interactive map |
 | | [OpenFreeMap](https://openfreemap.org/) | Free basemap tiles (no API key) |
+| | [USGS The National Map](https://www.usgs.gov/programs/national-geospatial-program/national-map) | Satellite and topo basemap tiles (no API key) |
 | Testing and tooling | pytest, [Testcontainers](https://testcontainers.com/), Ruff | Tests (including throwaway databases) and linting |
 
 ## System requirements
@@ -171,6 +172,18 @@ Open <http://localhost:5173>. The map shows the latest `make score` run (refresh
 | **Faint grey line** | Filtered out: under 1 kW, or too little drop for a turbine. |
 | **#12** labels (zoom in) | The stream's rank on the shortlist. |
 
+To change the map underneath, click the layers button (two stacked sheets) under the zoom buttons and pick a thumbnail. The map remembers your choice next time:
+
+| Map | Use it for |
+| --- | --- |
+| **Light** (default) | Reading the scores: plain grey streets and place names, so the colors stand out. |
+| **Satellite** | Scouting a visit: access roads, clearings, houses and tree cover around a stretch. Aerial photos from USDA's farm survey (NAIP), about 1 m per pixel, taken in summer. Street and place names stay on top. |
+| **Topo** | Terrain: USGS topo map with contour lines, so you can see how steep the ground is around a stretch. |
+
+Satellite and topo come from the USGS National Map and stop sharpening past about 1:9,000 (zoom 16); closer than that the map just enlarges them. On both, streams and scores get a white outline so they show up on the darker background.
+
+![The same stretch on the satellite map, with the map menu open: the top site sits in forest above a road and farm fields](docs/images/map-satellite.jpg)
+
 Click a stretch to see its score and why: how many points power and head each added, which part of the stream it is (how long the stretch is, and how long the whole stream is and how much it drops), the net head (ft), firm flow (cfs and gallons per minute), firm power (W), where the flow number came from, the confidence group and any warnings. Untick **Show hydro scores** to go back to plain streams (bigger streams darker), where a click shows elevation drop, length, slope, drainage area and estimated mean flow.
 
 ### Stopping
@@ -218,7 +231,7 @@ uv run hhsf --help
 | --- | --- |
 | `config/aoi/*.yaml` | Areas of interest. One file per county: Census ID, a buffer distance, (optionally) the river basins (HU4 codes) it spans, and (optionally) a reference stream gauge for low flows. Add a file to analyze another county; no code changes needed. If you leave out `huc4`, the basins are looked up automatically. |
 | `config/data_sources.yaml` | Where each dataset is downloaded from, plus license and version notes. `hydrography_source` picks the stream source: `bulk` (file download, default) or `service` (web service). The `streamstats` section lists its endpoints and how hard to call it. |
-| `config/hydro.yaml` | Hydro analysis assumptions: the longest penstock a corridor may assume (1,000 ft), efficiency, net-head and diversion allowances, the 1 kW target, and which StreamStats statistic to use. Values come from [docs/DECISIONS.md](docs/DECISIONS.md); change them here and re-run. |
+| `config/hydro.yaml` | Hydro analysis assumptions: the longest penstock a corridor may assume (1,000 ft), efficiency, net-head and diversion allowances, the 1 kW target, which StreamStats statistic to use, and where to ask StreamStats again when it outlines the wrong watershed (`pour_point_retry_shares`, `min_pour_point_area_share`). Values come from [docs/DECISIONS.md](docs/DECISIONS.md); change them here and re-run. |
 | `config/scoring_profiles/*.yaml` | Scoring rules: the 1 kW cutoff, the head and power breakpoints, the 70/30 weights and the confidence tiers. To change one, copy the file to a new version and score again (see [docs/SCORING.md](docs/SCORING.md)). |
 | `.env` (optional) | Override the database connection (`DATABASE_URL`). Copy from `.env.example`. Only needed if you change the database port. |
 
@@ -248,7 +261,7 @@ hydro-homestead/
 │   └── analysis/            # Hydro calculations, StreamStats client, scoring, runs, exports
 ├── migrations/versions/     # Database table definitions
 ├── martin/martin.yaml       # Which tables the tile server publishes
-├── frontend/                # React + MapLibre map app (src/scores.ts: score colors and popup)
+├── frontend/                # React + MapLibre map app (src/scores.ts: score colors and popup; src/basemaps.ts and BasemapControl.ts: light, satellite and topo maps)
 ├── tests/
 │   ├── unit/                # Fast, no Docker needed
 │   ├── integration/         # Starts a throwaway PostGIS in Docker
@@ -266,7 +279,8 @@ hydro-homestead/
 | Measured stream flow | [USGS NWIS](https://waterdata.usgs.gov/) daily flows at gauge 03571000 (Sequatchie River near Whitwell), and [WBD](https://www.usgs.gov/national-hydrography/watershed-boundary-dataset) basin boundaries (for the gauge's basin and the regional yield) | Public domain |
 | Elevation model (10 m) | [USGS 3DEP](https://www.usgs.gov/3d-elevation-program) 1/3 arc-second DEM, cloud-optimized GeoTIFF tiles from the National Map (only the part under the AOI's streams is downloaded: about 84 MB for Sequatchie) | Public domain |
 | Streams, elevations, drainage area, flow estimates | [USGS NHDPlus High Resolution](https://www.usgs.gov/national-hydrography/nhdplus-high-resolution) (final release; HU4 file geodatabases from the National Map, or its web service) | Public domain |
-| Basemap | [OpenFreeMap](https://openfreemap.org/), © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors | ODbL |
+| Basemap (Light) | [OpenFreeMap](https://openfreemap.org/), © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors | ODbL |
+| Basemap (Satellite, Topo) | [USGS The National Map](https://www.usgs.gov/programs/national-geospatial-program/national-map) tile services USGSImageryOnly (USDA NAIP aerial photos) and USGSTopo | Public domain |
 
 Planned sources (soils, flood zones, parcels, roads, building footprints, rainfall) are listed in [site-selection.md §4](site-selection.md).
 
@@ -311,7 +325,8 @@ uv run pytest --cov=hhsf.analysis --cov-report=term-missing
 
 | Problem | Fix |
 | --- | --- |
-| `make up` fails with "port is already allocated" | Another program is using 5433 or 3100. Change the left-hand port in `docker-compose.yml`; for 5433, also set `DATABASE_URL` in `.env`. |
+| `make up` fails with "port is already allocated" | Run `docker compose ls`. If it lists a project other than `hydro-homestead`, that's a second copy of this stack started from another folder (older checkouts named it after the folder): stop it with `docker compose -p <name> down`. Otherwise another program is using 5433 or 3100: change the left-hand port in `docker-compose.yml`, and for 5433 also set `DATABASE_URL` in `.env`. |
+| `make up` fails with "Can't locate revision" | The shared database was migrated by a newer branch than the one checked out (all checkouts and worktrees share one database). Run `make up` from that newer branch, or wait until it's merged and pull `main`. Don't delete the database to get past it; that loses every run. |
 | `make up` fails with "Cannot connect to the Docker daemon" | Start Docker Desktop or OrbStack. |
 | `make ingest` fails during a download | Run it again. Partial downloads are never reused; finished files in `data/raw/nhdplus_hr_bulk/` are. |
 | A downloaded file seems broken (errors opening a `.zip`) | Delete it from `data/raw/nhdplus_hr_bulk/` and run `make ingest` again. |

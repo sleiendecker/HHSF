@@ -30,12 +30,30 @@ function width(scale: number, extra = 0): ExpressionSpecification {
   return ["interpolate", ["linear"], ["zoom"], 9, 1.5 * scale + extra, 12, 3 * scale + extra, 15, 6 * scale + extra];
 }
 
+// A white outline under the shortlisted tiers, 2 px wider than each tier's line (and its casing) on
+// both sides; 1 px for head-only streams, which are many and would otherwise turn into white blobs.
+// Only drawn on the satellite and topo basemaps (src/basemaps.ts sets its opacity).
+function haloWidth(): ExpressionSpecification {
+  const tier = (medium: number, low: number, headOnly: number): ExpressionSpecification =>
+    ["match", ["get", "tier"], "medium", medium, "low", low, headOnly];
+  const at = (base: number): ExpressionSpecification => ["+", ["*", base, tier(1.6, 1.1, 0.8)], tier(4, 4, 2)];
+  return ["interpolate", ["linear"], ["zoom"], 9, at(1.5), 12, at(3), 15, at(6)];
+}
+
 const SOURCE = { source: "scores", "source-layer": "latest_hydro_scores" } as const;
 const ROUND = { "line-cap": "round", "line-join": "round" } as const;
 
-// Bottom to top: filtered-out, head only, low, medium. One layer per tier so each gets its own
+// Bottom to top: halo, filtered-out, head only, low, medium. One layer per tier so each gets its own
 // line style (MapLibre can't vary dashes per feature).
 export const SCORE_LAYERS: LayerSpecification[] = [
+  {
+    id: "scores-halo",
+    type: "line",
+    ...SOURCE,
+    filter: ["has", "tier"],
+    layout: ROUND,
+    paint: { "line-color": "#fff", "line-opacity": 0, "line-width": haloWidth() },
+  },
   {
     id: "scores-filtered",
     type: "line",

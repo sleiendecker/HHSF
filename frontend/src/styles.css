@@ -170,6 +170,66 @@ body,
   font-size: 12px;
 }
 
+/* Basemap menu (BasemapControl.ts): opens to the left of its button, in MapLibre's control style. */
+.basemap-ctrl {
+  position: relative;
+}
+
+.basemap-ctrl .maplibregl-ctrl-group button {
+  display: grid;
+  place-items: center;
+}
+
+.basemap-menu {
+  position: absolute;
+  top: 0;
+  right: calc(100% + 8px);
+  display: flex;
+  gap: 6px;
+  padding: 6px;
+  background: #fff;
+  border-radius: 4px;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.1);
+}
+
+.basemap-menu[hidden] {
+  display: none;
+}
+
+.basemap-menu button {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  align-items: center;
+  padding: 3px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  font: 12px system-ui, -apple-system, sans-serif;
+  color: #333;
+  cursor: pointer;
+}
+
+.basemap-menu button:hover {
+  background: #f0f0f0;
+}
+
+.basemap-menu img {
+  display: block;
+  border-radius: 3px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.15);
+  outline: 2px solid transparent;
+  outline-offset: 1px;
+}
+
+.basemap-menu button[aria-pressed="true"] {
+  font-weight: 700;
+}
+
+.basemap-menu button[aria-pressed="true"] img {
+  outline-color: #0a7cc1;
+}
+
 @media (max-width: 600px) {
   .legend {
     width: auto;
