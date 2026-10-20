@@ -1,12 +1,13 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import maplibregl, { type MapGeoJSONFeature } from "maplibre-gl";
+import { Legend } from "./Legend";
+import { CFS_TO_GPM, SCORE_LAYERS, scorePopupHtml } from "./scores";
 
 // Free basemap, no API key needed.
 const BASEMAP = "https://tiles.openfreemap.org/styles/positron";
 const TILES = `${window.location.origin}/tiles`;
 
 const M_TO_FT = 3.28084;
-const CFS_TO_GPM = 448.831;
 const SQKM_TO_ACRES = 247.105;
 
 function fmt(value: unknown, scale = 1, digits = 0): string {
@@ -31,8 +32,18 @@ function popupHtml(f: MapGeoJSONFeature): string {
     </div>`;
 }
 
+// Scores and plain streams are the same lines, so only one set shows at a time.
+function setScoresVisible(map: maplibregl.Map, visible: boolean) {
+  const show = (on: boolean) => (on ? "visible" : "none");
+  for (const layer of SCORE_LAYERS) map.setLayoutProperty(layer.id, "visibility", show(visible));
+  map.setLayoutProperty("streams", "visibility", show(!visible));
+}
+
 export function App() {
   const container = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<maplibregl.Map>();
+  const [showScores, setShowScores] = useState(true);
+  const showScoresRef = useRef(showScores);
 
   useEffect(() => {
     const map = new maplibregl.Map({
@@ -41,12 +52,17 @@ export function App() {
       center: [-85.42, 35.36],
       zoom: 10,
     });
+    mapRef.current = map;
     map.addControl(new maplibregl.NavigationControl(), "top-right");
     map.addControl(new maplibregl.ScaleControl({ unit: "imperial" }));
 
     map.on("load", () => {
       map.addSource("counties", { type: "vector", tiles: [`${TILES}/counties/{z}/{x}/{y}`] });
       map.addSource("streams", { type: "vector", tiles: [`${TILES}/streams/{z}/{x}/{y}`] });
+      map.addSource("scores", {
+        type: "vector",
+        tiles: [`${TILES}/latest_hydro_scores/{z}/{x}/{y}`],
+      });
 
       map.addLayer({
         id: "county-outline",
@@ -86,24 +102,50 @@ export function App() {
         paint: { "line-color": "#000", "line-opacity": 0, "line-width": 14 },
       });
 
-      map.on("click", "streams-hit", (e) => {
-        const feature = e.features?.[0];
-        if (feature) new maplibregl.Popup().setLngLat(e.lngLat).setHTML(popupHtml(feature)).addTo(map);
+      // Every perennial stream has a scored corridor, so the scores replace the streams layer when shown.
+      for (const layer of SCORE_LAYERS) map.addLayer(layer);
+      setScoresVisible(map, showScoresRef.current);
+
+      // With scores on, a click explains the score; with them off, it shows the stream's numbers.
+      map.on("click", (e) => {
+        const layer = showScoresRef.current ? "scores-hit" : "streams-hit";
+        // Where lines are close, prefer the best-ranked one under the pointer.
+        const byRank = (f: MapGeoJSONFeature) => (typeof f.properties.rank === "number" ? f.properties.rank : Infinity);
+        const [feature] = map.queryRenderedFeatures(e.point, { layers: [layer] }).sort((a, b) => byRank(a) - byRank(b));
+        if (!feature) return;
+        const html = showScoresRef.current ? scorePopupHtml(feature) : popupHtml(feature);
+        new maplibregl.Popup({ maxWidth: "340px" }).setLngLat(e.lngLat).setHTML(html).addTo(map);
       });
-      map.on("mouseenter", "streams-hit", () => (map.getCanvas().style.cursor = "pointer"));
-      map.on("mouseleave", "streams-hit", () => (map.getCanvas().style.cursor = ""));
+      for (const layer of ["scores-hit", "streams-hit"]) {
+        map.on("mouseenter", layer, () => (map.getCanvas().style.cursor = "pointer"));
+        map.on("mouseleave", layer, () => (map.getCanvas().style.cursor = ""));
+      }
     });
 
     return () => map.remove();
   }, []);
+
+  useEffect(() => {
+    showScoresRef.current = showScores;
+    if (mapRef.current?.getLayer("scores-hit")) setScoresVisible(mapRef.current, showScores);
+  }, [showScores]);
 
   return (
     <>
       <div ref={container} className="map" />
       <div className="panel">
         <h1>Hydro Homestead Site Finder</h1>
-        <p>Perennial streams in Sequatchie County, TN. Click a stream for its numbers.</p>
+        <p>
+          {showScores
+            ? "Year-round streams in Sequatchie County, TN, colored by how well they could power a homestead. Click a stream to see why it scored what it did."
+            : "Perennial streams in Sequatchie County, TN. Click a stream for its numbers."}
+        </p>
+        <label className="toggle">
+          <input type="checkbox" checked={showScores} onChange={(e) => setShowScores(e.target.checked)} />
+          Show hydro scores
+        </label>
       </div>
+      {showScores && <Legend />}
     </>
   );
 }

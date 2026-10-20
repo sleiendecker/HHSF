@@ -21,9 +21,9 @@ This is different from a real estate search. It starts from the terrain and wate
 | --- | --- |
 | Loads the county boundary and every perennial (year-round) stream in the county into a local database | Hydro corridor detection (finding the steepest usable stretch of each stream; today each whole stream is one corridor) |
 | Records each stream's elevation drop, length, slope, drainage area and estimated mean flow | Low-flow estimates for small streams on the Collins River side of the county |
-| Map viewer: click any stream to see its numbers | Scores drawn on the map (the tile server already publishes them as `latest_hydro_scores`) |
-| Hydro analysis: head, reliable low flow (Q90 from USGS StreamStats, or scaled from the Whitwell stream gauge where StreamStats can't help) and firm power for every stream, saved as a numbered run | Corridors on the map |
-| Scoring and ranking: streams under 1 kW dropped, the rest scored 0–100 on power and head with an explanation for each score, and ranked by confidence | Parcels, ownership, soils, flood zones, roads |
+| Map viewer: every stream colored by its hydro score and styled by confidence, with a legend; click a stream for its score explained in plain words | Corridors on the map (once the steepest-stretch search exists) |
+| Hydro analysis: head, reliable low flow (Q90 from USGS StreamStats, or scaled from the Whitwell stream gauge where StreamStats can't help) and firm power for every stream, saved as a numbered run | Parcels, ownership, soils, flood zones, roads |
+| Scoring and ranking: streams under 1 kW dropped, the rest scored 0–100 on power and head with an explanation for each score, and ranked by confidence | |
 | Exports: the ranked shortlist as CSV and GeoJSON, every stream with the reason it was or wasn't listed, and a summary report for planning visits | |
 
 ## How it works
@@ -154,7 +154,20 @@ Exporting again overwrites that run's folder; earlier runs' folders are kept. `u
 make web
 ```
 
-Open <http://localhost:5173>. Click any stream to see its elevation drop, length, slope, drainage area and estimated flow.
+Open <http://localhost:5173>. The map shows the latest `make score` run (refresh the page after scoring again):
+
+![The map: streams colored by hydro score, with the legend and a stream's score explained](docs/images/map-scores.jpg)
+
+| On the map | What it means |
+| --- | --- |
+| **Color** (light amber to dark brown) | Hydro score, 35 to 100. Darker means more power and more drop. About 35 is a stream that just reaches 1 kW. |
+| **Thick solid line with a dark outline** | Medium confidence: the low flow is a USGS StreamStats estimate. These rank above everything else. |
+| **Dashed line** | Low confidence: the flow is a rougher estimate, usually scaled from the Whitwell gauge, which runs high (treat it as an upper bound). |
+| **Purple dotted line** | Head only: the basin is too small for any flow estimate, so it's ranked on drop alone. Check the flow on a visit. |
+| **Faint grey line** | Filtered out: under 1 kW, or too little drop for a turbine. |
+| **#12** labels (zoom in) | The stream's rank on the shortlist. |
+
+Click a stream to see its score and why: how many points power and head each added, the net head (ft), firm flow (cfs and gallons per minute), firm power (W), where the flow number came from, the confidence group and any warnings. Untick **Show hydro scores** to go back to plain streams (bigger streams darker), where a click shows elevation drop, length, slope, drainage area and estimated mean flow.
 
 ### Stopping
 
@@ -210,6 +223,7 @@ hydro-homestead/
 ├── docs/DECISIONS.md        # Judgment calls and their current answers
 ├── docs/ASSUMPTIONS.md      # How hydro numbers are calculated
 ├── docs/SCORING.md          # How corridors are scored and ranked
+├── docs/images/             # Screenshots for this README
 ├── Makefile                 # Common commands
 ├── docker-compose.yml       # PostGIS + Martin
 ├── pyproject.toml           # Python dependencies and tool settings
@@ -226,7 +240,7 @@ hydro-homestead/
 │   └── analysis/            # Hydro calculations, StreamStats client, scoring, runs, exports
 ├── migrations/versions/     # Database table definitions
 ├── martin/martin.yaml       # Which tables the tile server publishes
-├── frontend/                # React + MapLibre map app
+├── frontend/                # React + MapLibre map app (src/scores.ts: score colors and popup)
 ├── tests/
 │   ├── unit/                # Fast, no Docker needed
 │   ├── integration/         # Starts a throwaway PostGIS in Docker
@@ -273,6 +287,7 @@ uv run pytest --cov=hhsf.analysis --cov-report=term-missing
 - **Most streams are too small for the low-flow equations.** Tennessee's equations only apply to basins of 1.3 sq mi or more; 635 of Sequatchie's 989 perennial reaches are smaller. On the Sequatchie River side they now get the low-confidence gauge estimate; on the Collins River side they keep their head but get no flow or power estimate (`below_applicability`), as [DECISIONS.md D-09](docs/DECISIONS.md) says.
 - **Power is per whole stream reach.** Until the steepest-stretch search (D-08) exists, power assumes a penstock the length of the whole reach, which overstates long reaches (the largest is over 200 kW). It also skews the ranking: the top medium-confidence streams show over 800 ft of drop, which is the whole reach, not what one penstock would capture. Treat the order within each confidence group as rough until D-08 is built. See [docs/ASSUMPTIONS.md](docs/ASSUMPTIONS.md).
 - **Most of the ranked list has no flow estimate.** Of the 349 streams `make score` ranks, 283 are "head only": their basins are too small for any flow estimate, so they're ranked on drop alone, below every stream with a power estimate. They need a dry-season flow check on the visit. A better small-basin estimate (for example a second gauge for the Collins River side) would help most. See [docs/SCORING.md](docs/SCORING.md).
+- **A long stream can show its rank label twice on the map.** Map tiles cut streams at tile edges and each piece gets a label. Both labels are the same stream; click either for its details.
 
 ### Upcoming (will block later milestones)
 
@@ -292,6 +307,8 @@ uv run pytest --cov=hhsf.analysis --cov-report=term-missing
 | `--source service` fails with "Query failed after 4 attempts" | The USGS service timed out. Run it again; finished boxes are reused. |
 | `make analyze` says "StreamStats looks unavailable" | The USGS service is down or overloaded. The run still finishes with flagged fallback flows; run it again later to get Q90. |
 | The map shows no streams | Check `make ingest` finished, and that <http://localhost:3100/catalog> lists `streams`. |
+| Every stream is grey, or none are colored | Run `make score`, then refresh the page. The colors come from the latest score run. |
+| Popups have no score breakdown or flags | Run `make up` again: it applies the newest database migration and restarts the tile server. |
 | Tests fail to start a container | Docker must be running for integration tests. Run `uv run pytest tests/unit` to skip them. |
 
 ## Roadmap
@@ -301,5 +318,5 @@ From [site-selection.md §7](site-selection.md):
 1. ~~Project skeleton, database, stream ingest, map~~
 2. ~~Hydro analysis: head, reliable low flow from StreamStats, firm power per stream~~ Still to do: the steepest usable stretch within each stream (needs terrain data), and a gauge for the Collins River side
 3. ~~Scoring and ranking against the 1 kW minimum, with an explanation for every score~~ Still to do: the original FR-3 weight table as a fallback profile, and the weighting sensitivity check
-4. ~~Exports (CSV, GeoJSON) and a summary report~~ (this version). Still to do: draw the scores on the map
+4. ~~Exports (CSV, GeoJSON), a summary report, and the scores on the map~~ (this version)
 5. Then: parcels and ownership, soils, flood zones, roads and drive time, and the full Chattanooga region
