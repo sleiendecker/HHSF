@@ -6,21 +6,74 @@ How `hhsf analyze hydro` turns each stream reach into head, firm flow and firm p
 
 ## What one row in `hydro_corridors` is
 
-For now a **corridor is a whole perennial stream reach** (one NHDPlus HR flowline), so there is one row per reach per run. NHDPlus only records elevations at each reach's two ends, so finding the steepest 1,000 ft stretch inside a reach ([D-08](DECISIONS.md#d-08--what-counts-as-one-corridor-measure)) needs a terrain model (3DEP DEM), which isn't loaded yet. The table already has `from_measure` / `to_measure` (percent along the reach, 0 = downstream end) so a later version can store just a sub-stretch without changing the schema. Today they are always 0 and 100.
+A **corridor is the steepest stretch of one perennial stream reach** (one NHDPlus HR flowline) that a single penstock could cover ([D-08](DECISIONS.md#d-08--what-counts-as-one-corridor-measure)): at most **1,000 ft** (`corridor.penstock_length_ft` in `config/hydro.yaml`). There is still one row per reach per run, but its geometry, length, head and power are for that stretch only:
 
-**Consequence:** head and power are for the *whole* reach, as if the penstock ran its full length. On long reaches (main stems especially) that overstates what a homestead system could capture. Treat the power numbers as "how much energy this reach has", not "what one penstock would deliver", until D-08 is built.
+| Column | Meaning |
+| --- | --- |
+| `geom` | Just the stretch, drawn upstream to downstream. Its first point is where an intake would go, its last point where the turbine would go. |
+| `length_m` | The stretch's length along the stream (at most 304.8 m). A reach shorter than that is one stretch, end to end. |
+| `from_measure`, `to_measure` | Where the stretch sits on its reach, in percent along the reach with **0 at the downstream end** (the NHDPlus convention). `from_measure` is the stretch's bottom, `to_measure` its top. A whole reach is 0 to 100. |
+| `head_method` | `dem_3dep_steepest_stretch` for a stretch; `nhdplus_vaa_smoothed_reach` for the older whole-reach method (runs made with `--no-terrain`, and every run before this change). |
+
+Of Sequatchie's 989 perennial reaches, 878 are longer than 1,000 ft, so their corridor is part of the reach; the other 111 are whole reaches.
+
+**Flow stays the reach's.** D-08 only changes where the head comes from. The drainage area, and so the flow, is still measured at the reach's downstream end (its pour point). A stretch near the top of a long reach drains a little less than that, so its flow and power are slightly high. Reaches are short enough (median 880 m) that this is small next to the flow estimate's own error.
+
+### How the steepest stretch is found
+
+Code: `src/hhsf/analysis/stretch.py`. Elevations come from the **USGS 3DEP 1/3 arc-second DEM** (about 10 m cells, meters above NAVD88), loaded by `hhsf ingest terrain` (part of `make ingest`).
+
+1. **Sample** the DEM every **10 m** along the reach (`corridor.sample_spacing_m`), upstream to downstream, measured in EPSG:5070. Each sample takes the value of the DEM cell it falls in.
+2. **Clean the profile** so it never rises going downstream: each sample is lowered to the lowest elevation above it (a "carve"). That removes bumps where a road fill or culvert crosses the stream, or where the NHDPlus line strays onto a bank. Then the profile is kept between NHDPlus's smoothed elevations for the reach's two ends (`max_elev_m`, `min_elev_m`), so **a stretch never drops more than NHDPlus says the whole reach does**.
+3. **Slide a 1,000 ft window** down the cleaned profile, starting at every sample, and keep the one with the most drop. The window's bottom elevation is interpolated between samples, so the stretch is exactly 1,000 ft. If several windows tie (a flat reach, or a uniform slope), the most downstream one wins: it has the most water.
+4. **Gross head** is that drop; net head, firm power and the score follow as below.
+
+If part of a reach is off the DEM or on a cell with no data, its head is NULL with `head_flag = no_terrain_data` (none in Sequatchie: the DEM covers every loaded stream plus about 500 m). If a flowline has pieces that don't join, `head_flag = reach_not_one_line` (none in Sequatchie either).
+
+**What it changed in Sequatchie** (2026-10-19, hydro run 22 vs. the whole-reach run 12):
+
+| | Whole reach | Steepest 1,000 ft |
+| --- | --- | --- |
+| Median gross head | 27 m (88 ft) | 13 m (42 ft) |
+| 90th percentile | 122 m (401 ft) | 64 m (209 ft) |
+| Largest net head ranked with a flow estimate | 1,101 ft | 414 ft |
+| Reaches at or above 1 kW | 66 (14 medium confidence) | 19 (1 medium confidence) |
+
+The biggest stretch drops are real: the streams coming off the Cumberland Plateau escarpment into the Sequatchie Valley fall 150–250 m in under 500 m, and NHDPlus agrees. 31 of the 878 long reaches hit the NHDPlus cap in step 2 (the DEM saw at least the whole reach's drop within one window).
+
+**Limits:**
+
+- **Penstock length is measured along the stream.** A real penstock can cut across bends, so on a winding stream it could reach a little more drop for the same pipe length. The search doesn't try to route a pipe.
+- **10 m cells blur narrow features.** A small waterfall or a ravine narrower than a cell or two can be under- or over-stated by a few meters. Confirm the drop on the visit (or with 1 m LiDAR, later).
+- **The NHDPlus line and the DEM channel don't always line up.** Where the line runs along a bank, samples read high; the carve and the NHDPlus cap remove most of that, but not all.
+
+**Changing the length:** set `corridor.penstock_length_ft` in `config/hydro.yaml`, or for one run, `uv run hhsf analyze hydro --penstock-ft 2000`. The D-08 sensitivity check on 2026-10-19 gave:
+
+| Longest penstock | Reaches at or above 1 kW | of them medium confidence | Head-only corridors ranked |
+| --- | --- | --- | --- |
+| 500 ft | 14 | 0 | 258 |
+| **1,000 ft (default)** | **19** | **1** | **272** |
+| 2,000 ft | 33 | 3 | 275 |
+| Whole reach (old method) | 66 | 14 | 283 |
 
 ## Metrics
 
 ### Gross head (`gross_head_m`)
 
-**Definition** ([site-selection.md B9](../site-selection.md)): the elevation drop between the reach's upstream and downstream ends, from NHDPlus HR **smoothed** elevations:
+**Default (`head_method = dem_3dep_steepest_stretch`):** the drop over the corridor's stretch, from the cleaned 3DEP profile described [above](#how-the-steepest-stretch-is-found):
+
+```
+gross_head_m = elevation at the stretch's top − elevation at its bottom     (3DEP DEM, m)
+```
+
+A flat stretch has head **0**, a real value.
+
+**Whole reach (`head_method = nhdplus_vaa_smoothed_reach`, `--no-terrain` runs and older runs)** ([site-selection.md B9](../site-selection.md)): the elevation drop between the reach's upstream and downstream ends, from NHDPlus HR **smoothed** elevations:
 
 ```
 gross_head_m = max_elev_m − min_elev_m        (NHDPlus maxelevsmo − minelevsmo, cm → m)
 ```
 
-- `head_method = nhdplus_vaa_smoothed_reach`
 - Smoothing makes elevations never rise going downstream, so gross head is never negative. A flat reach has head **0** (29 reaches in Sequatchie), which is a real value, not missing data.
 - If either elevation is missing: NULL, `head_flag = missing_elevation`. If the data says the stream rises downstream: NULL, `head_flag = elevation_rises_downstream`. (Neither happens in Sequatchie today.)
 - Smoothed elevations come from the 10 m-era NHDPlus DEM processing, not survey. Expect errors of a few meters; a site visit (or later, 1 m LiDAR) confirms the real drop.
@@ -33,9 +86,9 @@ net_head_m = gross_head_m × 0.85              (D-07)
 
 A planning allowance for pipe friction in a reasonably sized penstock. Real losses depend on pipe diameter and length and are worked out per site later.
 
-### Reach length (`length_m`)
+### Corridor length (`length_m`)
 
-Copied from `streams.length_m`, which is measured in EPSG:5070 (equal-area, meters) per the CRS contract in `src/hhsf/core/crs.py`.
+The stretch's length along the stream (at most the penstock length), or for a whole-reach corridor, `streams.length_m`. Both are measured in EPSG:5070 (equal-area, meters) per the CRS contract in `src/hhsf/core/crs.py`. The whole reach's length is still in `streams.length_m`.
 
 ### Drainage area (`drainage_area_sqkm`)
 
@@ -49,6 +102,7 @@ Target statistic: **Q90**, the flow met or exceeded 90% of the time ([D-04](DECI
 | --- | --- | --- | --- | --- |
 | StreamStats Q90, all basin characteristics inside the equation's limits | StreamStats D90 | `streamstats_q90` | `medium` | — |
 | StreamStats Q90, some characteristic other than drainage area outside the limits | StreamStats D90 | `streamstats_q90` | `low` | `out_of_range:<CODE>` |
+| The outlet's basin was the wrong one, but a point further up the reach found the right one | StreamStats D90 there × (outlet area ÷ area there) | `streamstats_q90` | `medium` (or `low` if out of range) | `streamstats_pour_point_moved` |
 | No StreamStats Q90 (basin too small, service down, failed for this point, wrong basin, or switched off), and the reach drains to the AOI's reference gauge's basin | Gauge Q90 × (reach area ÷ gauge area) | `gauge_drainage_area_ratio` | `low` | the reason (e.g. `below_regression_min_drainage_area`), plus `area_ratio_outside_0.5_1.5` when it applies |
 | Basin smaller than the regression's minimum drainage area (1.3 sq mi), not in the gauge's basin | **NULL** | — | `below_applicability` | `below_regression_min_drainage_area` |
 | StreamStats down, failed for this point, delineated the wrong basin, or switched off, not in the gauge's basin | NHDPlus EROM **mean annual** flow | `nhdplus_erom` | `low` | the reason, plus `mean_flow_not_q90` |
@@ -58,11 +112,22 @@ Notes:
 
 - **Why "medium" and never "high":** the Tennessee flow-duration equations (Law and others, 2009, USGS SIR 2009-5159) have an average standard error of prediction of about **60% for D90**. The value is stored in `flow_std_error_pct`.
 - **Minimum drainage area:** 1.3 sq mi (3.37 km²) for the Central and East Tennessee region (`GC1419`, which covers Sequatchie); 2.0 sq mi for West Tennessee (`GC1418`). StreamStats will happily extrapolate below the limit and only add a warning, so the tool checks the limit itself. Below it there is no flow estimate at all ([D-09](DECISIONS.md#d-09--small-streams-below-streamstats-applicability-limit-measure)): the corridor keeps its head and is marked `below_applicability` instead of being dropped.
-- **In Sequatchie, 635 of 989 reaches (64%) are below the minimum.** Only 354 are big enough for the regression. That's the share D-09 said to measure. The reaches on the Sequatchie River side now get a gauge-transfer estimate (below); the Collins River side isn't covered yet and stays NULL.
+- **In Sequatchie, 635 of 989 reaches (64%) are below the minimum.** Only 354 are big enough for the regression. That's the share D-09 said to measure. The reaches in the Sequatchie River's basin now get a gauge-transfer estimate (below); the rest of the county isn't covered yet and stays NULL.
 - **The fallback overstates flow.** EROM mean annual flow is always higher than Q90, often by a large factor on small streams. It's used only so a corridor isn't left blank when StreamStats is down; the `low` confidence and `mean_flow_not_q90` flag mark it. Re-run once StreamStats is back to replace these values.
-- **Wrong-basin check:** StreamStats snaps the pour point to its own stream grid. If the basin it delineates differs from the NHDPlus drainage area by more than 25%, it probably snapped to a different stream, so its estimate is discarded (`streamstats_drainage_area_mismatch`).
+- **Wrong-basin check:** StreamStats snaps the pour point to its own stream grid. If the basin it delineates differs from the NHDPlus drainage area by more than 25%, it probably snapped to a different stream. The tool then tries points further up the reach; see [When StreamStats snaps to the wrong stream](#when-streamstats-snaps-to-the-wrong-stream).
 - **Pour point:** 30 m above the reach's downstream end (at most 10% of the reach), so StreamStats doesn't snap onto the confluence with the next reach. NHDPlus flowlines are drawn upstream to downstream; this was checked on the loaded data (every end-to-start connection goes to an equal or larger drainage area).
 - `mean_flow_cfs` (EROM) is copied onto every row for reference, whatever method was used.
+
+### When StreamStats snaps to the wrong stream
+
+StreamStats doesn't use the NHDPlus flowline. It moves the pour point onto the nearest cell of its own 10 m stream grid, and the two don't always line up. Near a confluence the point can land on the bigger stream (Conner Creek's outlet came back as a 31.9 km² basin instead of 8.6 km²); elsewhere it lands on a hillside cell that drains almost nothing (Cain Creek: 0.6 km² instead of 55.7 km²). So every answer is checked, and a wrong one gets a second try:
+
+1. **Check at the outlet.** If StreamStats' drainage area (`DRNAREA`) differs from NHDPlus's by more than 25% (`max_drainage_area_mismatch`), it's the wrong basin.
+2. **Try further up the reach.** The tool asks again at 25%, 50% and 75% of the reach's length up from its downstream end (`pour_point_retry_shares` in `config/hydro.yaml`) and keeps the first point whose basin passes the same 25% check against the NHDPlus drainage area *at that point*. NHDPlus only gives the area at a reach's outlet, so the area partway up is a straight line between the outlet and the reach's top, where it's the sum of the streams flowing in (zero for a headwater).
+3. **Scale back to the outlet.** The Q90 found there is multiplied by outlet area ÷ area at the point, the same drainage-area ratio the gauge transfer uses. Points that drain less than half the outlet's area are skipped (`min_pour_point_area_share`), so the step is small, and the regression's own exponent on drainage area is 1.045, so straight scaling is close to what it would give. Confidence stays `medium`: the ~60% regression error dwarfs this step. `flow_flags` gets `streamstats_pour_point_moved`, and `streamstats_drainage_area_sqkm` holds the area StreamStats found at the moved point.
+4. **If no point matches,** the estimate is discarded (`streamstats_drainage_area_mismatch`) and the gauge or EROM fallback applies.
+
+**In Sequatchie** (hydro run 24, 2026-10-19), 22 reaches failed the check at the outlet. The retry found the right basin for 18 of them, which were all the reaches that had been on the EROM mean-flow fallback. Their Q90s work out to 0.015–0.019 cfs per sq mi, in line with the other StreamStats reaches (median 0.018). The EROM mean flow they had before was 130–190× that, which had put 13 of them on the 1 kW shortlist at 1–21 kW. On Q90 the best of them gives 159 W. The other 4 stay on the gauge transfer: three unnamed 176 km² reaches where StreamStats returns no usable basin at any point, and Minton Branch, about 30% off at every point. No reach is on the EROM fallback any more, unless StreamStats is down.
 
 ### Gauge transfer (drainage-area ratio)
 
@@ -74,7 +139,9 @@ Q90_reach = Q90_gauge × (drainage_area_reach ÷ drainage_area_gauge)
 
 - **Gauge:** set per AOI in `config/aoi/<key>.yaml` (`reference_gauge`). For Sequatchie: **USGS 03571000, Sequatchie River near Whitwell, TN**, 402 sq mi, in the Sequatchie HUC8 basin (`06020004`).
 - **Gauge Q90:** the 10th percentile of approved daily mean flows (NWIS, parameter 00060), water years 2002–2025 (`config/hydro.yaml`, `gauge_transfer`). For Whitwell: **77.2 cfs from 8,400 days**, or 0.19 cfs per sq mi. (Mean flow over the same period is 803 cfs, about 10× Q90, which shows how much the EROM mean-flow fallback overstates firm flow.) A gauge with less than 10 years of approved record is refused.
-- **Which reaches:** only those whose downstream end is inside the gauge's HUC8 (from the Watershed Boundary Dataset): 522 of Sequatchie's 989. The other 467 drain to the Collins River (Cumberland basin, HUC8 `05130107`) and keep the StreamStats/EROM/NULL rules above. That basin has its own long-record gauge, Collins River near McMinnville (03421000, daily record since 1924), which could cover them the same way if the AOI allowed more than one reference gauge.
+- **Which reaches:** only those whose downstream end is inside the gauge's HUC8 (from the Watershed Boundary Dataset): 522 of Sequatchie's 989. The other 467 keep the StreamStats/EROM/NULL rules above. They're in two places (checked 2026-10-19 from NHDPlus region codes and the HUC8 StreamStats reports for each pour point):
+  - **285 drain east off Walden Ridge to the Tennessee River** (Middle Tennessee-Chickamauga, HUC8 `06020001`): Soddy, North Suck, Cain, Conner and Brock Creeks and their tributaries.
+  - **182 drain west to the Cumberland**, mostly the Collins River (HUC8 `05130107`), a few the Caney Fork (`05130108`). Collins River near McMinnville (03421000, daily record since 1924) could cover these the same way if the AOI allowed more than one reference gauge. It wouldn't help the Walden Ridge streams, which need a gauge of their own.
 - **Confidence is always `low`.** The method assumes every square mile of the basin yields the same low flow. The usual guidance is to trust it for basins between half and one and a half times the gauge's size; every reach in the county is far smaller (largest ratio ≈ 0.17), so every transferred value also carries `area_ratio_outside_0.5_1.5`. `flow_reference_gauge` and `flow_drainage_area_ratio` record the gauge and ratio used.
 - **Basins below the regression minimum** get a transferred value too, with `below_regression_min_drainage_area` kept in `flow_flags` so D-09 sites can still be picked out.
 - **StreamStats wins** wherever it gives an in-range Q90; the gauge only fills gaps.
@@ -124,8 +191,15 @@ Endpoints, limits and timeouts are in [`config/data_sources.yaml`](../config/dat
 - **Status:** on 2026-10-18 steps 1, 2 and 4 worked but step 3 (`ss-hydro`) returned **502 Bad Gateway** all day. It was back on 2026-10-19, and its responses parse correctly (a list of `{code, value}` items). It's slow under load: delineations took up to ~15 s, and a full Sequatchie run took about 30 minutes (2026-10-19).
 - The older `streamstatsservices/` endpoints are gone (404).
 
+## Terrain (3DEP)
+
+- **Source:** USGS 3D Elevation Program, 1/3 arc-second seamless DEM, "current" tiles on the National Map's S3 bucket (`config/data_sources.yaml`, `usgs_3dep_13`). Public domain.
+- **What's downloaded:** USGS publishes 1×1 degree tiles; all of Sequatchie's streams sit in one, `n36w086` (472 MB, last updated 2026-04-29). The tiles are cloud-optimized GeoTIFFs, so `hhsf ingest terrain` reads only the part under the AOI's streams (plus about 500 m) over HTTP: **about 84 MB transferred, saved as a 48 MB file**, `data/raw/usgs_3dep_13/sequatchie_tn.tif`, in about 20 seconds. Re-running reuses the file unless the streams reach past it. The cells are copied as they are (same NAD83 grid, no resampling).
+- **Provenance:** the tile names and last-modified dates go into `data_sources.version` and each run's `data_source_versions`.
+- USGS rebuilds the 1/3 arc-second DEM from the best elevation source it has for each area (LiDAR where it exists), so it can be newer than the elevations NHDPlus HR was built on. Expect the two to differ by a few meters in places; the NHDPlus cap above keeps a stretch from claiming more drop than NHDPlus gives the whole reach.
+
 ## Runs
 
-- Every `hhsf analyze hydro` writes a new `analysis_runs` row (`analysis = 'hydro'`) with the AOI, `git describe` code version, the data source versions, every assumption above (`params`), and a summary of counts. Its corridors carry that `run_id`; earlier runs are never changed.
+- Every `hhsf analyze hydro` writes a new `analysis_runs` row (`analysis = 'hydro'`) with the AOI, `git describe` code version, the data source versions, every assumption above (`params`, including `corridor_method` and the penstock length), and a summary of counts. Its corridors carry that `run_id`; earlier runs are never changed.
 - `status` is `running` while it works, `finished` when saved, `failed` if it crashed (with no corridors).
 - To read the latest run: `SELECT * FROM hydro_corridors WHERE run_id = (SELECT max(run_id) FROM analysis_runs WHERE analysis = 'hydro' AND status = 'finished')`.

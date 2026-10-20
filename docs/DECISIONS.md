@@ -69,6 +69,8 @@ Candidates from the plan: Hamilton, Sequatchie, Marion, Bledsoe, Rhea (TN); poss
 
 **Q90**: the flow the stream meets or beats 90% of the time, from the StreamStats flow-duration estimate. Micro-hydro sized on mean annual flow sits idle or under-produces for much of the dry season, so we use firm flow. Q95 is the more conservative alternative.
 
+Open call (2026-10-19): when StreamStats outlines the wrong basin at a reach's outlet, its Q90 from a point further up the reach (scaled to the outlet by drainage area) is still treated as a StreamStats Q90 at **medium** confidence, flagged `streamstats_pour_point_moved`. The scaling step is small next to the regression's ~60% error. The alternative was to rank such sites below other StreamStats sites. See [ASSUMPTIONS.md](ASSUMPTIONS.md#when-streamstats-snaps-to-the-wrong-stream).
+
 ### D-05 · Fraction of stream flow that can be diverted: **Default**
 
 **50% of Q90.** Permits usually require leaving water in the stream (a bypass flow). This is a planning placeholder, not a regulatory answer: TDEC ARAP permitting decides the real number site by site.
@@ -90,6 +92,17 @@ Candidates from the plan: Hamilton, Sequatchie, Marion, Bledsoe, Rhea (TN); poss
 A whole stream reach is the wrong unit: the useful part is usually its steepest stretch. A corridor will be **the best head gain within a sliding penstock length** along a reach.
 
 Starting value: **1,000 ft of penstock**. We'll compare 500, 1,000 and 2,000 ft. Penstock length is a major cost driver, so this trades power against cost.
+
+**Built** (2026-10-19): `make analyze` now finds each reach's steepest stretch on the USGS 3DEP 10 m elevation model. Value in `config/hydro.yaml` (`corridor.penstock_length_ft`); method in [ASSUMPTIONS.md](ASSUMPTIONS.md#how-the-steepest-stretch-is-found). First comparison: 14 / 19 / 33 streams reach 1 kW at 500 / 1,000 / 2,000 ft (0 / 1 / 3 of them at medium confidence), against 66 for whole reaches. Once wrong-basin StreamStats answers were retried (2026-10-19, see D-04), mean-flow sites dropped out and it's **1 / 6 / 19** (still 0 / 1 / 3 at medium confidence). So the window length matters a lot here and is worth a real conversation.
+
+Open calls made while building it (defaults, change in config or say so):
+
+- **Penstock length is measured along the stream**, not as a straight pipe. Conservative on winding streams.
+- **Elevations every 10 m** (about one per DEM cell, `corridor.sample_spacing_m`).
+- **The profile is cleaned** so it never rises downstream, and **capped by NHDPlus's end elevations** for the reach, so a stretch never claims more drop than NHDPlus gives the whole reach.
+- **Flow stays the reach's**, at its downstream end, even when the stretch is near the top. Slightly generous for stretches high on long reaches.
+- **Ties go to the most downstream stretch** (more water there).
+- **One stretch per reach.** A long reach with two good drops only gets its best one; adjacent reaches aren't joined into one stretch.
 
 ### D-09 · Small streams below StreamStats' applicability limit: **Measure**
 
@@ -138,3 +151,5 @@ Decisions that barely move the top 20 keep their default and stop being discusse
 | 2026-10-18 | D-01 | Confirmed as 1.0 kW initial minimum (shortlist filter) |
 | 2026-10-18 | D-02 | Search region: 1-hour drive from Chattanooga |
 | 2026-10-18 | — | Added "What the output is for": a shortlist for in-person visits and owner contact |
+| 2026-10-19 | D-08 | Built: steepest 1,000 ft stretch per reach on 3DEP; open calls listed under D-08 |
+| 2026-10-19 | D-04 | Wrong-basin StreamStats answers retried further up the reach; no corridor uses mean flow any more. Open call listed under D-04 |

@@ -18,7 +18,7 @@ ANALYSIS_EPSG = 5070
 
 
 @cache
-def _transformer(src: int | str, dst: int) -> Transformer:
+def _transformer(src: int | str, dst: int | str) -> Transformer:
     return Transformer.from_crs(src, dst, always_xy=True)
 
 
@@ -47,6 +47,13 @@ def file_to_storage(geom: BaseGeometry, file_crs: str) -> BaseGeometry:
     if horizontal.is_compound:  # e.g. "NAD83 + NAVD88 height": keep the NAD83 part
         horizontal = horizontal.sub_crs_list[0]
     return _project(shapely.force_2d(geom), horizontal.to_wkt(), STORAGE_EPSG)
+
+
+def analysis_xy_to_file(
+    x: np.ndarray, y: np.ndarray, file_crs: str
+) -> tuple[np.ndarray, np.ndarray]:
+    """Analysis-CRS coordinates in a raster file's own CRS (the 3DEP DEM is NAD83, EPSG:4269)."""
+    return _transformer(ANALYSIS_EPSG, file_crs).transform(x, y)
 
 
 def length_m(geom: BaseGeometry) -> float:

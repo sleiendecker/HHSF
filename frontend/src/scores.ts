@@ -3,6 +3,8 @@
 import type { ExpressionSpecification, LayerSpecification, MapGeoJSONFeature } from "maplibre-gl";
 
 export const CFS_TO_GPM = 448.831;
+const FT_PER_M = 3.28084;
+const FT_PER_MI = 5280;
 
 // Score color ramp, low to high (light amber to dark brown). Scored corridors run from
 // about 35 (1 kW, almost no head) to 100. Shared with the legend.
@@ -147,6 +149,8 @@ const FLAG_TEXT: Record<string, string> = {
   streamstats_not_used: "StreamStats wasn't used",
   streamstats_drainage_area_mismatch: "StreamStats outlined a different basin than this stream's, so its answer was ignored",
   streamstats_no_estimate: "StreamStats gave no low-flow number",
+  streamstats_pour_point_moved:
+    "StreamStats was asked a little way up the stream (its first answer outlined the wrong basin), then scaled to the stream's end",
   below_regression_min_drainage_area: "Basin is smaller than the low-flow equations allow (1.3 sq mi)",
   missing_drainage_area: "No drainage area in NHDPlus",
   missing_mean_flow: "No mean flow in NHDPlus",
@@ -191,6 +195,39 @@ function esc(value: unknown): string {
   return String(value ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 }
 
+function feet(m: unknown): number | undefined {
+  return typeof m === "number" ? m * FT_PER_M : undefined;
+}
+
+// "850 ft" or "1.4 mi".
+function distance(m: unknown): string {
+  const ft = feet(m);
+  if (ft === undefined) return "—";
+  return ft < FT_PER_MI ? `${fmt(Math.round(ft / 10) * 10)} ft` : `${fmt(ft / FT_PER_MI, 1)} mi`;
+}
+
+// Which part of the stream the corridor is (hydro_corridors.head_method, src/hhsf/analysis/stretch.py).
+function stretchText(p: Record<string, unknown>): string {
+  if (p.head_method !== "dem_3dep_steepest_stretch")
+    return (
+      `<b>Whole stream reach</b> (${distance(p.corridor_length_m)}): this run didn't use the elevation model, ` +
+      "so head assumes a penstock as long as the whole reach, which overstates long reaches."
+    );
+  const whole = typeof p.corridor_length_m === "number" && typeof p.reach_length_m === "number" &&
+    p.corridor_length_m >= p.reach_length_m - 1;
+  if (whole)
+    return (
+      `<b>The whole stream reach</b> (${distance(p.reach_length_m)}): it's shorter than the longest penstock ` +
+      "allowed, so one pipe could cover all of it."
+    );
+  const reachDrop = feet(p.reach_drop_m);
+  return (
+    `<b>The steepest ${distance(p.corridor_length_m)}</b> of a ${distance(p.reach_length_m)} stream reach` +
+    (reachDrop === undefined ? "" : ` that drops ${fmt(reachDrop)} ft in all`) +
+    ". Only that stretch is drawn: the intake would go at its upstream end, the turbine at its downstream end."
+  );
+}
+
 function headline(p: Record<string, unknown>): string {
   if (p.tier === "head_only")
     return `<div class="score-line"><span class="badge head-only">Head only</span> ranked #${p.rank} overall</div>`;
@@ -221,6 +258,7 @@ export function scorePopupHtml(f: MapGeoJSONFeature): string {
       <strong>${esc(p.stream_name ?? "Unnamed stream")}</strong>
       ${headline(p)}
       ${factors.length ? `<ul class="factors">${factors.map(factorLine).join("")}</ul>` : ""}
+      <p>${stretchText(p)}</p>
       <dl>
         <dt>Head (net drop)</dt><dd>${withUnit(p.net_head_ft, "ft")}</dd>
         <dt>Firm flow</dt><dd>${flow === undefined ? "—" : `${fmt(flow, 2)} cfs (${fmt(flow * CFS_TO_GPM)} gpm)`}</dd>

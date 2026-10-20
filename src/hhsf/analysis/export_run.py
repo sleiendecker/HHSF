@@ -75,11 +75,12 @@ def load_rows(conn: Connection, score_run_id: int) -> list[export.ExportRow]:
                    s.net_head_ft, c.firm_power_w, c.firm_flow_cfs, c.flow_method,
                    c.flow_confidence, c.flow_flags, c.drainage_area_sqkm, c.length_m,
                    ST_X(o.pt) AS outlet_lon, ST_Y(o.pt) AS outlet_lat, s.explanation,
-                   ST_AsGeoJSON(c.geom, 6) AS geometry
+                   ST_AsGeoJSON(c.geom, 6) AS geometry, st.length_m AS reach_length_m
             FROM hydro_scores s
             JOIN hydro_corridors c USING (corridor_id)
             JOIN streams st USING (stream_id)
-            -- NHDPlus draws flowlines upstream to downstream: the last point is the outlet.
+            -- NHDPlus draws flowlines upstream to downstream: the last point is the outlet
+            -- (for a stretch, its bottom: where the turbine would go).
             CROSS JOIN LATERAL (
                 SELECT ST_EndPoint(ST_GeometryN(c.geom, ST_NumGeometries(c.geom))) AS pt
             ) o

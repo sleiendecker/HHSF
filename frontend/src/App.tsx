@@ -137,7 +137,7 @@ export function App() {
         <h1>Hydro Homestead Site Finder</h1>
         <p>
           {showScores
-            ? "Year-round streams in Sequatchie County, TN, colored by how well they could power a homestead. Click a stream to see why it scored what it did."
+            ? "The steepest stretch (up to 1,000 ft) of each year-round stream in Sequatchie County, TN, colored by how well it could power a homestead. Click one to see why it scored what it did."
             : "Perennial streams in Sequatchie County, TN. Click a stream for its numbers."}
         </p>
         <label className="toggle">

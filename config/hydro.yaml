@@ -9,6 +9,13 @@ diversion_fraction: 0.5     # D-05: share of firm flow that can be diverted
 water_density_kg_m3: 1000
 gravity_m_s2: 9.81
 
+# D-08: a corridor is the steepest stretch of a reach that one penstock could cover,
+# found on the USGS 3DEP 1/3 arc-second DEM (`hhsf ingest terrain`). Flow stays the
+# reach's (at its downstream end). See docs/ASSUMPTIONS.md, "What one row is".
+corridor:
+  penstock_length_ft: 1000  # D-08 starting value; the sensitivity check compares 500 / 1,000 / 2,000
+  sample_spacing_m: 10      # one elevation sample about every DEM cell (open call, D-08)
+
 streamstats:
   region: TN
   statistic_group: 5        # Flow-Duration Statistics
@@ -26,6 +33,15 @@ streamstats:
   # Distance above the reach's downstream end to place the pour point, so it
   # doesn't snap to the confluence with the next reach (meters; at most 10% of the reach).
   pour_point_offset_m: 30
+  # If the outlet's basin doesn't match (a wrong snap), try again this share of
+  # the reach's length up from its downstream end, in order; the first point whose
+  # basin matches the NHDPlus drainage area there wins, and its Q90 is scaled to
+  # the outlet by drainage area. See docs/ASSUMPTIONS.md, "When StreamStats snaps
+  # to the wrong stream".
+  pour_point_retry_shares: [0.25, 0.5, 0.75]
+  # Skip a retry point that drains less than this share of the outlet's area, so
+  # the scaling back to the outlet stays a small step.
+  min_pour_point_area_share: 0.5
 
 # Fallback when StreamStats can't give a Q90: scale a nearby gauge's measured Q90
 # by drainage area. Only used for reaches that drain to the gauge's basin (the

@@ -116,10 +116,17 @@ def test_record_uses_readable_units_and_rounding():
     assert r["firm_flow_cfs"] == 0.2
     assert r["firm_flow_gpm"] == 90  # 0.2 cfs x 448.831
     assert r["drainage_area_sqmi"] == 1.0
-    assert r["reach_length_mi"] == 1.0
+    assert r["corridor_length_ft"] == 5280
+    assert r["reach_length_mi"] == 1.0  # no separate reach length: the corridor is the reach
     assert (r["outlet_lat"], r["outlet_lon"]) == (35.39, -85.39)
     assert r["flow_flags"] == "a; b"
     assert r["explanation"] == "Summary 1."
+
+
+def test_record_separates_stretch_and_reach_lengths():
+    r = export.record(row(length_m=304.8, reach_length_m=3218.688))
+    assert r["corridor_length_ft"] == 1000
+    assert r["reach_length_mi"] == 2.0
 
 
 def test_record_keeps_missing_values_missing():
@@ -188,6 +195,20 @@ def test_assumptions_come_from_run_params():
     assert a["Power target, below which corridors drop (D-01)"] == "1,000 W"
     assert a["Score weights (D-11)"] == "power 0.7, head 0.3"
     assert a["Ranking tiers, in order"] == "medium > low > head_only"
+
+
+def test_stretch_runs_say_how_long_the_penstock_is():
+    hydro = {**INFO.hydro_params["hydro"], "corridor": {"penstock_length_ft": 1000}}
+    params = {**INFO.hydro_params, "hydro": hydro, "corridor_method": "dem_3dep_steepest_stretch"}
+    info = replace(INFO, hydro_params=params)
+    assert dict(export.assumptions(info))["Corridor: longest penstock (ft, D-08)"] == "1,000"
+    assert "steepest 1,000 ft of each stream reach" in export.caveats(info)[0]
+
+
+def test_whole_reach_runs_say_so():
+    a = dict(export.assumptions(INFO))
+    assert a["Corridor: longest penstock (ft, D-08)"].startswith("whole stream reach")
+    assert export.caveats(INFO)[0].startswith("**Head and power are for the whole stream reach.**")
 
 
 def test_assumptions_follow_changed_params():

@@ -87,7 +87,8 @@ def test_latest_scores_view_carries_popup_columns(engine, hydro_run):  # noqa: F
     with engine.connect() as conn:
         rows = conn.execute(
             text(
-                "SELECT status, flow_flags, flow_reference_gauge, factors"
+                "SELECT status, flow_flags, flow_reference_gauge, factors, head_method,"
+                " corridor_length_m, reach_length_m, reach_drop_m"
                 " FROM latest_hydro_scores ORDER BY corridor_id"
             )
         ).all()
@@ -98,3 +99,7 @@ def test_latest_scores_view_carries_popup_columns(engine, hydro_run):  # noqa: F
         factors = json.loads(r.factors)
         assert all(keys <= f.keys() for f in factors)
         assert bool(factors) == (r.status in ("scored", "head_only"))
+        # Where the corridor sits on its reach (migration 0007); whole reaches in this run.
+        assert r.head_method == "nhdplus_vaa_smoothed_reach"
+        assert r.corridor_length_m == r.reach_length_m > 0
+        assert r.reach_drop_m >= 0

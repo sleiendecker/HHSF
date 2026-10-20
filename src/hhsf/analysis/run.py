@@ -2,8 +2,13 @@
 
 Each run gets an analysis_runs row holding every assumption it used, then one
 hydro_corridors row per reach. Earlier runs are kept, so results stay reproducible.
+
+With a DEM (the default from the CLI), each corridor is the reach's steepest stretch
+within the D-08 penstock length (analysis/stretch.py); without one it's the whole
+reach, with head from NHDPlus (the method before terrain was added).
 """
 
+import dataclasses
 import json
 import subprocess
 import threading
@@ -11,12 +16,14 @@ from collections import Counter
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from pathlib import Path
 
+import rasterio
 from shapely import wkb
 from shapely.geometry.base import BaseGeometry
 from sqlalchemy import Connection, Engine, text
 
-from hhsf.analysis import hydro
+from hhsf.analysis import hydro, stretch
 from hhsf.analysis.gauges import GaugeTransfer
 from hhsf.analysis.streamstats import (
     LowFlowSource,
@@ -24,9 +31,11 @@ from hhsf.analysis.streamstats import (
     ServiceConfig,
     ServiceUnavailable,
 )
+from hhsf.analysis.stretch import CorridorHead, Stretch
 from hhsf.core import crs
 from hhsf.core.config import AOI, REPO_ROOT, load_data_source
 from hhsf.core.db import record_source
+from hhsf.ingest import terrain
 from hhsf.ingest.hydrography import county_area, keep_area
 
 
@@ -40,6 +49,8 @@ class Reach:
     min_elev_m: float | None
     mean_flow_cfs: float | None
     geom: BaseGeometry
+    # What the reaches flowing into this one drain (None: a headwater, nothing flows in).
+    upstream_drainage_area_sqkm: float | None = None
 
 
 @dataclass
@@ -48,6 +59,8 @@ class Corridor:
     head: hydro.Head
     flow: hydro.Flow
     power: hydro.Power
+    head_method: str = hydro.HEAD_METHOD
+    stretch: Stretch | None = None  # None: the corridor is the whole reach
 
 
 def code_version() -> str:
@@ -65,18 +78,31 @@ def code_version() -> str:
 
 
 def load_reaches(conn: Connection, aoi: AOI) -> list[Reach]:
-    """Perennial reaches touching the AOI's county plus its buffer."""
+    """Perennial reaches touching the AOI's county plus its buffer.
+
+    A reach's upstream drainage area is the sum over the streams (any kind) whose
+    downstream end is its upstream end; flowlines are drawn upstream to downstream.
+    """
     keep = keep_area(aoi, county_area(conn, aoi))
     rows = conn.execute(
         text(
             """
-            SELECT stream_id, nhdplusid, length_m, drainage_area_sqkm, max_elev_m,
-                   min_elev_m, mean_flow_cfs, ST_AsBinary(geom)
-            FROM streams WHERE perennial ORDER BY stream_id
+            SELECT s.stream_id, s.nhdplusid, s.length_m, s.drainage_area_sqkm, s.max_elev_m,
+                   s.min_elev_m, s.mean_flow_cfs, ST_AsBinary(s.geom), up.drainage_area_sqkm
+            FROM streams s
+            LEFT JOIN LATERAL (
+                SELECT sum(u.drainage_area_sqkm) AS drainage_area_sqkm FROM streams u
+                WHERE u.geom && ST_StartPoint(ST_GeometryN(s.geom, 1))
+                  AND ST_Equals(
+                      ST_EndPoint(ST_GeometryN(u.geom, ST_NumGeometries(u.geom))),
+                      ST_StartPoint(ST_GeometryN(s.geom, 1))
+                  )
+            ) up ON true
+            WHERE s.perennial ORDER BY s.stream_id
             """
         )
     ).all()
-    reaches = [Reach(*row[:7], wkb.loads(bytes(row[7]))) for row in rows]
+    reaches = [Reach(*row[:7], wkb.loads(bytes(row[7])), row[8]) for row in rows]
     return [r for r in reaches if keep.intersects(crs.to_analysis(r.geom))]
 
 
@@ -104,22 +130,86 @@ class _Breaker:
             self.consecutive = 0 if ok else self.consecutive + 1
 
 
+def streamstats_low_flow(
+    reach: Reach, s: hydro.StreamStatsSettings, source: LowFlowSource
+) -> hydro.LowFlowEstimate:
+    """StreamStats at the reach's outlet, moving up the reach if it found the wrong basin.
+
+    StreamStats snaps the pour point to its own stream grid, which doesn't always
+    line up with the NHDPlus flowline: near a confluence it can land on the bigger
+    stream, elsewhere on a hillside cell draining almost nothing. If the outlet's
+    basin doesn't match NHDPlus, try the `pour_point_retry_shares` points up the
+    reach and keep the first whose basin matches the drainage area there. If none
+    does, the outlet's answer is returned and firm_flow() flags the mismatch.
+
+    ServiceUnavailable propagates (the caller's breaker counts it); a retry point
+    the service can't answer for is skipped.
+    """
+    point = hydro.pour_point(reach.geom, s.pour_point_offset_m)
+    estimate = source.low_flow(point.y, point.x)
+    outlet = reach.drainage_area_sqkm
+    if outlet is None or not hydro.drainage_area_mismatch(outlet, estimate.drainage_area_sqmi, s):
+        return estimate
+    for share in s.pour_point_retry_shares:
+        expected = hydro.drainage_area_up_reach(outlet, reach.upstream_drainage_area_sqkm, share)
+        if expected < s.min_pour_point_area_share * outlet:
+            continue
+        point = hydro.point_up_reach(reach.geom, share)
+        try:
+            moved = source.low_flow(point.y, point.x)
+        except PointFailed:
+            continue
+        if not hydro.drainage_area_mismatch(expected, moved.drainage_area_sqmi, s):
+            return dataclasses.replace(moved, point_drainage_area_sqkm=expected)
+    return estimate
+
+
+def whole_reach_head(reach: Reach, a: hydro.HydroAssumptions) -> CorridorHead:
+    h = hydro.head(reach.max_elev_m, reach.min_elev_m, a.net_head_factor)
+    return CorridorHead(h, hydro.HEAD_METHOD)
+
+
+def corridor_heads(
+    reaches: list[Reach], a: hydro.HydroAssumptions, dem_path: Path | None
+) -> list[CorridorHead]:
+    """Each reach's head: over its steepest stretch with a DEM, else over the whole reach.
+
+    Runs before the (threaded) flow lookups: one DEM file handle isn't safe to share.
+    """
+    if dem_path is None:
+        return [whole_reach_head(r, a) for r in reaches]
+    with rasterio.open(dem_path) as dem:
+        return [
+            stretch.corridor_head(
+                dem, r.geom, r.max_elev_m, r.min_elev_m, a.corridor, a.net_head_factor
+            )
+            for r in reaches
+        ]
+
+
 def analyze_reach(
     reach: Reach,
     a: hydro.HydroAssumptions,
     source: LowFlowSource | None,
     breaker: _Breaker | None = None,
     gauge: GaugeTransfer | None = None,
+    head: CorridorHead | None = None,
 ) -> Corridor:
-    h = hydro.head(reach.max_elev_m, reach.min_elev_m, a.net_head_factor)
+    """Head (given, or the whole reach's), then flow at the reach's outlet, then power.
+
+    Flow stays the reach's even when the corridor is a stretch of it (D-08 doesn't
+    change that): the drainage area, and so the flow, is measured at the reach's
+    downstream end.
+    """
+    head = head or whole_reach_head(reach, a)
+    h = head.head
     estimate, reason = None, "streamstats_disabled" if source is None else None
     if source is not None and wants_streamstats(reach, a.streamstats):
         if breaker is not None and breaker.open:
             reason = "streamstats_unavailable"
         else:
-            point = hydro.pour_point(reach.geom, a.streamstats.pour_point_offset_m)
             try:
-                estimate = source.low_flow(point.y, point.x)
+                estimate = streamstats_low_flow(reach, a.streamstats, source)
                 if breaker is not None:
                     breaker.record(True)
             except ServiceUnavailable:
@@ -137,7 +227,7 @@ def analyze_reach(
         gauge.reference if gauge is not None and gauge.covers(reach.geom) else None,
         a.gauge_transfer.ratio_range,
     )
-    return Corridor(reach, h, flow, hydro.firm_power(flow, h, a))
+    return Corridor(reach, h, flow, hydro.firm_power(flow, h, a), head.method, head.stretch)
 
 
 def analyze_reaches(
@@ -147,12 +237,17 @@ def analyze_reaches(
     service: ServiceConfig | None = None,
     echo: Callable[[str], None] = print,
     gauge: GaugeTransfer | None = None,
+    heads: list[CorridorHead] | None = None,
 ) -> list[Corridor]:
     workers = service.max_concurrent_requests if service else 1
     breaker = _Breaker(service.max_consecutive_failures if service else 3)
     corridors: list[Corridor] = []
+    heads = heads or [whole_reach_head(r, a) for r in reaches]
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        jobs = pool.map(lambda r: analyze_reach(r, a, source, breaker, gauge), reaches)
+        jobs = pool.map(
+            lambda rh: analyze_reach(rh[0], a, source, breaker, gauge, rh[1]),
+            zip(reaches, heads, strict=True),
+        )
         for i, corridor in enumerate(jobs, 1):
             corridors.append(corridor)
             if i % 50 == 0 or i == len(reaches):
@@ -168,6 +263,7 @@ def start_run(
     a: hydro.HydroAssumptions,
     use_streamstats: bool,
     gauge: GaugeTransfer | None = None,
+    use_terrain: bool = False,
 ) -> int:
     sources = dict(conn.execute(text("SELECT source_key, version FROM data_sources")).all())
     used = (["streamstats"] if use_streamstats else []) + (["nwis", "wbd_hu8"] if gauge else [])
@@ -175,8 +271,11 @@ def start_run(
         source = load_data_source(key)
         record_source(conn, source)
         sources[key] = source.version
+    if not use_terrain:
+        sources.pop(terrain.SOURCE_KEY, None)  # loaded, but this run doesn't use it
     params = {
         "hydro": a.model_dump(),
+        "corridor_method": stretch.HEAD_METHOD if use_terrain else hydro.HEAD_METHOD,
         "use_streamstats": use_streamstats,
         "reference_gauge": gauge.record if gauge else None,
     }
@@ -198,6 +297,23 @@ def start_run(
     ).scalar_one()
 
 
+def _where(c: Corridor) -> dict:
+    """Measures, geometry (WKB) and length of the corridor: its stretch, or the whole reach."""
+    if c.stretch is None:
+        return {
+            "from_measure": 0.0,
+            "to_measure": 100.0,
+            "geom": c.reach.geom.wkb,
+            "length_m": c.reach.length_m,
+        }
+    return {
+        "from_measure": c.stretch.from_measure,
+        "to_measure": c.stretch.to_measure,
+        "geom": stretch.stretch_geometry(c.reach.geom, c.stretch).wkb,
+        "length_m": c.stretch.length_m,
+    }
+
+
 def save_corridors(conn: Connection, run_id: int, corridors: list[Corridor]) -> None:
     if not corridors:
         return
@@ -205,7 +321,7 @@ def save_corridors(conn: Connection, run_id: int, corridors: list[Corridor]) -> 
         text(
             """
             INSERT INTO hydro_corridors (
-                run_id, stream_id, nhdplusid, geom, length_m,
+                run_id, stream_id, nhdplusid, from_measure, to_measure, geom, length_m,
                 gross_head_m, net_head_m, head_method, head_flag,
                 drainage_area_sqkm, drainage_area_method,
                 mean_flow_cfs, firm_flow_cfs, flow_statistic, flow_method, flow_confidence,
@@ -214,7 +330,8 @@ def save_corridors(conn: Connection, run_id: int, corridors: list[Corridor]) -> 
                 usable_flow_cfs, firm_power_w, power_confidence
             )
             SELECT
-                :run_id, s.stream_id, s.nhdplusid, s.geom, s.length_m,
+                :run_id, s.stream_id, s.nhdplusid, :from_measure, :to_measure,
+                ST_Multi(ST_GeomFromWKB(:geom, 4326)), :length_m,
                 :gross_head_m, :net_head_m, :head_method, :head_flag,
                 s.drainage_area_sqkm, :drainage_area_method,
                 s.mean_flow_cfs, :firm_flow_cfs, :flow_statistic, :flow_method, :flow_confidence,
@@ -228,9 +345,10 @@ def save_corridors(conn: Connection, run_id: int, corridors: list[Corridor]) -> 
             {
                 "run_id": run_id,
                 "stream_id": c.reach.stream_id,
+                **_where(c),
                 "gross_head_m": c.head.gross_m,
                 "net_head_m": c.head.net_m,
-                "head_method": hydro.HEAD_METHOD,
+                "head_method": c.head_method,
                 "head_flag": c.head.flag,
                 "drainage_area_method": hydro.DRAINAGE_AREA_METHOD,
                 "firm_flow_cfs": c.flow.firm_flow_cfs,
@@ -254,10 +372,17 @@ def save_corridors(conn: Connection, run_id: int, corridors: list[Corridor]) -> 
 
 def summarize(corridors: list[Corridor], a: hydro.HydroAssumptions) -> dict:
     watts = [c.power.firm_power_w for c in corridors if c.power.firm_power_w is not None]
+    stretches = [c.stretch for c in corridors if c.stretch is not None]
     return {
         "reaches": len(corridors),
+        "head_method": dict(Counter(c.head_method for c in corridors)),
+        "head_flags": dict(Counter(c.head.flag for c in corridors if c.head.flag)),
+        "stretch_shorter_than_reach": sum(not s.whole_reach for s in stretches),
         "flow_method": dict(Counter(c.flow.method or "none" for c in corridors)),
         "flow_confidence": dict(Counter(c.flow.confidence for c in corridors)),
+        "streamstats_pour_point_moved": sum(
+            "streamstats_pour_point_moved" in c.flow.flags for c in corridors
+        ),
         "with_power": len(watts),
         "meets_power_target": sum(w >= a.power_target_w for w in watts),
         "meets_power_target_medium_confidence": sum(
@@ -277,20 +402,32 @@ def run_hydro(
     limit: int | None = None,
     echo: Callable[[str], None] = print,
     gauge: GaugeTransfer | None = None,
+    dem: Path | None = None,
+    assumptions: hydro.HydroAssumptions | None = None,
 ) -> tuple[int, dict]:
-    """Analyze every perennial reach in the AOI and save one run. Returns (run_id, summary)."""
-    a = hydro.load_assumptions()
+    """Analyze every perennial reach in the AOI and save one run. Returns (run_id, summary).
+
+    `dem`: the AOI's DEM (data/raw/usgs_3dep_13/<aoi>.tif) to find each reach's
+    steepest stretch; None treats each whole reach as one corridor.
+    """
+    a = assumptions or hydro.load_assumptions()
     with eng.begin() as conn:
         reaches = load_reaches(conn, aoi)[:limit]
-        run_id = start_run(conn, aoi, a, source is not None, gauge)
+        run_id = start_run(conn, aoi, a, source is not None, gauge, dem is not None)
     try:
+        if dem is not None:
+            echo(
+                f"  finding each reach's steepest {a.corridor.penstock_length_ft:,.0f} ft "
+                f"on the DEM ({dem.name})"
+            )
+        heads = corridor_heads(reaches, a, dem)
         if source is not None:
             eligible = sum(wants_streamstats(r, a.streamstats) for r in reaches)
             echo(f"  {eligible} of {len(reaches)} reaches are large enough for StreamStats")
         if gauge is not None:
             covered = sum(gauge.covers(r.geom) for r in reaches)
             echo(f"  {covered} of {len(reaches)} reaches drain to gauge {gauge.reference.site_no}")
-        corridors = analyze_reaches(reaches, a, source, service, echo, gauge)
+        corridors = analyze_reaches(reaches, a, source, service, echo, gauge, heads)
         summary = summarize(corridors, a)
         with eng.begin() as conn:
             save_corridors(conn, run_id, corridors)

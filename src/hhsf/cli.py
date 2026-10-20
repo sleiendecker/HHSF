@@ -1,5 +1,6 @@
 """Command line entry point: `uv run hhsf --help`."""
 
+import shapely
 import typer
 from alembic import command
 from alembic.config import Config
@@ -14,8 +15,8 @@ from hhsf.analysis import (
     streamstats,
 )
 from hhsf.core.config import REPO_ROOT, hydrography_source, load_aoi
-from hhsf.core.db import engine
-from hhsf.ingest import boundary, hydrography, nhdplus_bulk
+from hhsf.core.db import engine, record_source
+from hhsf.ingest import boundary, hydrography, nhdplus_bulk, terrain
 
 app = typer.Typer(help="Hydro Homestead Site Finder", no_args_is_help=True)
 db_app = typer.Typer(help="Database schema", no_args_is_help=True)
@@ -81,11 +82,30 @@ def ingest_hydrography(aoi: str = AOI_OPTION, source: str | None = SOURCE_OPTION
     typer.echo(f"Loaded {total} perennial stream reaches.")
 
 
+@ingest_app.command("terrain")
+def ingest_terrain(aoi: str = AOI_OPTION) -> None:
+    """Save the USGS 3DEP 10 m elevation model under the AOI's streams (needs hydrography)."""
+    area = load_aoi(aoi)
+    with engine().connect() as conn:
+        reaches = run.load_reaches(conn, area)
+    if not reaches:
+        raise typer.BadParameter(
+            f"No streams loaded for {area.name}. Run `uv run hhsf ingest hydrography` first."
+        )
+    bounds = shapely.GeometryCollection([r.geom for r in reaches]).bounds
+    typer.echo(f"Fetching 3DEP elevations under {len(reaches)} streams in {area.name}...")
+    _, source = terrain.fetch_dem(area.key, bounds, echo=typer.echo)
+    with engine().begin() as conn:
+        record_source(conn, source)
+    typer.echo("Terrain ready.")
+
+
 @ingest_app.command("all")
 def ingest_all(aoi: str = AOI_OPTION, source: str | None = SOURCE_OPTION) -> None:
-    """Boundary, then hydrography."""
+    """Boundary, then hydrography, then terrain."""
     ingest_boundary(aoi)
     ingest_hydrography(aoi, source)
+    ingest_terrain(aoi)
 
 
 @analyze_app.command("hydro")
@@ -103,11 +123,32 @@ def analyze_hydro(
         help="Where StreamStats can't help, scale the AOI's reference gauge's measured "
         "Q90 by drainage area (low confidence).",
     ),
+    use_terrain: bool = typer.Option(
+        True,
+        "--terrain/--no-terrain",
+        help="Use each reach's steepest stretch on the 3DEP elevation model (D-08). Without "
+        "it, each whole reach is one corridor (overstates long reaches).",
+    ),
+    penstock_ft: float | None = typer.Option(
+        None,
+        help="Longest penstock (ft) a corridor may assume. Default: penstock_length_ft in "
+        "config/hydro.yaml. For the D-08 sensitivity check (500 / 1000 / 2000).",
+    ),
     limit: int | None = typer.Option(None, help="Only analyze the first N reaches (for testing)"),
 ) -> None:
     """Head, firm flow and firm power for every perennial reach; saved as a new run."""
     area = load_aoi(aoi)
     assumptions = hydro.load_assumptions()
+    if penstock_ft is not None:
+        assumptions.corridor.penstock_length_ft = penstock_ft
+    dem = None
+    if use_terrain:
+        dem = terrain.dem_path(area.key)
+        if not dem.exists():
+            raise typer.BadParameter(
+                f"No elevation model for {area.name}. Run `uv run hhsf ingest terrain --aoi "
+                f"{area.key}` (or `make ingest`) first, or pass --no-terrain."
+            )
     source = service = gauge = None
     if use_streamstats:
         service = streamstats.load_service_config()
@@ -126,9 +167,16 @@ def analyze_hydro(
             )
     typer.echo(f"Analyzing perennial streams in {area.name}...")
     run_id, summary = run.run_hydro(
-        engine(), area, source, service, limit, echo=typer.echo, gauge=gauge
+        engine(), area, source, service, limit, typer.echo, gauge, dem, assumptions
     )
     typer.echo(f"Run {run_id} saved {summary['reaches']} hydro corridors.")
+    if dem is not None:
+        typer.echo(
+            f"  {summary['stretch_shorter_than_reach']} are a stretch of a longer reach; the "
+            f"rest are whole reaches up to {assumptions.corridor.penstock_length_ft:,.0f} ft."
+        )
+    if summary["head_flags"]:
+        typer.echo(f"  no head for: {summary['head_flags']}")
     typer.echo(f"  flow method: {summary['flow_method']}")
     typer.echo(f"  flow confidence: {summary['flow_confidence']}")
     typer.echo(

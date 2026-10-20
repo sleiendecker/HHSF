@@ -1,6 +1,7 @@
 """Per-reach orchestration without a database: StreamStats use, fallback, breaker."""
 
-from shapely.geometry import LineString
+import pytest
+from shapely.geometry import LineString, Point
 
 from hhsf.analysis import hydro, run
 from hhsf.analysis.streamstats import PointFailed, ServiceConfig, ServiceUnavailable
@@ -11,8 +12,10 @@ from tests.unit.test_streamstats import SERVICE
 LINE = crs.to_storage(LineString([(1_000_000, 1_400_000), (1_001_000, 1_400_000)]))
 
 
-def reach(da_sqkm=BIG_SQKM, top=200.0, bottom=100.0, mean_flow=5.0, i=1) -> run.Reach:
-    return run.Reach(i, 10_000 + i, 1000.0, da_sqkm, top, bottom, mean_flow, LINE)
+def reach(
+    da_sqkm=BIG_SQKM, top=200.0, bottom=100.0, mean_flow=5.0, i=1, upstream=None
+) -> run.Reach:
+    return run.Reach(i, 10_000 + i, 1000.0, da_sqkm, top, bottom, mean_flow, LINE, upstream)
 
 
 class Source:
@@ -26,6 +29,85 @@ class Source:
         if self.error:
             raise self.error
         return self.result
+
+
+class Answers:
+    """A source answering from a list, one item per call (an exception is raised)."""
+
+    def __init__(self, *answers):
+        self.answers = list(answers)
+        self.points = []
+
+    def low_flow(self, lat, lon):
+        self.points.append(crs.to_analysis(Point(lon, lat)))
+        answer = self.answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+
+WRONG_BASIN = estimate(drainage_area_sqmi=units.sqkm_to_sqmi(40.0))
+
+
+def area(sqkm):
+    return estimate(drainage_area_sqmi=units.sqkm_to_sqmi(sqkm))
+
+
+def test_wrong_basin_at_the_outlet_retries_up_the_reach():
+    # 10 km2 at the outlet, 6 km2 flowing in: 9 km2 a quarter of the way up.
+    source = Answers(WRONG_BASIN, area(9.1))
+    c = run.analyze_reach(reach(upstream=6.0), ASSUMPTIONS, source)
+    assert c.flow.method == hydro.FLOW_METHOD_STREAMSTATS
+    assert c.flow.confidence == "medium"
+    assert c.flow.flags == ["streamstats_pour_point_moved"]
+    assert c.flow.firm_flow_cfs == pytest.approx(0.8 * BIG_SQKM / 9.0)
+    assert c.flow.streamstats_drainage_area_sqkm == pytest.approx(9.1)
+    outlet, moved = source.points
+    assert outlet.distance(Point(1_000_970, 1_400_000)) < 0.01
+    assert moved.distance(Point(1_000_750, 1_400_000)) < 0.01
+
+
+def test_retry_skips_failed_and_wrong_points_until_one_matches():
+    source = Answers(WRONG_BASIN, PointFailed("excluded"), area(0.3), area(7.1))
+    c = run.analyze_reach(reach(upstream=6.0), ASSUMPTIONS, source)
+    assert len(source.points) == 4
+    assert c.flow.method == hydro.FLOW_METHOD_STREAMSTATS
+    assert c.flow.firm_flow_cfs == pytest.approx(0.8 * BIG_SQKM / 7.0)
+
+
+def test_no_matching_point_keeps_the_mismatch_fallback():
+    source = Answers(WRONG_BASIN, area(0.3), area(0.3), area(0.3))
+    c = run.analyze_reach(reach(upstream=6.0), ASSUMPTIONS, source)
+    assert c.flow.method == hydro.FLOW_METHOD_EROM
+    assert c.flow.flags == ["streamstats_drainage_area_mismatch", "mean_flow_not_q90"]
+    assert c.flow.streamstats_drainage_area_sqkm == pytest.approx(40.0)  # the outlet's answer
+
+
+def test_retry_skips_points_draining_too_little_of_the_outlet():
+    # Headwater: 7.5 km2 at 25%, 5 km2 at 50%, 2.5 km2 at 75% (below half the outlet).
+    source = Answers(WRONG_BASIN, area(0.3), area(0.3))
+    c = run.analyze_reach(reach(upstream=None), ASSUMPTIONS, source)
+    assert len(source.points) == 3
+    assert c.flow.method == hydro.FLOW_METHOD_EROM
+
+
+def test_matching_outlet_is_never_retried():
+    source = Answers(area(BIG_SQKM * 1.2))
+    run.analyze_reach(reach(upstream=6.0), ASSUMPTIONS, source)
+    assert len(source.points) == 1
+
+
+def test_outage_during_retry_counts_as_unavailable():
+    breaker = run._Breaker(5)
+    source = Answers(WRONG_BASIN, ServiceUnavailable("502"))
+    c = run.analyze_reach(reach(upstream=6.0), ASSUMPTIONS, source, breaker)
+    assert c.flow.flags[0] == "streamstats_unavailable"
+    assert breaker.consecutive == 1
+
+
+def test_summary_counts_moved_pour_points():
+    c = run.analyze_reach(reach(upstream=6.0), ASSUMPTIONS, Answers(WRONG_BASIN, area(9.0)))
+    assert run.summarize([c], ASSUMPTIONS)["streamstats_pour_point_moved"] == 1
 
 
 def test_streamstats_q90_drives_power():
