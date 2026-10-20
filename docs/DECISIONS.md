@@ -104,11 +104,24 @@ Open calls made while building it (defaults, change in config or say so):
 - **Ties go to the most downstream stretch** (more water there).
 - **One stretch per reach.** A long reach with two good drops only gets its best one; adjacent reaches aren't joined into one stretch.
 
-### D-09 · Small streams below StreamStats' applicability limit: **Measure**
+### D-09 · Small streams below StreamStats' applicability limit: **Decided**
 
 Tennessee's flow equations have a minimum drainage area, and many good headwater sites fall below it.
 
 Starting value: **keep them, rank on head only, mark as low confidence.** If they turn out to be a large share of the top candidates, consider a fallback estimate (e.g., scaling from a nearby gauged basin by drainage area), clearly flagged.
+
+Measured (2026-10-19): they were. Before any fallback, 635 of 989 reaches were too small, and head-only corridors were 272 of the 278 ranked and 14 of the top 20.
+
+**Decision (owner, 2026-10-19): every small basin gets the regional low-flow yield, and streams under the power target on it stay listed.**
+
+1. **Regional yield everywhere.** A basin below 1.3 sq mi gets its drainage area × the median StreamStats Q90 per square mile of the in-range StreamStats reaches in the same HUC8 (the HUC6, then HUC4, pooled if the HUC8 has fewer than 10). That includes small basins in the Whitwell gauge's basin, which used to get the gauge transfer (about 10× higher). Flagged `below_regression_min_drainage_area` plus `regional_yield_basin:<code>`, `flow_method = regional_streamstats_yield`, confidence `low`. The gauge transfer stays for larger reaches StreamStats can't answer for.
+2. **Low-flow streams stay on the list.** A corridor under 1 kW on a low-confidence flow is ranked in a `low_flow` tier, last, by power, instead of being filtered out, so D-01's rule that corridors without a reliable flow stay listed still holds. Scoring profile `hydro_v2` (see [SCORING.md](SCORING.md)). Corridors under 1 kW on a medium-confidence StreamStats Q90 are still filtered out.
+
+`uv run hhsf analyze hydro --no-regional-yield` brings back the starting rule (gauge transfer in its basin, head only elsewhere).
+
+- **Why not more gauges:** Collins River near McMinnville runs 10× StreamStats, like Whitwell (both basins include spring-fed limestone). The Walden Ridge gauges disagree with each other from zero to 0.087 cfs per sq mi and have no 10-year recent record. The regional yield matches StreamStats where both exist (leave-one-out median ratio 1.0) and agrees with the measured plateau-only gauges. Comparison in [ASSUMPTIONS.md](ASSUMPTIONS.md#regional-low-flow-yield).
+- **Result (hydro run 36, score run 37):** all 634 small basins with a drainage area have a flow, so no corridor is head-only. None reaches 1 kW; the best is Stillhouse Branch at 146 W. Rogers Branch (StreamStats, 1.3 kW) is the only corridor at or above 1 kW; the five plateau-edge streams that passed on the gauge transfer are now ranks 2–6 of 575 low-flow corridors at 105–146 W.
+- **Springs aren't captured** by any regional method. The low-flow tier is the list to check on visits: a spring-fed headwater with lots of head could still work.
 
 ### D-10 · Rainfall in the score: **Measure**
 
@@ -118,7 +131,7 @@ The plan predicts rainfall is nearly constant across one county. We'll sample PR
 
 Scores will be absolute (a site's score never changes because another site was added), anchored on D-01:
 
-- Firm power: below the D-01 minimum (1 kW) the corridor is **filtered out**, not scored. Sub-score **50 at 1 kW, 100 at ≥ 3 kW**, linear between. Placeholder.
+- Firm power: below the D-01 minimum (1 kW) the corridor gets **no score**: it is filtered out on a medium-confidence flow, or listed last in the `low_flow` tier on a low-confidence one (D-09). Sub-score **50 at 1 kW, 100 at ≥ 3 kW**, linear between. Placeholder.
 - Head sub-score: 0 below **10 ft** (too low for practical small turbines), 100 at **≥ 200 ft**. Placeholder.
 - Hydro score = **70% power, 30% head**. Head gets some weight on its own because it makes sites usable even when flow estimates are uncertain (D-09).
 
@@ -153,3 +166,4 @@ Decisions that barely move the top 20 keep their default and stop being discusse
 | 2026-10-18 | — | Added "What the output is for": a shortlist for in-person visits and owner contact |
 | 2026-10-19 | D-08 | Built: steepest 1,000 ft stretch per reach on 3DEP; open calls listed under D-08 |
 | 2026-10-19 | D-04 | Wrong-basin StreamStats answers retried further up the reach; no corridor uses mean flow any more. Open call listed under D-04 |
+| 2026-10-19 | D-09 | Decided by the owner: every small basin gets a regional low-flow yield (median StreamStats Q90 per sq mi of its HUC8), replacing the gauge transfer on small basins; corridors under 1 kW on a low-confidence flow stay listed in a `low_flow` tier (profile `hydro_v2`) |

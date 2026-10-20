@@ -8,8 +8,12 @@ A corridor ends up in exactly one status:
 - scored: firm power at or above the target; hydro score from power and head.
 - head_only: no flow because the basin is too small for the regression (D-09);
   no hydro score, ranked on its head sub-score after every power-scored corridor.
+- low_flow: firm power below the D-01 target, but on a low-confidence flow; only
+  when the profile lists the low_flow tier (D-01, D-09). No hydro score, ranked
+  by firm power after every other ranked corridor.
 - below_power_target: firm power below the D-01 target; filtered out.
-- below_min_head: head-only corridor too low to run a small turbine; filtered out.
+- below_min_head: head-only or low-flow corridor too low to run a small turbine;
+  filtered out.
 - not_scorable: head or flow missing for some other reason; filtered out.
 """
 
@@ -23,12 +27,14 @@ from hhsf.core.config import CONFIG_DIR
 
 SCORED = "scored"
 HEAD_ONLY = "head_only"
+LOW_FLOW = "low_flow"
 BELOW_POWER_TARGET = "below_power_target"
 BELOW_MIN_HEAD = "below_min_head"
 NOT_SCORABLE = "not_scorable"
-RANKED = (SCORED, HEAD_ONLY)
+RANKED = (SCORED, HEAD_ONLY, LOW_FLOW)
 
-TIERS = {"medium", "low", HEAD_ONLY}
+TIERS = {"medium", "low", HEAD_ONLY}  # every profile ranks these
+OPTIONAL_TIERS = {LOW_FLOW}  # listing it in rank_tiers switches it on
 
 
 class Curve(BaseModel):
@@ -72,9 +78,17 @@ class ScoringProfile(BaseModel):
 
     @model_validator(mode="after")
     def _check(self) -> "ScoringProfile":
-        if sorted(self.rank_tiers) != sorted(TIERS):
-            raise ValueError(f"rank_tiers must list each of {sorted(TIERS)} once")
+        required = set(self.rank_tiers) - OPTIONAL_TIERS
+        if len(set(self.rank_tiers)) != len(self.rank_tiers) or required != TIERS:
+            raise ValueError(
+                f"rank_tiers must list each of {sorted(TIERS)} once"
+                f" (and optionally {sorted(OPTIONAL_TIERS)})"
+            )
         return self
+
+    @property
+    def keeps_low_flow(self) -> bool:
+        return LOW_FLOW in self.rank_tiers
 
 
 def load_profile(version: str = "hydro_v1") -> ScoringProfile:
@@ -181,7 +195,7 @@ class CorridorInputs:
 class Score:
     corridor_id: int
     status: str
-    tier: str | None  # medium | low | head_only; None when filtered out
+    tier: str | None  # medium | low | head_only | low_flow; None when filtered out
     net_head_ft: float | None
     head_subscore: float | None = None
     power_subscore: float | None = None
@@ -190,12 +204,15 @@ class Score:
     summary: str = ""
     rank: int | None = None  # 1 = best, across all tiers
     tier_rank: int | None = None  # 1 = best within its tier
+    firm_power_w: float | None = None  # kept for ordering the low_flow tier
 
     @property
     def sort_score(self) -> float:
-        """What orders corridors inside a tier: hydro score, or head for head-only."""
+        """What orders a tier: hydro score; head for head-only; watts for low flow."""
         if self.hydro_score is not None:
             return self.hydro_score
+        if self.status == LOW_FLOW:
+            return self.firm_power_w or 0.0
         return self.head_subscore or 0.0
 
     def explanation(self, p: ScoringProfile) -> dict:
@@ -217,6 +234,8 @@ def score_corridor(c: CorridorInputs, p: ScoringProfile) -> Score:
 
     if c.firm_power_w is not None:
         if c.firm_power_w < p.power_target_w:
+            if p.keeps_low_flow and c.power_confidence == "low":
+                return low_flow_score(c, head_ft, p)
             return Score(
                 c.corridor_id,
                 BELOW_POWER_TARGET,
@@ -280,6 +299,36 @@ def score_corridor(c: CorridorInputs, p: ScoringProfile) -> Score:
         None,
         head_ft,
         summary=f"No flow estimate ({', '.join(c.flow_flags) or c.flow_confidence}).",
+    )
+
+
+def low_flow_score(c: CorridorInputs, head_ft: float, p: ScoringProfile) -> Score:
+    """Below the target on a low-confidence flow: listed last, flagged LOW FLOW (D-01)."""
+    target_kw = p.power_target_w / 1000
+    basis = c.flow_method or "fallback flow"
+    if head_ft < p.head_only.min_net_head_ft:
+        return Score(
+            c.corridor_id,
+            BELOW_MIN_HEAD,
+            None,
+            head_ft,
+            summary=(
+                f"{c.firm_power_w:,.0f} W firm power on a low-confidence flow ({basis}), and "
+                f"{head_ft:.0f} ft net head is below {p.head_only.min_net_head_ft:g} ft."
+            ),
+        )
+    return Score(
+        c.corridor_id,
+        LOW_FLOW,
+        LOW_FLOW,
+        head_ft,
+        firm_power_w=c.firm_power_w,
+        summary=(
+            f"LOW FLOW: {c.firm_power_w:,.0f} W firm power is below the {target_kw:g} kW target, "
+            f"but the flow is a low-confidence estimate ({basis}), so it stays on the list (D-01). "
+            "No hydro score; ranked by power after every other listed corridor. A spring or a "
+            "dry-season measurement could change it."
+        ),
     )
 
 

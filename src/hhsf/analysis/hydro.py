@@ -7,7 +7,8 @@ and are explained in docs/ASSUMPTIONS.md.
 Rule: when a value can't be estimated reliably it is None plus a flag, never a guess.
 """
 
-from dataclasses import dataclass, field
+import statistics
+from dataclasses import dataclass, field, replace
 
 import yaml
 from pydantic import BaseModel
@@ -22,6 +23,7 @@ DRAINAGE_AREA_METHOD = "nhdplus_vaa_totdasqkm"
 FLOW_METHOD_STREAMSTATS = "streamstats_q90"
 FLOW_METHOD_EROM = "nhdplus_erom"
 FLOW_METHOD_GAUGE = "gauge_drainage_area_ratio"
+FLOW_METHOD_REGIONAL = "regional_streamstats_yield"
 
 
 class StreamStatsSettings(BaseModel):
@@ -49,6 +51,13 @@ class GaugeTransferSettings(BaseModel):
     ratio_range: tuple[float, float]
 
 
+class RegionalYieldSettings(BaseModel):
+    """D-09 fallback: a basin's typical StreamStats Q90 per square mile (regional_flow)."""
+
+    # A basin's median is only used once it has this many StreamStats Q90s.
+    min_reaches: int
+
+
 class CorridorSettings(BaseModel):
     """D-08: how a reach's steepest stretch is found (analysis/stretch.py)."""
 
@@ -70,6 +79,7 @@ class HydroAssumptions(BaseModel):
     corridor: CorridorSettings
     streamstats: StreamStatsSettings
     gauge_transfer: GaugeTransferSettings
+    regional_yield: RegionalYieldSettings
 
 
 def load_assumptions() -> HydroAssumptions:
@@ -189,8 +199,10 @@ def firm_flow(
        the outlet by drainage area; still medium, flagged.
     2. A gauge in the same basin (`gauge`, when the reach drains to it): its Q90
        scaled by drainage area, low confidence. Also covers basins too small for
-       the regression (D-09), with that flag kept.
+       the regression (D-09), with that flag kept, though run.py then replaces
+       those with the regional yield where it can (regional_flow).
     3. Basin below the regression's minimum drainage area: None, below_applicability.
+       (run.py then fills it from the regional yield where it can; see regional_flow.)
     4. Otherwise NHDPlus EROM mean annual flow, low confidence. Mean flow
        overstates what a turbine can rely on; the flags say so.
     """
@@ -258,6 +270,77 @@ def firm_flow(
     )
 
 
+def streamstats_yield(flow: Flow, drainage_area_sqkm: float | None) -> float | None:
+    """Q90 per square mile of a medium-confidence StreamStats flow; None for any other flow.
+
+    Only these feed the regional yield: an out-of-range or fallback flow would
+    carry its own error into every small basin that borrows from it.
+    """
+    if flow.method != FLOW_METHOD_STREAMSTATS or flow.confidence != "medium":
+        return None
+    if flow.firm_flow_cfs is None or not drainage_area_sqkm:
+        return None
+    return flow.firm_flow_cfs / units.sqkm_to_sqmi(drainage_area_sqkm)
+
+
+def regional_yield(
+    yields: dict[str, list[float]], huc8: str, min_reaches: int
+) -> tuple[float, str, int] | None:
+    """The median Q90 per square mile for a reach in `huc8`: (yield, basin, reaches used).
+
+    `yields` holds the StreamStats yields of in-range reaches, keyed by HUC8. The
+    reach's own HUC8 is used if it has at least `min_reaches` of them; otherwise
+    the reaches of every HUC8 sharing its first 6, then 4 digits are pooled (the
+    returned code is then 6 or 4 digits long). None if even that is too few.
+    """
+    for digits in (8, 6, 4):
+        code = huc8[:digits]
+        pooled = [y for basin, ys in yields.items() if basin.startswith(code) for y in ys]
+        if len(pooled) >= min_reaches:
+            return statistics.median(pooled), code, len(pooled)
+    return None
+
+
+def regional_yield_applies(flow: Flow) -> bool:
+    """True for a basin too small for the regression with no flow, or only the gauge's.
+
+    D-09 (decided 2026-10-19): the regional yield replaces the gauge transfer for
+    small basins too, since the gauge runs about 10x high on them. A gauge
+    transfer on a larger basin (StreamStats down or snapped wrong) is kept.
+    """
+    if flow.confidence == "below_applicability":
+        return True
+    return flow.method == FLOW_METHOD_GAUGE and "below_regression_min_drainage_area" in flow.flags
+
+
+def regional_flow(
+    flow: Flow, drainage_area_sqkm: float, yield_cfs_per_sqmi: float, basin: str
+) -> Flow:
+    """D-09 fallback for a basin too small for the regression: area x the basin's yield.
+
+    `yield_cfs_per_sqmi` is the median StreamStats Q90 per square mile of the
+    in-range reaches draining to the same basin (`basin`: a HUC8, or the HUC6/HUC4
+    pooled when the HUC8 has too few; see regional_yield). Applying it below
+    the regression's 1.3 sq mi minimum is an extrapolation, so it is always low
+    confidence and keeps `below_regression_min_drainage_area`; the basin it came
+    from is added as a flag. Replaces only a flow regional_yield_applies() to;
+    a replaced gauge transfer loses its gauge, ratio and ratio flag.
+    """
+    if not regional_yield_applies(flow):
+        return flow
+    flags = [f for f in flow.flags if not f.startswith("area_ratio_outside_")]
+    return replace(
+        flow,
+        firm_flow_cfs=units.sqkm_to_sqmi(drainage_area_sqkm) * yield_cfs_per_sqmi,
+        statistic="q90",
+        method=FLOW_METHOD_REGIONAL,
+        confidence="low",
+        flags=[*flags, f"regional_yield_basin:{basin}"],
+        reference_gauge=None,
+        drainage_area_ratio=None,
+    )
+
+
 # --- Power --------------------------------------------------------------------
 
 
@@ -312,6 +395,12 @@ def drainage_area_up_reach(outlet_sqkm: float, upstream_sqkm: float | None, shar
     """
     top = upstream_sqkm or 0.0
     return outlet_sqkm - share * (outlet_sqkm - top)
+
+
+def outlet(geom: BaseGeometry) -> Point:
+    """The reach's downstream end (analysis CRS)."""
+    line = _last_line(geom)
+    return line.interpolate(line.length)
 
 
 def _last_line(geom: BaseGeometry) -> BaseGeometry:

@@ -12,7 +12,7 @@ import dataclasses
 import json
 import subprocess
 import threading
-from collections import Counter
+from collections import Counter, defaultdict
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -24,6 +24,7 @@ from shapely.geometry.base import BaseGeometry
 from sqlalchemy import Connection, Engine, text
 
 from hhsf.analysis import hydro, stretch
+from hhsf.analysis.basins import Basins
 from hhsf.analysis.gauges import GaugeTransfer
 from hhsf.analysis.streamstats import (
     LowFlowSource,
@@ -257,6 +258,41 @@ def analyze_reaches(
     return corridors
 
 
+def fill_regional_yield(
+    corridors: list[Corridor], basins: Basins, a: hydro.HydroAssumptions
+) -> dict[str, dict]:
+    """D-09: give basins too small for StreamStats their basin's typical Q90.
+
+    Runs after every reach has its own flow. Each medium-confidence StreamStats
+    Q90 is turned into a yield (cfs per sq mi) and grouped by the HUC8 its reach
+    drains to. A small basin with no flow, or only a gauge transfer, then gets its
+    drainage area times the median yield of its HUC8 (or of the HUC6/HUC4 if the
+    HUC8 has too few), and its power is recomputed. Where no yield is found it
+    keeps what it had. Returns the yields used, per basin, for the run summary.
+    """
+    huc8s = [basins.huc8_of(c.reach.geom) for c in corridors]
+    yields: dict[str, list[float]] = defaultdict(list)
+    for c, huc8 in zip(corridors, huc8s, strict=True):
+        y = hydro.streamstats_yield(c.flow, c.reach.drainage_area_sqkm)
+        if y is not None and huc8 is not None:
+            yields[huc8].append(y)
+    used: dict[str, dict] = {}
+    for c, huc8 in zip(corridors, huc8s, strict=True):
+        if not hydro.regional_yield_applies(c.flow) or huc8 is None:
+            continue
+        found = hydro.regional_yield(yields, huc8, a.regional_yield.min_reaches)
+        if found is None:
+            continue
+        value, basin, n = found
+        c.flow = hydro.regional_flow(c.flow, c.reach.drainage_area_sqkm, value, basin)
+        c.power = hydro.firm_power(c.flow, c.head, a)
+        entry = used.setdefault(
+            basin, {"yield_cfs_per_sqmi": value, "streamstats_reaches": n, "reaches_filled": 0}
+        )
+        entry["reaches_filled"] += 1
+    return used
+
+
 def start_run(
     conn: Connection,
     aoi: AOI,
@@ -264,9 +300,12 @@ def start_run(
     use_streamstats: bool,
     gauge: GaugeTransfer | None = None,
     use_terrain: bool = False,
+    use_regional_yield: bool = False,
 ) -> int:
     sources = dict(conn.execute(text("SELECT source_key, version FROM data_sources")).all())
-    used = (["streamstats"] if use_streamstats else []) + (["nwis", "wbd_hu8"] if gauge else [])
+    used = ["streamstats"] if use_streamstats else []
+    used += ["nwis"] if gauge else []
+    used += ["wbd_hu8"] if gauge or use_regional_yield else []
     for key in used:
         source = load_data_source(key)
         record_source(conn, source)
@@ -278,6 +317,7 @@ def start_run(
         "corridor_method": stretch.HEAD_METHOD if use_terrain else hydro.HEAD_METHOD,
         "use_streamstats": use_streamstats,
         "reference_gauge": gauge.record if gauge else None,
+        "use_regional_yield": use_regional_yield,
     }
     return conn.execute(
         text(
@@ -383,6 +423,9 @@ def summarize(corridors: list[Corridor], a: hydro.HydroAssumptions) -> dict:
         "streamstats_pour_point_moved": sum(
             "streamstats_pour_point_moved" in c.flow.flags for c in corridors
         ),
+        "below_regression_min_drainage_area": sum(
+            "below_regression_min_drainage_area" in c.flow.flags for c in corridors
+        ),
         "with_power": len(watts),
         "meets_power_target": sum(w >= a.power_target_w for w in watts),
         "meets_power_target_medium_confidence": sum(
@@ -404,16 +447,21 @@ def run_hydro(
     gauge: GaugeTransfer | None = None,
     dem: Path | None = None,
     assumptions: hydro.HydroAssumptions | None = None,
+    basins: Basins | None = None,
 ) -> tuple[int, dict]:
     """Analyze every perennial reach in the AOI and save one run. Returns (run_id, summary).
 
     `dem`: the AOI's DEM (data/raw/usgs_3dep_13/<aoi>.tif) to find each reach's
     steepest stretch; None treats each whole reach as one corridor.
+    `basins`: the HUC8s the AOI drains to, for the regional-yield fallback on
+    basins too small for StreamStats (D-09); None leaves those without a flow.
     """
     a = assumptions or hydro.load_assumptions()
     with eng.begin() as conn:
         reaches = load_reaches(conn, aoi)[:limit]
-        run_id = start_run(conn, aoi, a, source is not None, gauge, dem is not None)
+        run_id = start_run(
+            conn, aoi, a, source is not None, gauge, dem is not None, basins is not None
+        )
     try:
         if dem is not None:
             echo(
@@ -428,7 +476,10 @@ def run_hydro(
             covered = sum(gauge.covers(r.geom) for r in reaches)
             echo(f"  {covered} of {len(reaches)} reaches drain to gauge {gauge.reference.site_no}")
         corridors = analyze_reaches(reaches, a, source, service, echo, gauge, heads)
+        regional = fill_regional_yield(corridors, basins, a) if basins is not None else None
         summary = summarize(corridors, a)
+        if regional is not None:
+            summary["regional_yield"] = regional
         with eng.begin() as conn:
             save_corridors(conn, run_id, corridors)
             conn.execute(

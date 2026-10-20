@@ -51,3 +51,13 @@ gauge_transfer:
   end: "2025-09-30"
   min_years: 10
   ratio_range: [0.5, 1.5]   # reach/gauge area ratios where the method is usually trusted
+
+# D-09 (decided 2026-10-19): every basin below the regression's minimum drainage
+# area, including the ones in the gauge's basin (where the gauge runs ~10x high),
+# gets drainage area x the median StreamStats Q90 per square mile
+# of the in-range reaches draining to the same HUC8 (WBD 8-digit basin). It
+# extrapolates below the regression's limit, so it is always low confidence and
+# keeps the below_regression_min_drainage_area flag. See docs/ASSUMPTIONS.md,
+# "Regional low-flow yield".
+regional_yield:
+  min_reaches: 10           # a HUC8 with fewer StreamStats Q90s pools its HUC6 (then HUC4)

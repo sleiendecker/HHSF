@@ -16,6 +16,7 @@ export const SCORE_STOPS: [number, string][] = [
   [100, "#8c2d04"],
 ];
 export const HEAD_ONLY_COLOR = "#6a51a3";
+export const LOW_FLOW_COLOR = "#3f7f9a";
 export const FILTERED_COLOR = "#8a8a8a";
 
 const scoreColor: ExpressionSpecification = [
@@ -43,14 +44,15 @@ function haloWidth(): ExpressionSpecification {
 const SOURCE = { source: "scores", "source-layer": "latest_hydro_scores" } as const;
 const ROUND = { "line-cap": "round", "line-join": "round" } as const;
 
-// Bottom to top: halo, filtered-out, head only, low, medium. One layer per tier so each gets its own
+// Bottom to top: halo, filtered-out, low flow, head only, low, medium. One layer per tier so each gets its own
 // line style (MapLibre can't vary dashes per feature).
 export const SCORE_LAYERS: LayerSpecification[] = [
   {
     id: "scores-halo",
     type: "line",
     ...SOURCE,
-    filter: ["has", "tier"],
+    // Not under low-flow streams: there are hundreds and they'd turn into white blobs.
+    filter: ["in", ["get", "tier"], ["literal", ["medium", "low", "head_only"]]],
     layout: ROUND,
     paint: { "line-color": "#fff", "line-opacity": 0, "line-width": haloWidth() },
   },
@@ -61,6 +63,15 @@ export const SCORE_LAYERS: LayerSpecification[] = [
     filter: ["!", ["has", "tier"]],
     layout: ROUND,
     paint: { "line-color": FILTERED_COLOR, "line-opacity": 0.35, "line-width": width(0.6) },
+  },
+  {
+    // Under the power target on a low-confidence flow: listed (D-01), but drawn quietly.
+    id: "scores-low-flow",
+    type: "line",
+    ...SOURCE,
+    filter: ["==", ["get", "tier"], "low_flow"],
+    layout: ROUND,
+    paint: { "line-color": LOW_FLOW_COLOR, "line-opacity": 0.7, "line-width": width(0.6) },
   },
   {
     id: "scores-head-only",
@@ -139,6 +150,12 @@ const TIER_TEXT: Record<string, { label: string; detail: string }> = {
       "The basin is too small for any flow estimate, so there's no power number or hydro score. " +
       "Ranked on drop alone, after every stream with a power estimate. Check the flow on the visit.",
   },
+  low_flow: {
+    label: "Low flow",
+    detail:
+      "The power estimate is below the 1 kW target, but the flow behind it is a rough estimate, so the " +
+      "stream stays on the list, ranked by power after every other listed stream. A spring could change it.",
+  },
 };
 
 function flowSource(method: unknown, gauge: unknown): string {
@@ -152,6 +169,12 @@ function flowSource(method: unknown, gauge: unknown): string {
         "it runs about 10× StreamStats where both exist"
       );
     }
+    case "regional_streamstats_yield":
+      return (
+        "The typical StreamStats low flow per square mile of the bigger streams in the same river basin, " +
+        "scaled to this stream's drainage area. The basin is too small for StreamStats itself, and a " +
+        "spring-fed stream can carry far more"
+      );
     case "nhdplus_erom":
       return "NHDPlus mean annual flow: an average, not a dry-season flow, so it overstates what a turbine can count on";
     default:
@@ -177,6 +200,8 @@ const FLAG_TEXT: Record<string, string> = {
 
 function flagText(flag: string): string {
   if (FLAG_TEXT[flag]) return FLAG_TEXT[flag];
+  if (flag.startsWith("regional_yield_basin:"))
+    return `Low flow per square mile borrowed from river basin (HUC) ${flag.slice("regional_yield_basin:".length)}`;
   if (flag.startsWith("out_of_range:"))
     return `Basin is outside the range the equations were built for (${flag.slice("out_of_range:".length)})`;
   const ratio = flag.match(/^area_ratio_outside_([\d.]+)_([\d.]+)$/);
@@ -249,6 +274,11 @@ function stretchText(p: Record<string, unknown>): string {
 function headline(p: Record<string, unknown>): string {
   if (p.tier === "head_only")
     return `<div class="score-line"><span class="badge head-only">Head only</span> ranked #${p.rank} overall</div>`;
+  if (p.tier === "low_flow")
+    return (
+      `<div class="score-line"><span class="badge low-flow">Low flow</span> ranked #${p.rank} overall,` +
+      ` under the 1 kW target</div>`
+    );
   if (p.tier)
     return (
       `<div class="score-line"><span class="score">${fmt(p.hydro_score)}</span><span class="out-of">/ 100</span>` +

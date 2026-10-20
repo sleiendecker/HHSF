@@ -6,6 +6,7 @@ from alembic import command
 from alembic.config import Config
 
 from hhsf.analysis import (
+    basins,
     export_run,
     gauges,
     hydro,
@@ -123,6 +124,14 @@ def analyze_hydro(
         help="Where StreamStats can't help, scale the AOI's reference gauge's measured "
         "Q90 by drainage area (low confidence).",
     ),
+    use_regional_yield: bool = typer.Option(
+        True,
+        "--regional-yield/--no-regional-yield",
+        help="Give basins too small for StreamStats the median StreamStats Q90 per sq mi "
+        "of their HUC8 (low confidence, D-09), instead of the gauge transfer or no flow. "
+        "Without it, small basins use the gauge where it covers them and are otherwise "
+        "ranked on head only.",
+    ),
     use_terrain: bool = typer.Option(
         True,
         "--terrain/--no-terrain",
@@ -165,9 +174,15 @@ def analyze_hydro(
                 f"Gauge {r['site_no']}: Q90 {r['q90_cfs']:.1f} cfs from {r['approved_days']} days "
                 f"({r['period'][0]} to {r['period'][1]}), {r['drainage_area_sqmi']:g} sq mi."
             )
+    huc8s = None
+    if use_regional_yield:
+        with engine().connect() as conn:
+            county = hydrography.county_area(conn, area)
+        huc8s = basins.load_basins(area, county)
+        typer.echo(f"Regional yield basins (HUC8): {', '.join(huc8s.polygons)}.")
     typer.echo(f"Analyzing perennial streams in {area.name}...")
     run_id, summary = run.run_hydro(
-        engine(), area, source, service, limit, typer.echo, gauge, dem, assumptions
+        engine(), area, source, service, limit, typer.echo, gauge, dem, assumptions, huc8s
     )
     typer.echo(f"Run {run_id} saved {summary['reaches']} hydro corridors.")
     if dem is not None:
@@ -179,6 +194,11 @@ def analyze_hydro(
         typer.echo(f"  no head for: {summary['head_flags']}")
     typer.echo(f"  flow method: {summary['flow_method']}")
     typer.echo(f"  flow confidence: {summary['flow_confidence']}")
+    for basin, r in summary.get("regional_yield", {}).items():
+        typer.echo(
+            f"  regional yield {basin}: {r['yield_cfs_per_sqmi']:.4f} cfs/sq mi (median of "
+            f"{r['streamstats_reaches']} StreamStats reaches), {r['reaches_filled']} small basins"
+        )
     typer.echo(
         f"  {summary['meets_power_target']} of {summary['with_power']} reaches with a power "
         f"estimate reach the 1 kW target ({summary['meets_power_target_medium_confidence']} "
@@ -189,7 +209,7 @@ def analyze_hydro(
 @score_app.command("hydro")
 def score_hydro(
     aoi: str = AOI_OPTION,
-    profile: str = typer.Option("hydro_v1", help="Scoring profile from config/scoring_profiles/"),
+    profile: str = typer.Option("hydro_v2", help="Scoring profile from config/scoring_profiles/"),
     run_id: int | None = typer.Option(
         None, help="Hydro run to score. Default: the AOI's latest finished one."
     ),
@@ -210,12 +230,14 @@ def score_hydro(
     )
     typer.echo(
         f"  ranked: {tiers.get('medium', 0)} medium confidence, {tiers.get('low', 0)} low "
-        f"confidence, {tiers.get('head_only', 0)} head only (no flow estimate)"
+        f"confidence, {tiers.get('head_only', 0)} head only (no flow estimate), "
+        f"{tiers.get(scoring.LOW_FLOW, 0)} low flow (under "
+        f"{p.power_target_w / 1000:g} kW on a low-confidence flow)"
     )
     typer.echo(
         f"  filtered out: {status.get(scoring.BELOW_POWER_TARGET, 0)} below "
-        f"{p.power_target_w / 1000:g} kW, {status.get(scoring.BELOW_MIN_HEAD, 0)} head-only "
-        f"below {p.head_only.min_net_head_ft:g} ft, {status.get(scoring.NOT_SCORABLE, 0)} "
+        f"{p.power_target_w / 1000:g} kW, {status.get(scoring.BELOW_MIN_HEAD, 0)} head-only or "
+        f"low-flow below {p.head_only.min_net_head_ft:g} ft, {status.get(scoring.NOT_SCORABLE, 0)} "
         "missing data"
     )
     if show <= 0:

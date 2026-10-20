@@ -1,4 +1,4 @@
-import { FILTERED_COLOR, HEAD_ONLY_COLOR, SCORE_STOPS } from "./scores";
+import { FILTERED_COLOR, HEAD_ONLY_COLOR, LOW_FLOW_COLOR, SCORE_STOPS } from "./scores";
 
 const ramp = `linear-gradient(to right, ${SCORE_STOPS.map(([, c]) => c).join(", ")})`;
 const mid = SCORE_STOPS[2][1];
@@ -52,7 +52,7 @@ export function Legend() {
         <li>
           <Swatch color={mid} width={3.5} dash="6 4" />
           <span>
-            <b>Low confidence</b>: rough flow estimate (often the Whitwell gauge, an upper bound)
+            <b>Low confidence</b>: rough flow estimate
           </span>
         </li>
         <li>
@@ -62,8 +62,14 @@ export function Legend() {
           </span>
         </li>
         <li>
+          <Swatch color={LOW_FLOW_COLOR} width={2} opacity={0.7} />
+          <span>
+            <b>Low flow</b>: under 1 kW on a rough flow estimate; listed last
+          </span>
+        </li>
+        <li>
           <Swatch color={FILTERED_COLOR} width={2} opacity={0.5} />
-          <span>Filtered out: under 1 kW, or too little drop</span>
+          <span>Filtered out: under 1 kW on a StreamStats flow, or too little drop</span>
         </li>
       </ul>
       <p className="hint">Every medium stream ranks above every low one. Zoom in for rank numbers.</p>

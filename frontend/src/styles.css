@@ -159,6 +159,10 @@ body,
   background: #6a51a3;
 }
 
+.popup .badge.low-flow {
+  background: #3f7f9a;
+}
+
 .popup .badge.filtered {
   background: #8a8a8a;
 }

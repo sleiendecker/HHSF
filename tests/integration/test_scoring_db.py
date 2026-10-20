@@ -81,3 +81,26 @@ def test_refuses_runs_that_are_not_finished_hydro_runs(engine, hydro_run):  # no
 def test_no_hydro_run_says_what_to_do(engine):  # noqa: F811
     with pytest.raises(scoring_run.NoHydroRun, match="make analyze"):
         scoring_run.score_hydro(engine, AREA, PROFILE)
+
+
+def test_v2_keeps_low_confidence_corridors_below_target(engine, hydro_run):  # noqa: F811
+    v2 = scoring.load_profile("hydro_v2")
+    score_run, _, summary = scoring_run.score_hydro(engine, AREA, v2)
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT c.firm_power_w, c.power_confidence, s.status, s.tier, s.rank
+                FROM hydro_scores s JOIN hydro_corridors c USING (corridor_id)
+                WHERE s.run_id = :r ORDER BY c.nhdplusid
+                """
+            ),
+            {"r": score_run},
+        ).all()
+    big, small = rows
+    # Big reach: EROM mean flow, low confidence, so it is listed whatever its power.
+    assert big.power_confidence == "low"
+    expected = scoring.SCORED if big.firm_power_w >= 1000 else scoring.LOW_FLOW
+    assert (big.status, big.rank) == (expected, 1)
+    assert summary["ranked_by_tier"] == {big.tier: 1}
+    assert small.status == scoring.BELOW_MIN_HEAD
