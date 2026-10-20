@@ -306,3 +306,38 @@ def test_small_basin_gets_its_huc8_regional_yield(engine, sample_features):
     assert summary["below_regression_min_drainage_area"] == 1
     assert params["use_regional_yield"] is True
     assert "wbd_hu8" in sources
+
+
+def test_regional_yield_replaces_the_gauge_on_small_basins(engine, sample_features):
+    from hhsf.analysis import hydro
+    from hhsf.analysis.basins import Basins
+    from hhsf.analysis.gauges import GaugeTransfer
+    from hhsf.analysis.hydro import GaugeReference
+    from hhsf.core import crs
+
+    records = [hydrography.parse_feature(f) for f in sample_features]
+    with engine.begin() as conn:
+        hydrography.load_streams(conn, [r for r in records if hydrography.is_perennial(r.fcode)])
+    a = hydro.load_assumptions()
+    a.regional_yield.min_reaches = 1
+    basin = crs.to_analysis(box(-85.5, 35.3, -85.3, 35.5))
+    gauge = GaugeTransfer(GaugeReference("03571000", 77.2, 402.0), basin, {"site_no": "03571000"})
+    huc8s = Basins({"06020004": basin})
+    with_yield, _ = run.run_hydro(
+        engine, AREA, FixedQ90(), echo=lambda _: None, gauge=gauge, assumptions=a, basins=huc8s
+    )
+    gauge_only, _ = run.run_hydro(
+        engine, AREA, FixedQ90(), echo=lambda _: None, gauge=gauge, assumptions=a
+    )
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT run_id, flow_method, flow_reference_gauge FROM hydro_corridors"
+                " WHERE run_id IN (:a, :b) AND drainage_area_sqkm < 3 ORDER BY run_id"
+            ),
+            {"a": with_yield, "b": gauge_only},
+        ).all()
+    assert [tuple(r) for r in rows] == [
+        (with_yield, "regional_streamstats_yield", None),
+        (gauge_only, "gauge_drainage_area_ratio", "03571000"),
+    ]

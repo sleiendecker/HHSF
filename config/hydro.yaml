@@ -52,8 +52,9 @@ gauge_transfer:
   min_years: 10
   ratio_range: [0.5, 1.5]   # reach/gauge area ratios where the method is usually trusted
 
-# D-09 fallback for basins below the regression's minimum drainage area that the
-# gauge doesn't cover: drainage area x the median StreamStats Q90 per square mile
+# D-09 (decided 2026-10-19): every basin below the regression's minimum drainage
+# area, including the ones in the gauge's basin (where the gauge runs ~10x high),
+# gets drainage area x the median StreamStats Q90 per square mile
 # of the in-range reaches draining to the same HUC8 (WBD 8-digit basin). It
 # extrapolates below the regression's limit, so it is always low confidence and
 # keeps the below_regression_min_drainage_area flag. See docs/ASSUMPTIONS.md,

@@ -27,12 +27,14 @@ TIER_TITLES = {
     "medium": "Medium confidence (StreamStats Q90)",
     "low": "Low confidence (gauge transfer, regional yield or other fallback flow)",
     scoring.HEAD_ONLY: "Head only (basin too small for a flow estimate)",
+    scoring.LOW_FLOW: "Low flow (below the power target on a low-confidence flow)",
 }
 STATUS_TITLES = {
     scoring.SCORED: "Scored (firm power at or above the target)",
     scoring.HEAD_ONLY: "Head only (no flow estimate, ranked on head)",
+    scoring.LOW_FLOW: "Low flow (below the target on a low-confidence flow, ranked on power)",
     scoring.BELOW_POWER_TARGET: "Filtered: firm power below the target",
-    scoring.BELOW_MIN_HEAD: "Filtered: head only, but too little head",
+    scoring.BELOW_MIN_HEAD: "Filtered: head only or low flow, but too little head",
     scoring.NOT_SCORABLE: "Filtered: head or flow missing",
 }
 
@@ -300,10 +302,13 @@ def caveats(info: RunInfo) -> list[str]:
         "where both exist, and NHDPlus mean flows (`nhdplus_erom`) by over 100×. Treat "
         "low-tier power as optimistic and measure dry-season flow.",
         "**Small basins use a regional yield.** Basins too small for the low-flow equations "
-        "(flag `below_regression_min_drainage_area`) outside the gauge's basin get the "
-        "median StreamStats Q90 per square mile of their HUC8 "
-        "(`flow_method = regional_streamstats_yield`). It's an extrapolation, so it is low "
-        "confidence; it misses springs, which a visit can find.",
+        "(flag `below_regression_min_drainage_area`) get the median StreamStats Q90 per "
+        "square mile of their HUC8 (`flow_method = regional_streamstats_yield`). It's an "
+        "extrapolation, so it is low confidence; it misses springs, which a visit can find.",
+        "**Low-flow corridors are below the target, but not ruled out.** Their power is under "
+        f"the {_target(info)} target on a low-confidence flow, so they stay on the list, "
+        "last, ranked by power (D-01). Most are small basins on the regional yield; a "
+        "spring-fed one could still work.",
         "**Head-only corridors have no flow estimate.** Their basins are too small for the "
         "low-flow equations and had no regional yield to borrow, so they haven't been checked "
         f"against the {_target(info)} target at all. They are ranked on head alone and need a "
@@ -402,8 +407,9 @@ def render_report(info: RunInfo, rows: list[ExportRow], top_n: int = 20) -> str:
         f"# Hydro shortlist: {info.aoi_name or info.aoi_key}",
         "",
         f"{len(ranked)} of {len(rows)} stream reaches made the list. Read it tier by tier: "
-        "every medium-confidence site ranks above every low-confidence one, and head-only "
-        f"sites come last. How scores and tiers work: [docs/SCORING.md]({DOCS}/SCORING.md). "
+        "every medium-confidence site ranks above every low-confidence one, then head-only "
+        "and low-flow sites follow. "
+        f"How scores and tiers work: [docs/SCORING.md]({DOCS}/SCORING.md). "
         f"How head, flow and power are estimated: [docs/ASSUMPTIONS.md]({DOCS}/ASSUMPTIONS.md).",
         "",
         "## Run",

@@ -127,9 +127,10 @@ def analyze_hydro(
     use_regional_yield: bool = typer.Option(
         True,
         "--regional-yield/--no-regional-yield",
-        help="Give basins too small for StreamStats (and outside the gauge's basin) the "
-        "median StreamStats Q90 per sq mi of their HUC8 (low confidence, D-09). Without it, "
-        "they have no flow and are ranked on head only.",
+        help="Give basins too small for StreamStats the median StreamStats Q90 per sq mi "
+        "of their HUC8 (low confidence, D-09), instead of the gauge transfer or no flow. "
+        "Without it, small basins use the gauge where it covers them and are otherwise "
+        "ranked on head only.",
     ),
     use_terrain: bool = typer.Option(
         True,
@@ -208,7 +209,7 @@ def analyze_hydro(
 @score_app.command("hydro")
 def score_hydro(
     aoi: str = AOI_OPTION,
-    profile: str = typer.Option("hydro_v1", help="Scoring profile from config/scoring_profiles/"),
+    profile: str = typer.Option("hydro_v2", help="Scoring profile from config/scoring_profiles/"),
     run_id: int | None = typer.Option(
         None, help="Hydro run to score. Default: the AOI's latest finished one."
     ),
@@ -229,12 +230,14 @@ def score_hydro(
     )
     typer.echo(
         f"  ranked: {tiers.get('medium', 0)} medium confidence, {tiers.get('low', 0)} low "
-        f"confidence, {tiers.get('head_only', 0)} head only (no flow estimate)"
+        f"confidence, {tiers.get('head_only', 0)} head only (no flow estimate), "
+        f"{tiers.get(scoring.LOW_FLOW, 0)} low flow (under "
+        f"{p.power_target_w / 1000:g} kW on a low-confidence flow)"
     )
     typer.echo(
         f"  filtered out: {status.get(scoring.BELOW_POWER_TARGET, 0)} below "
-        f"{p.power_target_w / 1000:g} kW, {status.get(scoring.BELOW_MIN_HEAD, 0)} head-only "
-        f"below {p.head_only.min_net_head_ft:g} ft, {status.get(scoring.NOT_SCORABLE, 0)} "
+        f"{p.power_target_w / 1000:g} kW, {status.get(scoring.BELOW_MIN_HEAD, 0)} head-only or "
+        f"low-flow below {p.head_only.min_net_head_ft:g} ft, {status.get(scoring.NOT_SCORABLE, 0)} "
         "missing data"
     )
     if show <= 0:

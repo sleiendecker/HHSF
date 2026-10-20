@@ -243,3 +243,25 @@ def test_small_basins_without_enough_streamstats_neighbours_stay_head_only():
     assert small.flow.confidence == "below_applicability"
     assert stray.flow.confidence == "below_applicability"
     assert small.power.firm_power_w is None
+
+
+def test_small_basins_on_the_gauge_switch_to_the_regional_yield():
+    from hhsf.analysis.gauges import GaugeTransfer
+
+    gauge = GaugeTransfer(hydro.GaugeReference("03571000", 80.0, 400.0), EAST, {})
+    big = [run.analyze_reach(reach(i=i), ASSUMPTIONS, Source(), gauge=gauge) for i in (1, 2, 3)]
+    small = run.analyze_reach(reach(da_sqkm=SMALL_SQKM, i=4), ASSUMPTIONS, Source(), gauge=gauge)
+    assert small.flow.method == hydro.FLOW_METHOD_GAUGE
+    run.fill_regional_yield([*big, small], basins(("06020004", EAST)), ASSUMPTIONS)
+    assert small.flow.method == hydro.FLOW_METHOD_REGIONAL
+    assert small.flow.reference_gauge is None
+    assert "regional_yield_basin:06020004" in small.flow.flags
+
+
+def test_small_basin_keeps_the_gauge_when_no_regional_yield_is_found():
+    from hhsf.analysis.gauges import GaugeTransfer
+
+    gauge = GaugeTransfer(hydro.GaugeReference("03571000", 80.0, 400.0), EAST, {})
+    small = run.analyze_reach(reach(da_sqkm=SMALL_SQKM), ASSUMPTIONS, None, gauge=gauge)
+    assert run.fill_regional_yield([small], basins(("06020004", EAST)), ASSUMPTIONS) == {}
+    assert small.flow.method == hydro.FLOW_METHOD_GAUGE

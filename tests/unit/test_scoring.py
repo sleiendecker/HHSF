@@ -225,3 +225,64 @@ def test_tier_order_comes_from_profile():
     p = scoring.ScoringProfile.model_validate(data)
     scores = scoring.score_all([corridor(1, conf="medium"), corridor(2, conf="low")], p)
     assert [s.rank for s in scores] == [2, 1]
+
+
+# --- Low-flow tier (hydro_v2) -------------------------------------------------
+
+V2 = scoring.load_profile("hydro_v2")
+
+
+def test_v2_differs_from_v1_only_by_the_low_flow_tier():
+    v1, v2 = PROFILE.model_dump(), V2.model_dump()
+    assert v2.pop("rank_tiers") == ["medium", "low", "head_only", "low_flow"]
+    v1.pop("rank_tiers")
+    assert {**v1, "version": "hydro_v2"} == v2
+    assert V2.keeps_low_flow and not PROFILE.keeps_low_flow
+
+
+def test_rank_tiers_refuse_unknown_or_repeated_tiers():
+    for tiers in (["medium", "low", "head_only", "extra"], ["medium", "low", "head_only", "low"]):
+        data = {**V2.model_dump(), "rank_tiers": tiers}
+        with pytest.raises(ValidationError):
+            scoring.ScoringProfile.model_validate(data)
+
+
+def test_low_confidence_below_target_stays_listed_as_low_flow():
+    s = scoring.score_corridor(
+        corridor(watts=56, conf="low", flow_method="regional_streamstats_yield"), V2
+    )
+    assert s.status == scoring.LOW_FLOW and s.tier == scoring.LOW_FLOW
+    assert s.hydro_score is None
+    assert s.summary.startswith("LOW FLOW: 56 W")
+    assert "regional_streamstats_yield" in s.summary
+    # hydro_v1 filters the same corridor.
+    assert scoring.score_corridor(corridor(watts=56, conf="low"), PROFILE).status == (
+        scoring.BELOW_POWER_TARGET
+    )
+
+
+def test_medium_confidence_below_target_is_still_filtered():
+    s = scoring.score_corridor(corridor(watts=500, conf="medium"), V2)
+    assert s.status == scoring.BELOW_POWER_TARGET and s.rank is None
+
+
+def test_low_flow_with_too_little_head_is_filtered():
+    s = scoring.score_corridor(corridor(head_ft=5, watts=20, conf="low"), V2)
+    assert s.status == scoring.BELOW_MIN_HEAD
+    assert "low-confidence flow" in s.summary
+
+
+def test_low_flow_ranks_last_by_power():
+    scores = scoring.score_all(
+        [
+            corridor(1, head_ft=300, watts=20, conf="low"),
+            corridor(2, head_ft=100, watts=50, conf="low"),
+            corridor(3, head_ft=60, watts=None, flow_conf="below_applicability"),
+            corridor(4, head_ft=50, watts=1200, conf="low"),
+            corridor(5, head_ft=50, watts=900, conf="medium"),  # filtered
+        ],
+        V2,
+    )
+    ranked = sorted((s for s in scores if s.rank), key=lambda s: s.rank)
+    assert [s.corridor_id for s in ranked] == [4, 3, 2, 1]
+    assert [s.tier_rank for s in ranked] == [1, 1, 1, 2]

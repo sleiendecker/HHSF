@@ -199,10 +199,10 @@ def firm_flow(
        the outlet by drainage area; still medium, flagged.
     2. A gauge in the same basin (`gauge`, when the reach drains to it): its Q90
        scaled by drainage area, low confidence. Also covers basins too small for
-       the regression (D-09), with that flag kept.
+       the regression (D-09), with that flag kept, though run.py then replaces
+       those with the regional yield where it can (regional_flow).
     3. Basin below the regression's minimum drainage area: None, below_applicability.
-       (run.py then fills it from the basin's regional yield where it can; see
-       regional_flow.)
+       (run.py then fills it from the regional yield where it can; see regional_flow.)
     4. Otherwise NHDPlus EROM mean annual flow, low confidence. Mean flow
        overstates what a turbine can rely on; the flags say so.
     """
@@ -301,6 +301,18 @@ def regional_yield(
     return None
 
 
+def regional_yield_applies(flow: Flow) -> bool:
+    """True for a basin too small for the regression with no flow, or only the gauge's.
+
+    D-09 (decided 2026-10-19): the regional yield replaces the gauge transfer for
+    small basins too, since the gauge runs about 10x high on them. A gauge
+    transfer on a larger basin (StreamStats down or snapped wrong) is kept.
+    """
+    if flow.confidence == "below_applicability":
+        return True
+    return flow.method == FLOW_METHOD_GAUGE and "below_regression_min_drainage_area" in flow.flags
+
+
 def regional_flow(
     flow: Flow, drainage_area_sqkm: float, yield_cfs_per_sqmi: float, basin: str
 ) -> Flow:
@@ -311,17 +323,21 @@ def regional_flow(
     pooled when the HUC8 has too few; see regional_yield). Applying it below
     the regression's 1.3 sq mi minimum is an extrapolation, so it is always low
     confidence and keeps `below_regression_min_drainage_area`; the basin it came
-    from is added as a flag. Only a below_applicability flow is replaced.
+    from is added as a flag. Replaces only a flow regional_yield_applies() to;
+    a replaced gauge transfer loses its gauge, ratio and ratio flag.
     """
-    if flow.confidence != "below_applicability":
+    if not regional_yield_applies(flow):
         return flow
+    flags = [f for f in flow.flags if not f.startswith("area_ratio_outside_")]
     return replace(
         flow,
         firm_flow_cfs=units.sqkm_to_sqmi(drainage_area_sqkm) * yield_cfs_per_sqmi,
         statistic="q90",
         method=FLOW_METHOD_REGIONAL,
         confidence="low",
-        flags=[*flow.flags, f"regional_yield_basin:{basin}"],
+        flags=[*flags, f"regional_yield_basin:{basin}"],
+        reference_gauge=None,
+        drainage_area_ratio=None,
     )
 
 

@@ -47,7 +47,7 @@ The biggest stretch drops are real: the streams coming off the Cumberland Platea
 - **10 m cells blur narrow features.** A small waterfall or a ravine narrower than a cell or two can be under- or over-stated by a few meters. Confirm the drop on the visit (or with 1 m LiDAR, later).
 - **The NHDPlus line and the DEM channel don't always line up.** Where the line runs along a bank, samples read high; the carve and the NHDPlus cap remove most of that, but not all.
 
-**Changing the length:** set `corridor.penstock_length_ft` in `config/hydro.yaml`, or for one run, `uv run hhsf analyze hydro --penstock-ft 2000`. The D-08 sensitivity check on 2026-10-19 gave (before the [regional yield](#regional-low-flow-yield) existed; with it, no corridor is head-only and the 1 kW counts are unchanged):
+**Changing the length:** set `corridor.penstock_length_ft` in `config/hydro.yaml`, or for one run, `uv run hhsf analyze hydro --penstock-ft 2000`. The D-08 sensitivity check on 2026-10-19 gave (before the [regional yield](#regional-low-flow-yield) replaced the gauge transfer on small basins; with it, no corridor is head-only and only the medium-confidence column still holds, so 1 kW at 1,000 ft is Rogers Branch alone):
 
 | Longest penstock | Reaches at or above 1 kW | of them medium confidence | Head-only corridors ranked |
 | --- | --- | --- | --- |
@@ -103,17 +103,17 @@ Target statistic: **Q90**, the flow met or exceeded 90% of the time ([D-04](DECI
 | StreamStats Q90, all basin characteristics inside the equation's limits | StreamStats D90 | `streamstats_q90` | `medium` | — |
 | StreamStats Q90, some characteristic other than drainage area outside the limits | StreamStats D90 | `streamstats_q90` | `low` | `out_of_range:<CODE>` |
 | The outlet's basin was the wrong one, but a point further up the reach found the right one | StreamStats D90 there × (outlet area ÷ area there) | `streamstats_q90` | `medium` (or `low` if out of range) | `streamstats_pour_point_moved` |
-| No StreamStats Q90 (basin too small, service down, failed for this point, wrong basin, or switched off), and the reach drains to the AOI's reference gauge's basin | Gauge Q90 × (reach area ÷ gauge area) | `gauge_drainage_area_ratio` | `low` | the reason (e.g. `below_regression_min_drainage_area`), plus `area_ratio_outside_0.5_1.5` when it applies |
-| Basin smaller than the regression's minimum drainage area (1.3 sq mi), not in the gauge's basin | Drainage area × the median StreamStats Q90 per sq mi of the in-range reaches in its HUC8 | `regional_streamstats_yield` | `low` | `below_regression_min_drainage_area`, `regional_yield_basin:<code>` |
-| The same, but no basin has enough StreamStats Q90s to borrow from (or the run used `--no-regional-yield`) | **NULL** | — | `below_applicability` | `below_regression_min_drainage_area` |
+| Basin smaller than the regression's minimum drainage area (1.3 sq mi), anywhere | Drainage area × the median StreamStats Q90 per sq mi of the in-range reaches in its HUC8 | `regional_streamstats_yield` | `low` | `below_regression_min_drainage_area`, `regional_yield_basin:<code>` |
+| No StreamStats Q90 for a larger basin (service down, failed for this point, wrong basin, or switched off), and the reach drains to the AOI's reference gauge's basin. Also small basins there when no regional yield is found or the run used `--no-regional-yield` | Gauge Q90 × (reach area ÷ gauge area) | `gauge_drainage_area_ratio` | `low` | the reason (e.g. `streamstats_drainage_area_mismatch`), plus `area_ratio_outside_0.5_1.5` when it applies |
+| Small basin outside the gauge's basin with no regional yield (no basin with enough StreamStats Q90s, or `--no-regional-yield`) | **NULL** | — | `below_applicability` | `below_regression_min_drainage_area` |
 | StreamStats down, failed for this point, delineated the wrong basin, or switched off, not in the gauge's basin | NHDPlus EROM **mean annual** flow | `nhdplus_erom` | `low` | the reason, plus `mean_flow_not_q90` |
 | No drainage area or no mean flow | NULL | — | `unavailable` | the reason |
 
 Notes:
 
 - **Why "medium" and never "high":** the Tennessee flow-duration equations (Law and others, 2009, USGS SIR 2009-5159) have an average standard error of prediction of about **60% for D90**. The value is stored in `flow_std_error_pct`.
-- **Minimum drainage area:** 1.3 sq mi (3.37 km²) for the Central and East Tennessee region (`GC1419`, which covers Sequatchie); 2.0 sq mi for West Tennessee (`GC1418`). StreamStats will happily extrapolate below the limit and only add a warning, so the tool checks the limit itself and never asks StreamStats about these basins. Below it, the flow comes from the gauge transfer or the regional yield, both low confidence and both keeping the `below_regression_min_drainage_area` flag ([D-09](DECISIONS.md#d-09--small-streams-below-streamstats-applicability-limit-measure)). If neither applies, there is no flow estimate: the corridor keeps its head and is marked `below_applicability` instead of being dropped.
-- **In Sequatchie, 635 of 989 reaches (64%) are below the minimum.** Only 354 are big enough for the regression. That's the share D-09 said to measure. 338 of them, in the Sequatchie River's basin, get a gauge-transfer estimate; the other 296 get the [regional yield](#regional-low-flow-yield), so no reach is head-only any more.
+- **Minimum drainage area:** 1.3 sq mi (3.37 km²) for the Central and East Tennessee region (`GC1419`, which covers Sequatchie); 2.0 sq mi for West Tennessee (`GC1418`). StreamStats will happily extrapolate below the limit and only add a warning, so the tool checks the limit itself and never asks StreamStats about these basins. Below it, the flow comes from the regional yield (the gauge transfer only if that is missing or switched off), low confidence and keeping the `below_regression_min_drainage_area` flag ([D-09](DECISIONS.md#d-09--small-streams-below-streamstats-applicability-limit-measure)). If neither applies, there is no flow estimate: the corridor keeps its head and is marked `below_applicability` instead of being dropped.
+- **In Sequatchie, 635 of 989 reaches (64%) are below the minimum.** Only 354 are big enough for the regression. That's the share D-09 said to measure. All 634 with a drainage area now get the [regional yield](#regional-low-flow-yield), so no reach is head-only any more.
 - **The fallback overstates flow.** EROM mean annual flow is always higher than Q90, often by a large factor on small streams. It's used only so a corridor isn't left blank when StreamStats is down; the `low` confidence and `mean_flow_not_q90` flag mark it. Re-run once StreamStats is back to replace these values.
 - **Wrong-basin check:** StreamStats snaps the pour point to its own stream grid. If the basin it delineates differs from the NHDPlus drainage area by more than 25%, it probably snapped to a different stream. The tool then tries points further up the reach; see [When StreamStats snaps to the wrong stream](#when-streamstats-snaps-to-the-wrong-stream).
 - **Pour point:** 30 m above the reach's downstream end (at most 10% of the reach), so StreamStats doesn't snap onto the confluence with the next reach. NHDPlus flowlines are drawn upstream to downstream; this was checked on the loaded data (every end-to-start connection goes to an equal or larger drainage area).
@@ -140,12 +140,12 @@ Q90_reach = Q90_gauge × (drainage_area_reach ÷ drainage_area_gauge)
 
 - **Gauge:** set per AOI in `config/aoi/<key>.yaml` (`reference_gauge`). For Sequatchie: **USGS 03571000, Sequatchie River near Whitwell, TN**, 402 sq mi, in the Sequatchie HUC8 basin (`06020004`).
 - **Gauge Q90:** the 10th percentile of approved daily mean flows (NWIS, parameter 00060), water years 2002–2025 (`config/hydro.yaml`, `gauge_transfer`). For Whitwell: **77.2 cfs from 8,400 days**, or 0.19 cfs per sq mi. (Mean flow over the same period is 803 cfs, about 10× Q90, which shows how much the EROM mean-flow fallback overstates firm flow.) A gauge with less than 10 years of approved record is refused.
-- **Which reaches:** only those whose downstream end is inside the gauge's HUC8 (from the Watershed Boundary Dataset): 522 of Sequatchie's 989. The other 467 keep the StreamStats/EROM rules above, and their small basins get the [regional yield](#regional-low-flow-yield). They're in two places (checked 2026-10-19 from NHDPlus region codes and the HUC8 StreamStats reports for each pour point):
+- **Which reaches:** only those whose downstream end is inside the gauge's HUC8 (from the Watershed Boundary Dataset): 522 of Sequatchie's 989. Since D-09 was decided (2026-10-19), only the larger ones without a StreamStats Q90 use it: 4 in hydro run 36 (three unnamed 176 km² reaches StreamStats can't outline, and Minton Branch). Small basins there get the [regional yield](#regional-low-flow-yield) instead, because the gauge runs about 10× high on them. The other 467 reaches are outside the gauge's basin, in two places (checked 2026-10-19 from NHDPlus region codes and the HUC8 StreamStats reports for each pour point):
   - **285 drain east off Walden Ridge to the Tennessee River** (Middle Tennessee-Chickamauga, HUC8 `06020001`): Soddy, North Suck, Cain, Conner and Brock Creeks and their tributaries.
   - **182 drain west to the Cumberland**, mostly the Collins River (HUC8 `05130107`), a few the Caney Fork (`05130108`).
   - A second gauge for these two areas was tried and rejected: Collins River near McMinnville gives the same ~10× as Whitwell, and the Walden Ridge gauges disagree with each other. See [Regional low-flow yield](#regional-low-flow-yield).
 - **Confidence is always `low`.** The method assumes every square mile of the basin yields the same low flow. The usual guidance is to trust it for basins between half and one and a half times the gauge's size; every reach in the county is far smaller (largest ratio ≈ 0.17), so every transferred value also carries `area_ratio_outside_0.5_1.5`. `flow_reference_gauge` and `flow_drainage_area_ratio` record the gauge and ratio used.
-- **Basins below the regression minimum** get a transferred value too, with `below_regression_min_drainage_area` kept in `flow_flags` so D-09 sites can still be picked out.
+- **Basins below the regression minimum** only get a transferred value when the regional yield can't be used (`--no-regional-yield`, or no basin with enough StreamStats reaches), with `below_regression_min_drainage_area` kept in `flow_flags`.
 - **StreamStats wins** wherever it gives an in-range Q90; the gauge only fills gaps.
 - **How far off it can be:** see [Gauge transfer vs. StreamStats](#gauge-transfer-vs-streamstats) below.
 
@@ -166,7 +166,7 @@ So on most of these streams **the gauge transfer gives about ten times the low f
 
 ### Regional low-flow yield
 
-Small basins (below the regression's 1.3 sq mi minimum) outside the gauge's basin borrow the low flow per square mile of the bigger streams around them:
+Every small basin (below the regression's 1.3 sq mi minimum) borrows the low flow per square mile of the bigger streams around them ([D-09](DECISIONS.md#d-09--small-streams-below-streamstats-applicability-limit-measure), decided 2026-10-19):
 
 ```
 Q90_reach = drainage_area_reach (sq mi) × median( StreamStats Q90 ÷ drainage area )
@@ -176,18 +176,19 @@ Q90_reach = drainage_area_reach (sq mi) × median( StreamStats Q90 ÷ drainage a
 - **Which streams lend their yield:** reaches in the same run with a `medium` StreamStats Q90 (every basin characteristic in range, including moved pour points), grouped by the WBD 8-digit basin (HUC8) their downstream end is in. Out-of-range, gauge and fallback flows are never used.
 - **Too few lenders:** a HUC8 needs at least **10** of them (`regional_yield.min_reaches` in `config/hydro.yaml`). If it has fewer, the HUC8s sharing its first 6 digits (then 4) are pooled. `flow_flags` gets `regional_yield_basin:<code>`, and the code's length shows which level was used.
 - **Confidence is always `low`**, and `below_regression_min_drainage_area` stays in `flow_flags`, so D-09 sites can still be picked out. `flow_method = regional_streamstats_yield`. The yield used per basin, and how many reaches it came from, are in the run's `summary` (`regional_yield`).
-- **Gauge first:** a small basin inside the reference gauge's HUC8 keeps the gauge transfer; the regional yield only fills what is still empty.
-- **To switch it off** for one run (the old head-only ranking): `uv run hhsf analyze hydro --no-regional-yield`.
+- **It replaces the gauge transfer on small basins.** Inside the reference gauge's HUC8 a small basin gets the regional yield too, because the gauge transfer runs about 10× StreamStats there (below). If no regional yield can be found, it keeps the gauge transfer. The gauge still covers larger reaches StreamStats couldn't answer for.
+- **To switch it off** for one run: `uv run hhsf analyze hydro --no-regional-yield`. Small basins then go back to the gauge transfer (in its basin) or no flow, ranked head only (elsewhere), the D-09 starting rule.
 
-**In Sequatchie** (hydro run 30, 2026-10-19), all 296 small basins outside the Whitwell basin got a value:
+**In Sequatchie** (hydro run 36, 2026-10-20), all 634 small basins with a drainage area got a value:
 
 | Basin | Yield (cfs per sq mi) | StreamStats reaches it came from | Small basins filled |
 | --- | --- | --- | --- |
+| `06020004` Sequatchie River (replaces the Whitwell gauge transfer) | 0.0188 | 179 | 338 |
 | `06020001` Walden Ridge, Tennessee River side | 0.0172 | 112 | 173 |
 | `05130107` Collins River | 0.0186 | 57 | 103 |
 | `051301` (Caney Fork `05130108` has only 2 StreamStats reaches, so pooled with Collins) | 0.0184 | 59 | 20 |
 
-Their basins are 0.02–1.29 sq mi, so their Q90 is about 0.0003–0.024 cfs (0.1–11 gpm). **None comes close to 1 kW:** the best is 56 W (Panther Branch and an unnamed Collins tributary, about 225–260 ft of net head), the median 6 W. Even the best would need about 18× this yield to reach 1 kW, nearly twice the gauge transfer's 10×. So the head-only tier is empty, and these 296 corridors are filtered out as below 1 kW.
+Their basins are 0.02–1.29 sq mi, so their Q90 is about 0.0003–0.024 cfs (0.1–11 gpm). **None reaches 1 kW:** the best is 146 W (Stillhouse Branch, 331 ft of net head, which made 1.5 kW on the gauge transfer), and only 5 pass 100 W, all plateau-edge streams in the Sequatchie basin that had been on the shortlist on the gauge transfer. Outside that basin the best is 56 W (Panther Branch). Even Stillhouse Branch would need about 7× this yield to reach 1 kW. So the head-only tier is empty, and these corridors are scored as `low_flow` (listed last, see [SCORING.md](SCORING.md)) instead of filtered out.
 
 #### How the two candidate methods compared
 
@@ -224,7 +225,8 @@ So the regional yield matches StreamStats wherever StreamStats applies, and it a
 - **It is an extrapolation.** The regression wasn't fitted on basins this small. Its drainage-area exponent (1.045) is close to 1, so yield barely depends on size, but the other basin characteristics of a tiny basin can differ from its neighbors'.
 - **The Collins River side may be up to 5× low.** For 10 of the 12 Collins basins StreamStats was asked about, its own extrapolation gave 1.6–5× the regional yield (0.03–0.09 cfs per sq mi), driven by a higher streamflow-recession index (`RECESS` up to 50; most streams in the county sit at the equation's lower limit of 32). Even at 5× none of them would reach 300 W.
 - **Springs are invisible to it.** A spring-fed stream can carry many times its basin's share in dry weather, as the limestone valley does. A visit, or a dry-season flow measurement, is the only way to find one.
-- **It is far below the gauge transfer for the same size of basin.** A 1 sq mi stream gets about 0.018 cfs here but about 0.19 cfs if it drains to the Sequatchie River (Whitwell gauge transfer). The five low-tier sites on the shortlist are all such gauge-transfer small basins; on the regional yield they would produce roughly 100–150 W. Treat their gauge-based numbers as the upper bound they are.
+- **The Sequatchie River basin mixes two kinds of stream.** About a fifth of its StreamStats reaches, on the limestone valley floor, yield 5–10× the median (90th percentile 0.15 cfs per sq mi). A small spring-fed stream on the valley floor could likewise carry far more than this estimate; the plateau-edge streams with the most head are more like the median.
+- **It is about a tenth of the gauge transfer for the same size of basin** (0.019 against 0.19 cfs per sq mi). That gap is why D-09 chose it for small basins: the gauge's number comes from a 402 sq mi river fed by valley springs. If you'd rather see the gauge's upper bound for the Sequatchie-side streams, run with `--no-regional-yield`.
 
 ### Usable flow and firm power (`usable_flow_cfs`, `firm_power_w`)
 

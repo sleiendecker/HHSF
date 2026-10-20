@@ -1,0 +1,43 @@
+# Hydro scoring profile (site-selection.md §3.1, docs/DECISIONS.md D-01, D-09, D-11).
+# Explained in docs/SCORING.md. Every scoring run copies this whole file into
+# analysis_runs.params and records `version` in analysis_runs.scoring_profile_version,
+# so a ranking can always be rebuilt. To change a breakpoint or weight, copy this
+# file to hydro_v2.yaml, edit it there, and score again: never edit a profile
+# that has already been used.
+#
+# v2 (2026-10-20, D-01/D-09 decided): adds the low_flow tier. Same breakpoints
+# and weights as hydro_v1.
+
+version: hydro_v2
+
+# D-01: corridors whose firm power is below this get no hydro score. They are
+# filtered out, unless their flow is low confidence (see low_flow below).
+power_target_w: 1000
+
+# D-11: hydro score = power x 0.7 + head x 0.3. Weights must add up to 1.
+weights:
+  power: 0.7
+  head: 0.3
+
+# Sub-scores are absolute: straight lines between these [input, score] points,
+# flat beyond the first and last. A corridor's score never depends on other corridors.
+head_subscore:          # input: net head (gross x 0.85, D-07), feet
+  breakpoints: [[10, 0], [200, 100]]
+power_subscore:         # input: firm power, watts
+  breakpoints: [[1000, 50], [3000, 100]]
+
+# D-09: corridors with no flow estimate because the basin is below the
+# regression's minimum drainage area stay on the list, ranked on head only.
+# Ones below this net head can't run a practical small turbine, so they drop.
+# The same minimum applies to the low_flow tier.
+head_only:
+  min_net_head_ft: 10
+
+# Ranking order (docs/SCORING.md): every corridor in an earlier tier ranks above
+# every corridor in a later one, whatever their scores. Within a tier, higher
+# score first. Tiers: medium = power from StreamStats Q90 inside the regression's
+# limits; low = power from any other flow estimate; head_only = no flow (D-09);
+# low_flow = below the power target, but on a low-confidence flow, so kept on the
+# list instead of filtered (D-01: corridors whose flow can't be estimated reliably
+# stay listed). Leave low_flow out of this list to filter them (as hydro_v1 does).
+rank_tiers: [medium, low, head_only, low_flow]

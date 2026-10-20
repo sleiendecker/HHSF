@@ -261,13 +261,14 @@ def analyze_reaches(
 def fill_regional_yield(
     corridors: list[Corridor], basins: Basins, a: hydro.HydroAssumptions
 ) -> dict[str, dict]:
-    """D-09 fallback: give basins too small for StreamStats their basin's typical Q90.
+    """D-09: give basins too small for StreamStats their basin's typical Q90.
 
     Runs after every reach has its own flow. Each medium-confidence StreamStats
     Q90 is turned into a yield (cfs per sq mi) and grouped by the HUC8 its reach
-    drains to; a below_applicability reach then gets its drainage area times the
-    median yield of its HUC8 (or of the HUC6/HUC4 if the HUC8 has too few). Its
-    power is recomputed. Returns the yields used, per basin, for the run summary.
+    drains to. A small basin with no flow, or only a gauge transfer, then gets its
+    drainage area times the median yield of its HUC8 (or of the HUC6/HUC4 if the
+    HUC8 has too few), and its power is recomputed. Where no yield is found it
+    keeps what it had. Returns the yields used, per basin, for the run summary.
     """
     huc8s = [basins.huc8_of(c.reach.geom) for c in corridors]
     yields: dict[str, list[float]] = defaultdict(list)
@@ -277,7 +278,7 @@ def fill_regional_yield(
             yields[huc8].append(y)
     used: dict[str, dict] = {}
     for c, huc8 in zip(corridors, huc8s, strict=True):
-        if c.flow.confidence != "below_applicability" or huc8 is None:
+        if not hydro.regional_yield_applies(c.flow) or huc8 is None:
             continue
         found = hydro.regional_yield(yields, huc8, a.regional_yield.min_reaches)
         if found is None:

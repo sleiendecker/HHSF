@@ -353,8 +353,20 @@ def test_regional_flow_fills_a_small_basin_low_confidence_with_flags_kept():
     assert hydro.firm_power(f, hydro.head(200, 100, 0.85), ASSUMPTIONS).confidence == "low"
 
 
-def test_regional_flow_never_replaces_another_estimate():
-    gauge = hydro.firm_flow(SMALL_SQKM, 1.0, None, SETTINGS, None, GAUGE)
-    assert hydro.regional_flow(gauge, SMALL_SQKM, 0.018, "06020004") is gauge
+def test_regional_flow_replaces_the_gauge_on_small_basins_only():
+    small_gauge = hydro.firm_flow(SMALL_SQKM, 1.0, None, SETTINGS, None, GAUGE)
+    f = hydro.regional_flow(small_gauge, SMALL_SQKM, 0.018, "06020004")
+    assert f.method == hydro.FLOW_METHOD_REGIONAL
+    assert f.firm_flow_cfs == pytest.approx(units.sqkm_to_sqmi(SMALL_SQKM) * 0.018)
+    assert f.flags == ["below_regression_min_drainage_area", "regional_yield_basin:06020004"]
+    assert f.reference_gauge is None and f.drainage_area_ratio is None
+    # A larger basin on the gauge (StreamStats down) keeps it.
+    big_gauge = hydro.firm_flow(BIG_SQKM, 1.0, None, SETTINGS, "streamstats_unavailable", GAUGE)
+    assert hydro.regional_flow(big_gauge, BIG_SQKM, 0.018, "06020004") is big_gauge
+
+
+def test_regional_flow_never_replaces_streamstats_or_missing_data():
+    medium = hydro.firm_flow(BIG_SQKM, 5.0, estimate(), SETTINGS)
+    assert hydro.regional_flow(medium, BIG_SQKM, 0.018, "06020004") is medium
     unavailable = hydro.firm_flow(None, 1.0, None, SETTINGS)
     assert hydro.regional_flow(unavailable, SMALL_SQKM, 0.018, "06020004") is unavailable
