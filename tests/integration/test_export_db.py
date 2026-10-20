@@ -80,3 +80,21 @@ def test_latest_scores_view_follows_newest_run(engine, hydro_run):  # noqa: F811
             text("SELECT DISTINCT score_run_id, aoi_key FROM latest_hydro_scores")
         ).all()
     assert [tuple(r) for r in runs] == [(newest, "fixture")]
+
+
+def test_latest_scores_view_carries_popup_columns(engine, hydro_run):  # noqa: F811
+    scoring_run.score_hydro(engine, AREA, PROFILE)
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT status, flow_flags, flow_reference_gauge, factors"
+                " FROM latest_hydro_scores ORDER BY corridor_id"
+            )
+        ).all()
+    # Flags are one comma-separated string, since vector tiles can't carry arrays.
+    assert all(isinstance(r.flow_flags, str) for r in rows)
+    keys = {"factor", "value", "subscore", "weight", "contribution"}
+    for r in rows:
+        factors = json.loads(r.factors)
+        assert all(keys <= f.keys() for f in factors)
+        assert bool(factors) == (r.status in ("scored", "head_only"))

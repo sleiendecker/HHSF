@@ -33,8 +33,10 @@ postgres:
       id_column: county_id
       properties:
         county_name: text
-    # The latest score run's corridors (a view, migration 0005). Color by `tier`:
-    # medium, low, head_only, or empty for corridors that were filtered out.
+    # The latest score run's corridors (a view, migrations 0005-0006). The map colors
+    # them by `hydro_score` and styles them by `tier`: medium, low, head_only, or
+    # empty for corridors that were filtered out. `factors` is JSON text: each
+    # factor's value, sub-score, weight and contribution, for the click popup.
     latest_hydro_scores:
       schema: public
       table: latest_hydro_scores
@@ -51,9 +53,14 @@ postgres:
         rank: int4
         tier_rank: int4
         hydro_score: float8
+        head_subscore: float8
+        power_subscore: float8
         net_head_ft: float8
         firm_power_w: float8
         firm_flow_cfs: float8
         flow_method: text
         flow_confidence: text
         summary: text
+        flow_flags: text
+        flow_reference_gauge: text
+        factors: text
