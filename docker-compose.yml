@@ -1,4 +1,7 @@
 # Local services. Start with `make up` (it runs migrations before the tile server).
+# The fixed project name makes every checkout of the repo (including git worktrees)
+# share one database and tile server instead of starting a second set on the same ports.
+name: hydro-homestead
 services:
   db:
     # Multi-arch build of the official PostGIS image (native on Apple Silicon and x86).
