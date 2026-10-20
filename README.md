@@ -172,7 +172,7 @@ Open <http://localhost:5173>. The map shows the latest `make score` run (refresh
 | **Faint grey line** | Filtered out: under 1 kW, or too little drop for a turbine. |
 | **#12** labels (zoom in) | The stream's rank on the shortlist. |
 
-Pick the map underneath in the **Map** box at the top right; the map remembers the choice next time:
+To change the map underneath, click the layers button (two stacked sheets) under the zoom buttons and pick a thumbnail. The map remembers your choice next time:
 
 | Map | Use it for |
 | --- | --- |
@@ -182,7 +182,7 @@ Pick the map underneath in the **Map** box at the top right; the map remembers t
 
 Satellite and topo come from the USGS National Map and stop sharpening past about 1:9,000 (zoom 16); closer than that the map just enlarges them. On both, streams and scores get a white outline so they show up on the darker background.
 
-![The same stretch on the satellite map: the top site sits in forest above a road and farm fields](docs/images/map-satellite.jpg)
+![The same stretch on the satellite map, with the map menu open: the top site sits in forest above a road and farm fields](docs/images/map-satellite.jpg)
 
 Click a stretch to see its score and why: how many points power and head each added, which part of the stream it is (how long the stretch is, and how long the whole stream is and how much it drops), the net head (ft), firm flow (cfs and gallons per minute), firm power (W), where the flow number came from, the confidence group and any warnings. Untick **Show hydro scores** to go back to plain streams (bigger streams darker), where a click shows elevation drop, length, slope, drainage area and estimated mean flow.
 
@@ -260,7 +260,7 @@ hydro-homestead/
 │   └── analysis/            # Hydro calculations, StreamStats client, scoring, runs, exports
 ├── migrations/versions/     # Database table definitions
 ├── martin/martin.yaml       # Which tables the tile server publishes
-├── frontend/                # React + MapLibre map app (src/scores.ts: score colors and popup; src/basemaps.ts: light, satellite and topo maps)
+├── frontend/                # React + MapLibre map app (src/scores.ts: score colors and popup; src/basemaps.ts and BasemapControl.ts: light, satellite and topo maps)
 ├── tests/
 │   ├── unit/                # Fast, no Docker needed
 │   ├── integration/         # Starts a throwaway PostGIS in Docker

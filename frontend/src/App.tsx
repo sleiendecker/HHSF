@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import maplibregl, { type ExpressionSpecification, type MapGeoJSONFeature } from "maplibre-gl";
-import { BasemapSwitcher } from "./BasemapSwitcher";
+import { BasemapControl } from "./BasemapControl";
 import { LIGHT_STYLE, addBasemapLayers, saveBasemap, savedBasemap, showBasemap } from "./basemaps";
 import { Legend } from "./Legend";
 import { CFS_TO_GPM, SCORE_LAYERS, scorePopupHtml } from "./scores";
@@ -51,8 +51,6 @@ export function App() {
   const mapRef = useRef<maplibregl.Map>();
   const [showScores, setShowScores] = useState(true);
   const showScoresRef = useRef(showScores);
-  const [basemap, setBasemap] = useState(savedBasemap);
-  const basemapRef = useRef(basemap);
 
   useEffect(() => {
     const map = new maplibregl.Map({
@@ -63,6 +61,11 @@ export function App() {
     });
     mapRef.current = map;
     map.addControl(new maplibregl.NavigationControl(), "top-right");
+    const basemaps = new BasemapControl(savedBasemap(), (id) => {
+      saveBasemap(id);
+      if (map.getLayer("scores-hit")) showBasemap(map, id);
+    });
+    map.addControl(basemaps, "top-right");
     map.addControl(new maplibregl.ScaleControl({ unit: "imperial" }));
 
     map.on("load", () => {
@@ -117,7 +120,7 @@ export function App() {
       // Every perennial stream has a scored corridor, so the scores replace the streams layer when shown.
       for (const layer of SCORE_LAYERS) map.addLayer(layer);
       setScoresVisible(map, showScoresRef.current);
-      showBasemap(map, basemapRef.current);
+      showBasemap(map, basemaps.value);
 
       // With scores on, a click explains the score; with them off, it shows the stream's numbers.
       map.on("click", (e) => {
@@ -143,12 +146,6 @@ export function App() {
     if (mapRef.current?.getLayer("scores-hit")) setScoresVisible(mapRef.current, showScores);
   }, [showScores]);
 
-  useEffect(() => {
-    basemapRef.current = basemap;
-    saveBasemap(basemap);
-    if (mapRef.current?.getLayer("scores-hit")) showBasemap(mapRef.current, basemap);
-  }, [basemap]);
-
   return (
     <>
       <div ref={container} className="map" />
@@ -164,7 +161,6 @@ export function App() {
           Show hydro scores
         </label>
       </div>
-      <BasemapSwitcher value={basemap} onChange={setBasemap} />
       {showScores && <Legend />}
     </>
   );

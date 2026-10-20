@@ -170,54 +170,69 @@ body,
   font-size: 12px;
 }
 
-/* Top right, under MapLibre's zoom and compass buttons (3 × 29 px plus their 10 px margin). */
-.basemaps {
+/* Basemap menu (BasemapControl.ts): opens to the left of its button, in MapLibre's control style. */
+.basemap-ctrl {
+  position: relative;
+}
+
+.basemap-ctrl .maplibregl-ctrl-group button {
+  display: grid;
+  place-items: center;
+}
+
+.basemap-menu {
   position: absolute;
-  top: 107px;
-  right: 10px;
-  margin: 0;
-  padding: 8px 10px;
-  border: 0;
-  background: rgba(255, 255, 255, 0.95);
-  border-radius: 8px;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
-  font-size: 12px;
-  line-height: 1.35;
-}
-
-.basemaps legend {
-  float: left;
-  margin: 0 0 4px;
-  padding: 0;
-  font-size: 12px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: #444;
-}
-
-.basemaps label {
-  clear: left;
+  top: 0;
+  right: calc(100% + 8px);
   display: flex;
   gap: 6px;
+  padding: 6px;
+  background: #fff;
+  border-radius: 4px;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.1);
+}
+
+.basemap-menu[hidden] {
+  display: none;
+}
+
+.basemap-menu button {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
   align-items: center;
-  margin: 2px 0;
+  padding: 3px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  font: 12px system-ui, -apple-system, sans-serif;
+  color: #333;
   cursor: pointer;
 }
 
-.basemaps input {
-  margin: 0;
+.basemap-menu button:hover {
+  background: #f0f0f0;
+}
+
+.basemap-menu img {
+  display: block;
+  border-radius: 3px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.15);
+  outline: 2px solid transparent;
+  outline-offset: 1px;
+}
+
+.basemap-menu button[aria-pressed="true"] {
+  font-weight: 700;
+}
+
+.basemap-menu button[aria-pressed="true"] img {
+  outline-color: #0a7cc1;
 }
 
 @media (max-width: 600px) {
   .legend {
     width: auto;
     right: 12px;
-  }
-
-  /* Leave the right-hand column to the map buttons and the basemap picker. */
-  .panel {
-    max-width: none;
-    right: 107px;
   }
 }
