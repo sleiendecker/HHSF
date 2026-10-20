@@ -23,6 +23,9 @@ analyze:  ## Compute head, firm flow and firm power for every stream (needs make
 score:  ## Score and rank the latest hydro run against the 1 kW target (needs make analyze)
 	uv run hhsf score hydro --aoi $(AOI)
 
+export:  ## Write the latest scores to data/outputs/ as CSV, GeoJSON and a report (needs make score)
+	uv run hhsf export hydro --aoi $(AOI)
+
 web:  ## Run the map at http://localhost:5173
 	cd frontend && npm run dev
 
@@ -36,4 +39,4 @@ lint:  ## Check code style
 down:  ## Stop services (data is kept)
 	docker compose down
 
-.PHONY: help setup up ingest analyze score web test lint down
+.PHONY: help setup up ingest analyze score export web test lint down

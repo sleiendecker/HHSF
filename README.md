@@ -21,9 +21,10 @@ This is different from a real estate search. It starts from the terrain and wate
 | --- | --- |
 | Loads the county boundary and every perennial (year-round) stream in the county into a local database | Hydro corridor detection (finding the steepest usable stretch of each stream; today each whole stream is one corridor) |
 | Records each stream's elevation drop, length, slope, drainage area and estimated mean flow | Low-flow estimates for small streams on the Collins River side of the county |
-| Map viewer: click any stream to see its numbers | Scores on the map, CSV/GeoJSON exports and a summary report |
+| Map viewer: click any stream to see its numbers | Scores drawn on the map (the tile server already publishes them as `latest_hydro_scores`) |
 | Hydro analysis: head, reliable low flow (Q90 from USGS StreamStats, or scaled from the Whitwell stream gauge where StreamStats can't help) and firm power for every stream, saved as a numbered run | Corridors on the map |
-| Scoring and ranking: streams under 1 kW dropped, the rest scored 0–100 on power and head with an explanation for each score, and ranked by confidence | Parcels, ownership, soils, flood zones, roads, reports |
+| Scoring and ranking: streams under 1 kW dropped, the rest scored 0–100 on power and head with an explanation for each score, and ranked by confidence | Parcels, ownership, soils, flood zones, roads |
+| Exports: the ranked shortlist as CSV and GeoJSON, every stream with the reason it was or wasn't listed, and a summary report for planning visits | |
 
 ## How it works
 
@@ -130,7 +131,24 @@ make score
 
 Scores the latest hydro run and prints the top 20. Streams below 1 kW are dropped; the rest get a 0–100 hydro score (70% power, 30% head), and every score is saved with an explanation of how it was reached. The list is ranked by confidence first: every stream whose low flow came from StreamStats ranks above every stream whose flow is a rougher estimate, and streams too small for any flow estimate come last, marked "head only". Each scoring is saved as a new numbered run in the `hydro_scores` table. Details: [docs/SCORING.md](docs/SCORING.md).
 
-### 7. Open the map
+### 7. Export the shortlist
+
+```bash
+make export
+```
+
+Writes the latest scoring to `data/outputs/sequatchie_tn/run_<N>/` (N is the score run number):
+
+| File | What's in it |
+| --- | --- |
+| `report.md` | Summary for planning visits: which runs and data it came from, the assumptions used, how many streams made the list, the top 20 of each confidence tier, and the caveats. Start here. |
+| `shortlist.csv` | Every ranked stream, best first: score, net head (ft), firm power (W), firm flow (cfs and gallons per minute), drainage area (sq mi), how the flow was estimated, a lat/lon point at the stream's downstream end, and a one-line explanation. Opens in Excel or Google Sheets. |
+| `shortlist.geojson` | The same streams as map lines, for QGIS, Google Earth or [geojson.io](https://geojson.io). |
+| `all_corridors.csv` | Every stream, including the ones that were dropped, with the reason. Use it to answer "why isn't this stream on the list?". |
+
+Exporting again overwrites that run's folder; earlier runs' folders are kept. `uv run hhsf export hydro --run-id N` exports an older score run.
+
+### 8. Open the map
 
 ```bash
 make web
@@ -160,6 +178,8 @@ Run `make` to list all commands.
 | `uv run hhsf analyze hydro --no-gauge` | Same, without the stream gauge fallback |
 | `make score` | Score and rank the latest hydro run (after `make analyze`) |
 | `uv run hhsf score hydro --profile <version> --run-id <N>` | Score a specific hydro run with another scoring profile from `config/scoring_profiles/` |
+| `make export` | Write the latest scores to `data/outputs/` as CSV, GeoJSON and a summary report (after `make score`) |
+| `uv run hhsf export hydro --run-id <N>` | Export a specific score run |
 | `make web` | Run the map at <http://localhost:5173> |
 | `make test` | Run all tests (Docker must be running) |
 | `make lint` | Check code style |
@@ -203,7 +223,7 @@ hydro-homestead/
 │   ├── cli.py               # `hhsf` command-line tool
 │   ├── core/                # Config, database, coordinate systems, units
 │   ├── ingest/              # Downloading and loading each dataset
-│   └── analysis/            # Hydro calculations, StreamStats client, scoring, runs
+│   └── analysis/            # Hydro calculations, StreamStats client, scoring, runs, exports
 ├── migrations/versions/     # Database table definitions
 ├── martin/martin.yaml       # Which tables the tile server publishes
 ├── frontend/                # React + MapLibre map app
@@ -211,7 +231,8 @@ hydro-homestead/
 │   ├── unit/                # Fast, no Docker needed
 │   ├── integration/         # Starts a throwaway PostGIS in Docker
 │   └── fixtures/            # Small synthetic test data
-└── data/                    # Downloaded data cache (not committed)
+└── data/                    # Downloaded data cache and exports (not committed)
+    └── outputs/             # `make export` results, one folder per score run
 ```
 
 ## Data sources
@@ -232,7 +253,7 @@ Planned sources (soils, flood zones, parcels, roads, building footprints, rainfa
 make test
 ```
 
-Unit tests run without Docker. They include reading a tiny synthetic NHDPlus HR file built during the test, so no large files are needed, the head, flow and power calculations against a fake StreamStats service (no network), and every scoring and ranking rule. Integration tests start a temporary PostGIS container, run the migrations, load sample streams, check that re-loading doesn't create duplicates, and run the hydro analysis and scoring.
+Unit tests run without Docker. They include reading a tiny synthetic NHDPlus HR file built during the test, so no large files are needed, the head, flow and power calculations against a fake StreamStats service (no network), and every scoring and ranking rule. Integration tests start a temporary PostGIS container, run the migrations, load sample streams, check that re-loading doesn't create duplicates, and run the hydro analysis, scoring and exports.
 
 To see test coverage of the calculation code:
 
@@ -278,6 +299,6 @@ From [site-selection.md §7](site-selection.md):
 
 1. ~~Project skeleton, database, stream ingest, map~~
 2. ~~Hydro analysis: head, reliable low flow from StreamStats, firm power per stream~~ Still to do: the steepest usable stretch within each stream (needs terrain data), and a gauge for the Collins River side
-3. ~~Scoring and ranking against the 1 kW minimum, with an explanation for every score~~ (this version). Still to do: the original FR-3 weight table as a fallback profile, and the weighting sensitivity check
-4. Exports (CSV, GeoJSON) and a summary report
+3. ~~Scoring and ranking against the 1 kW minimum, with an explanation for every score~~ Still to do: the original FR-3 weight table as a fallback profile, and the weighting sensitivity check
+4. ~~Exports (CSV, GeoJSON) and a summary report~~ (this version). Still to do: draw the scores on the map
 5. Then: parcels and ownership, soils, flood zones, roads and drive time, and the full Chattanooga region

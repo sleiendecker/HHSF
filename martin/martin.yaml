@@ -33,3 +33,27 @@ postgres:
       id_column: county_id
       properties:
         county_name: text
+    # The latest score run's corridors (a view, migration 0005). Color by `tier`:
+    # medium, low, head_only, or empty for corridors that were filtered out.
+    latest_hydro_scores:
+      schema: public
+      table: latest_hydro_scores
+      srid: 4326
+      geometry_column: geom
+      geometry_type: MULTILINESTRING
+      id_column: corridor_id
+      properties:
+        score_run_id: int8
+        nhdplusid: int8
+        stream_name: text
+        status: text
+        tier: text
+        rank: int4
+        tier_rank: int4
+        hydro_score: float8
+        net_head_ft: float8
+        firm_power_w: float8
+        firm_flow_cfs: float8
+        flow_method: text
+        flow_confidence: text
+        summary: text

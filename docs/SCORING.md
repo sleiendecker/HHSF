@@ -127,4 +127,4 @@ Head-only corridors make up most of the ranked list (283 of 349), which is the D
 - **FR-3 fallback profile.** §3 of the plan keeps the original weight table (head 40, watershed area 30, length 15, rainfall 15) as a labeled screening profile. It needs its own breakpoints for watershed area and length, and rainfall data (D-10).
 - **D-08 steepest stretch.** Scores use whole-reach head and power.
 - **Sensitivity check.** DECISIONS.md asks how much the top 20 changes under 70/30 vs 50/50 vs 100/0 weights. Each alternative is just a new profile file and a re-score.
-- Scores aren't on the map or in an export yet (next phase).
+- Scores aren't drawn on the map yet. The tile server publishes the latest score run as `latest_hydro_scores` (with `tier`, `rank` and `status`), ready for the map to color by tier. `make export` writes them to CSV, GeoJSON and a summary report in `data/outputs/`.
