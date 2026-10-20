@@ -25,7 +25,7 @@ FT_PER_MI = 5280
 DOCS = "../../../../docs"
 TIER_TITLES = {
     "medium": "Medium confidence (StreamStats Q90)",
-    "low": "Low confidence (gauge transfer or other fallback flow)",
+    "low": "Low confidence (gauge transfer, regional yield or other fallback flow)",
     scoring.HEAD_ONLY: "Head only (basin too small for a flow estimate)",
 }
 STATUS_TITLES = {
@@ -299,9 +299,14 @@ def caveats(info: RunInfo) -> list[str]:
         "(`flow_method = gauge_drainage_area_ratio`) came out about 10× StreamStats' Q90 "
         "where both exist, and NHDPlus mean flows (`nhdplus_erom`) by over 100×. Treat "
         "low-tier power as optimistic and measure dry-season flow.",
+        "**Small basins use a regional yield.** Basins too small for the low-flow equations "
+        "(flag `below_regression_min_drainage_area`) outside the gauge's basin get the "
+        "median StreamStats Q90 per square mile of their HUC8 "
+        "(`flow_method = regional_streamstats_yield`). It's an extrapolation, so it is low "
+        "confidence; it misses springs, which a visit can find.",
         "**Head-only corridors have no flow estimate.** Their basins are too small for the "
-        "low-flow equations, so they haven't been checked against the "
-        f"{_target(info)} target at all. They are ranked on head alone and need a "
+        "low-flow equations and had no regional yield to borrow, so they haven't been checked "
+        f"against the {_target(info)} target at all. They are ranked on head alone and need a "
         "flow check (springs, dry-season visit).",
         "StreamStats Q90 itself is a regression estimate (roughly ±60%), and nothing here "
         "covers permits, access, ownership or soils.",

@@ -252,3 +252,57 @@ def test_moved_pour_point_is_saved_as_streamstats_q90(engine, sample_features):
     assert row.flow_flags == ["streamstats_pour_point_moved"]
     assert row.firm_flow_cfs == pytest.approx(0.5 * 8.98 / 6.86)
     assert row.streamstats_drainage_area_sqkm == pytest.approx(6.9)
+
+
+class FixedQ90:
+    """StreamStats answering 0.5 cfs for Test Creek's basin at every point."""
+
+    def low_flow(self, lat, lon):
+        from hhsf.analysis.hydro import LowFlowEstimate
+        from hhsf.core import units
+
+        return LowFlowEstimate(0.5, "GC1419", units.sqkm_to_sqmi(8.98), 60.2)
+
+
+def test_small_basin_gets_its_huc8_regional_yield(engine, sample_features):
+    from hhsf.analysis import hydro
+    from hhsf.analysis.basins import Basins
+    from hhsf.core import crs
+
+    records = [hydrography.parse_feature(f) for f in sample_features]
+    with engine.begin() as conn:
+        hydrography.load_streams(conn, [r for r in records if hydrography.is_perennial(r.fcode)])
+    a = hydro.load_assumptions()
+    a.regional_yield.min_reaches = 1  # the fixture has one StreamStats reach
+    huc8s = Basins({"06020001": crs.to_analysis(box(-85.5, 35.3, -85.3, 35.5))})
+    run_id, summary = run.run_hydro(
+        engine, AREA, FixedQ90(), echo=lambda _: None, assumptions=a, basins=huc8s
+    )
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT drainage_area_sqkm, firm_flow_cfs, flow_method, flow_confidence,"
+                " flow_flags, firm_power_w, power_confidence"
+                " FROM hydro_corridors WHERE run_id = :r ORDER BY drainage_area_sqkm"
+            ),
+            {"r": run_id},
+        ).all()
+        params, sources = conn.execute(
+            text("SELECT params, data_source_versions FROM analysis_runs WHERE run_id = :r"),
+            {"r": run_id},
+        ).one()
+    small, big = rows
+    assert big.flow_method == "streamstats_q90"
+    # 2.88 km2 x Test Creek's 0.5 cfs per 8.98 km2.
+    assert small.flow_method == "regional_streamstats_yield"
+    assert small.flow_confidence == "low"
+    assert small.firm_flow_cfs == pytest.approx(0.5 * 2.88 / 8.98, rel=1e-3)
+    assert small.flow_flags == [
+        "below_regression_min_drainage_area",
+        "regional_yield_basin:06020001",
+    ]
+    assert small.firm_power_w > 0 and small.power_confidence == "low"
+    assert summary["regional_yield"]["06020001"]["reaches_filled"] == 1
+    assert summary["below_regression_min_drainage_area"] == 1
+    assert params["use_regional_yield"] is True
+    assert "wbd_hu8" in sources

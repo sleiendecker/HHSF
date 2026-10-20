@@ -1,7 +1,7 @@
 """Per-reach orchestration without a database: StreamStats use, fallback, breaker."""
 
 import pytest
-from shapely.geometry import LineString, Point
+from shapely.geometry import LineString, Point, box
 
 from hhsf.analysis import hydro, run
 from hhsf.analysis.streamstats import PointFailed, ServiceConfig, ServiceUnavailable
@@ -192,3 +192,54 @@ def test_gauge_is_used_only_for_reaches_in_its_basin():
     assert c.flow.flags[0] == "streamstats_disabled"
     c = run.analyze_reach(reach(), ASSUMPTIONS, None, gauge=outside)
     assert c.flow.method == hydro.FLOW_METHOD_EROM
+
+
+def basins(*codes_and_boxes):
+    from hhsf.analysis.basins import Basins
+
+    return Basins(dict(codes_and_boxes))
+
+
+# LINE runs east from x = 1,000,000 to 1,001,000 (analysis CRS); its outlet is the east end.
+EAST = box(1_000_500, 1_399_000, 1_002_000, 1_401_000)
+WEST = box(998_000, 1_399_000, 1_000_500, 1_401_000)
+WESTWARD = crs.to_storage(LineString([(1_001_000, 1_400_000), (1_000_000, 1_400_000)]))
+
+
+def test_small_basins_get_the_median_yield_of_their_huc8():
+    big = [
+        run.analyze_reach(reach(i=i), ASSUMPTIONS, Source(estimate(value_cfs=q)))
+        for i, q in enumerate([0.6, 0.8, 1.0], 1)
+    ]
+    small = run.analyze_reach(reach(da_sqkm=SMALL_SQKM, i=4), ASSUMPTIONS, Source())
+    used = run.fill_regional_yield([*big, small], basins(("06020001", EAST)), ASSUMPTIONS)
+
+    median = 0.8 / units.sqkm_to_sqmi(BIG_SQKM)
+    assert small.flow.method == hydro.FLOW_METHOD_REGIONAL
+    assert small.flow.firm_flow_cfs == pytest.approx(median * units.sqkm_to_sqmi(SMALL_SQKM))
+    assert small.flow.flags == [
+        "below_regression_min_drainage_area",
+        "regional_yield_basin:06020001",
+    ]
+    assert small.power.firm_power_w > 0 and small.power.confidence == "low"
+    assert [c.flow.method for c in big] == [hydro.FLOW_METHOD_STREAMSTATS] * 3
+    assert used == {
+        "06020001": {"yield_cfs_per_sqmi": median, "streamstats_reaches": 3, "reaches_filled": 1}
+    }
+    assert run.summarize([*big, small], ASSUMPTIONS)["below_regression_min_drainage_area"] == 1
+
+
+def test_small_basins_without_enough_streamstats_neighbours_stay_head_only():
+    big = [run.analyze_reach(reach(i=i), ASSUMPTIONS, Source()) for i in (1, 2, 3)]
+    # Drains west, into a basin with no StreamStats reaches of its own (and no HUC6 kin).
+    small = run.analyze_reach(
+        run.Reach(4, 10_004, 1000.0, SMALL_SQKM, 200.0, 100.0, 5.0, WESTWARD), ASSUMPTIONS, None
+    )
+    stray = run.analyze_reach(  # outlet in none of the basins
+        run.Reach(5, 10_005, 1000.0, SMALL_SQKM, 200.0, 100.0, 5.0, LINE), ASSUMPTIONS, None
+    )
+    used = run.fill_regional_yield([*big, small, stray], basins(("06020001", WEST)), ASSUMPTIONS)
+    assert used == {}
+    assert small.flow.confidence == "below_applicability"
+    assert stray.flow.confidence == "below_applicability"
+    assert small.power.firm_power_w is None

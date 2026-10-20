@@ -6,7 +6,7 @@ How `hhsf score hydro` (or `make score`) turns a finished hydro run into a ranke
 
 1. A corridor needs at least **1 kW** of firm power to make the list (D-01). Corridors below that are filtered out, not given a low score.
 2. Corridors on the list get a **hydro score from 0 to 100**: 70% from power and 30% from net head (D-11).
-3. Corridors with **no flow estimate because the basin is too small** (D-09) stay on the list, ranked on head only and labeled `HEAD ONLY`.
+3. Corridors with **no flow estimate because the basin is too small** (D-09) stay on the list, ranked on head only and labeled `HEAD ONLY`. Since the regional yield (hydro run 30) almost every small basin has a low-confidence flow instead, so in Sequatchie this tier is empty.
 4. The list is sorted in **confidence tiers**: every medium-confidence corridor first, then every low-confidence one, then the head-only ones. Within a tier, the higher score goes first.
 
 ## Where this departs from the original FR-3
@@ -41,7 +41,7 @@ Each corridor gets exactly one `status` in `hydro_scores`:
 | Status | When | Ranked? | Score |
 | --- | --- | --- | --- |
 | `scored` | Firm power ≥ 1 kW | Yes, in tier `medium` or `low` | Hydro score from power and head |
-| `head_only` | No flow estimate because the basin is below the regression's 1.3 sq mi minimum (`flow_confidence = below_applicability`), and net head ≥ 10 ft | Yes, in tier `head_only` | No hydro score; ranked on the head sub-score |
+| `head_only` | No flow estimate because the basin is below the regression's 1.3 sq mi minimum and neither the gauge nor a regional yield covers it (`flow_confidence = below_applicability`), and net head ≥ 10 ft | Yes, in tier `head_only` | No hydro score; ranked on the head sub-score |
 | `below_power_target` | Firm power < 1 kW | No | — |
 | `below_min_head` | Would be head-only, but net head < 10 ft (too low for a practical small turbine) | No | — |
 | `not_scorable` | Head missing, or flow missing for another reason (e.g. no drainage area) | No | — |
@@ -57,7 +57,7 @@ Filtered corridors are still saved, with a sentence saying why, so you can alway
 | Tier | Contains | Why it's here |
 | --- | --- | --- |
 | 1. `medium` | Power from a StreamStats Q90 with every basin characteristic inside the equation's limits | The best flow estimate we have (still about ±60%) |
-| 2. `low` | Power from any other flow: the Whitwell gauge transfer, StreamStats with an out-of-range characteristic, or the NHDPlus mean-flow fallback | These usually **overstate** firm flow: the gauge transfer by about 10× StreamStats on the streams checked, mean flow by over 100× (ASSUMPTIONS.md) |
+| 2. `low` | Power from any other flow: the Whitwell gauge transfer, the regional yield for small basins, StreamStats with an out-of-range characteristic, or the NHDPlus mean-flow fallback | The gauge transfer and mean flow usually **overstate** firm flow: by about 10× StreamStats on the streams checked, and over 100×. The regional yield is StreamStats' own typical yield extrapolated to small basins, so it isn't biased high, but it misses springs (ASSUMPTIONS.md) |
 | 3. `head_only` | No flow estimate (D-09) | Nothing to say about power |
 
 Within a tier: higher hydro score first (head sub-score for head-only), then more net head, then the lower `corridor_id`, so the order never changes between identical runs.
@@ -170,6 +170,32 @@ The top 20:
 | 7–20 | head only | — | 424 – 240 | — | 13 unnamed streams and Panther Branch |
 
 The low tier is now only the five plateau-edge streams on the Whitwell gauge transfer (an upper bound, about 10× StreamStats), so ranks 7–20 are head-only streams with no flow estimate. Penstock sensitivity (D-08): 1 / 6 / 19 corridors reach 1 kW at 500 / 1,000 / 2,000 ft, 0 / 1 / 3 of them at medium confidence.
+
+## With the regional yield for small basins (hydro run 30, profile hydro_v1, 2026-10-19)
+
+Basins too small for StreamStats and outside the Whitwell gauge's basin now get the median StreamStats Q90 per square mile of their HUC8 ([ASSUMPTIONS.md](ASSUMPTIONS.md#regional-low-flow-yield), D-09), so they are scored on power instead of head. All 296 got a value; the best gives 56 W, so all of them are filtered out below 1 kW. **No corridor is head-only any more.**
+
+| | Corridors |
+| --- | --- |
+| Ranked, medium confidence | 1 |
+| Ranked, low confidence | 5 |
+| Ranked, head only (D-09) | **0** (was 272) |
+| Filtered: below 1 kW | 982 |
+| Filtered: head-only under 10 ft | 0 (was 24) |
+| Filtered: missing data | 1 |
+
+The top 20 is now the six corridors that reach 1 kW; ranks 7–20 (the head-only streams in the previous section) are gone:
+
+| Rank | Tier | Score | Net head (ft) | Power (W) | Stream | Flow |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | medium | 71.0 | 287 | 1,345 | Rogers Branch | StreamStats Q90 |
+| 2 | low | 73.6 | 331 | 1,489 | Stillhouse Branch | Whitwell gauge transfer |
+| 3 | low | 69.6 | 414 | 1,262 | unnamed (NHDPlus 25000300018275) | Whitwell gauge transfer |
+| 4 | low | 66.9 | 247 | 1,109 | Dry Branch | Whitwell gauge transfer |
+| 5 | low | 66.8 | 409 | 1,105 | unnamed (NHDPlus 25000300000272) | Whitwell gauge transfer |
+| 6 | low | 66.3 | 408 | 1,075 | Cordell Lane Branch | Whitwell gauge transfer |
+
+The five low-tier sites are small basins (0.65–1.1 sq mi) on the gauge transfer, which gives about 10× the regional yield for the same area. On the regional yield they'd make roughly 100–150 W; that's the D-09 open call. To see the old head-only ranking of small streams (for spring-hunting on a visit), re-run with `uv run hhsf analyze hydro --no-regional-yield` and score that run.
 
 ## Not built yet
 

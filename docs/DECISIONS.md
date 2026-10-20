@@ -110,6 +110,16 @@ Tennessee's flow equations have a minimum drainage area, and many good headwater
 
 Starting value: **keep them, rank on head only, mark as low confidence.** If they turn out to be a large share of the top candidates, consider a fallback estimate (e.g., scaling from a nearby gauged basin by drainage area), clearly flagged.
 
+Measured (2026-10-19): they were. Before any fallback, 635 of 989 reaches were too small, and head-only corridors were 272 of the 278 ranked and 14 of the top 20.
+
+**Decision (2026-10-19): give them a flagged, low-confidence flow.** Inside the reference gauge's basin, the gauge transfer (already built). Everywhere else, the **regional yield**: drainage area × the median StreamStats Q90 per square mile of the in-range StreamStats reaches in the same HUC8 (pooled with the HUC6, then HUC4, if the HUC8 has fewer than 10). Flagged `below_regression_min_drainage_area` plus `regional_yield_basin:<code>`, `flow_method = regional_streamstats_yield`, confidence `low`. They are then scored on power like any other corridor; `--no-regional-yield` brings back the head-only ranking.
+
+- **Why not more gauges:** Collins River near McMinnville runs 10× StreamStats, like Whitwell (both basins include spring-fed limestone). The Walden Ridge gauges disagree with each other from zero to 0.087 cfs per sq mi and have no 10-year recent record. The regional yield matches StreamStats where both exist (leave-one-out median ratio 1.0) and agrees with the measured plateau-only gauges. Comparison in [ASSUMPTIONS.md](ASSUMPTIONS.md#regional-low-flow-yield).
+- **Result:** all 296 small basins outside the Whitwell basin now have a flow, so no corridor is head-only. None of them reaches 1 kW (best 56 W), so they are filtered out. The ranked list is the 6 corridors with power ≥ 1 kW; the 5 low-tier ones are small basins on the Whitwell gauge transfer.
+- **Open call:** small basins inside the Whitwell basin still use the gauge transfer, about 10× the regional yield for the same size of basin. On the regional yield the five low-tier sites would drop to roughly 100–150 W. Switching them over (or ranking gauge-transfer small basins as "unconfirmed") is the next decision.
+- **Springs aren't captured** by any regional method. A visit is the only way to find a spring-fed headwater.
+- **Open call (owner, touches D-01):** D-01 says corridors whose flow can't be estimated reliably stay on the list. These now have a low-confidence estimate under 1 kW and drop off it. To keep the high-head small streams visible for spring-hunting, run `uv run hhsf analyze hydro --no-regional-yield`, or filter `hydro_scores` for `below_regression_min_drainage_area` in `flow_flags`.
+
 ### D-10 · Rainfall in the score: **Measure**
 
 The plan predicts rainfall is nearly constant across one county. We'll sample PRISM normals across Sequatchie to confirm. Starting value: **leave it out of the v0.1 hydro score** (flow from StreamStats already reflects rainfall); revisit for the multi-county run.
@@ -153,3 +163,4 @@ Decisions that barely move the top 20 keep their default and stop being discusse
 | 2026-10-18 | — | Added "What the output is for": a shortlist for in-person visits and owner contact |
 | 2026-10-19 | D-08 | Built: steepest 1,000 ft stretch per reach on 3DEP; open calls listed under D-08 |
 | 2026-10-19 | D-04 | Wrong-basin StreamStats answers retried further up the reach; no corridor uses mean flow any more. Open call listed under D-04 |
+| 2026-10-19 | D-09 | Small basins outside the gauge's basin get a regional low-flow yield (median StreamStats Q90 per sq mi of their HUC8), low confidence. No corridor is head-only any more; none of them reaches 1 kW. Open call listed under D-09 |

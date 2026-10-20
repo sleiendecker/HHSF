@@ -27,6 +27,7 @@ ASSUMPTIONS = hydro.HydroAssumptions(
     gauge_transfer=hydro.GaugeTransferSettings(
         start="2001-10-01", end="2025-09-30", min_years=10, ratio_range=(0.5, 1.5)
     ),
+    regional_yield=hydro.RegionalYieldSettings(min_reaches=3),
 )
 GAUGE = hydro.GaugeReference("03571000", q90_cfs=80.0, drainage_area_sqmi=400.0)
 BIG_SQKM = 10.0  # 3.9 sq mi: above the 1.3 sq mi regression minimum
@@ -311,3 +312,49 @@ def test_zero_drainage_area_is_unavailable_even_with_a_gauge():
     f = hydro.firm_flow(0.0, 1.0, None, SETTINGS, None, GAUGE, (0.5, 1.5))
     assert f.firm_flow_cfs is None
     assert f.confidence == "unavailable"
+
+
+# --- regional yield (D-09 fallback) ---
+
+
+def test_only_medium_streamstats_flows_give_a_yield():
+    medium = hydro.firm_flow(BIG_SQKM, 5.0, estimate(), SETTINGS)
+    assert hydro.streamstats_yield(medium, BIG_SQKM) == pytest.approx(
+        0.8 / units.sqkm_to_sqmi(BIG_SQKM)
+    )
+    out_of_range = hydro.firm_flow(BIG_SQKM, 5.0, estimate(out_of_range=("RECESS",)), SETTINGS)
+    assert hydro.streamstats_yield(out_of_range, BIG_SQKM) is None
+    gauge = hydro.firm_flow(BIG_SQKM, 5.0, None, SETTINGS, None, GAUGE)
+    assert hydro.streamstats_yield(gauge, BIG_SQKM) is None
+    assert hydro.streamstats_yield(medium, None) is None
+
+
+def test_regional_yield_is_the_median_of_the_reaches_own_huc8():
+    yields = {"06020001": [0.016, 0.017, 0.030], "05130107": [0.5, 0.5, 0.5]}
+    assert hydro.regional_yield(yields, "06020001", 3) == (0.017, "06020001", 3)
+
+
+def test_regional_yield_pools_the_huc6_then_huc4_when_the_huc8_has_too_few():
+    yields = {"05130107": [0.018, 0.019], "05130108": [0.015], "05130205": [0.9, 0.9]}
+    assert hydro.regional_yield(yields, "05130108", 3) == (0.018, "051301", 3)
+    assert hydro.regional_yield(yields, "05130108", 5) == (0.019, "0513", 5)
+    assert hydro.regional_yield(yields, "05130108", 6) is None
+    assert hydro.regional_yield({}, "05130108", 1) is None
+
+
+def test_regional_flow_fills_a_small_basin_low_confidence_with_flags_kept():
+    small = hydro.firm_flow(SMALL_SQKM, 1.0, None, SETTINGS)
+    f = hydro.regional_flow(small, SMALL_SQKM, 0.018, "06020001")
+    assert f.firm_flow_cfs == pytest.approx(units.sqkm_to_sqmi(SMALL_SQKM) * 0.018)
+    assert f.statistic == "q90"
+    assert f.method == hydro.FLOW_METHOD_REGIONAL
+    assert f.confidence == "low"
+    assert f.flags == ["below_regression_min_drainage_area", "regional_yield_basin:06020001"]
+    assert hydro.firm_power(f, hydro.head(200, 100, 0.85), ASSUMPTIONS).confidence == "low"
+
+
+def test_regional_flow_never_replaces_another_estimate():
+    gauge = hydro.firm_flow(SMALL_SQKM, 1.0, None, SETTINGS, None, GAUGE)
+    assert hydro.regional_flow(gauge, SMALL_SQKM, 0.018, "06020004") is gauge
+    unavailable = hydro.firm_flow(None, 1.0, None, SETTINGS)
+    assert hydro.regional_flow(unavailable, SMALL_SQKM, 0.018, "06020004") is unavailable

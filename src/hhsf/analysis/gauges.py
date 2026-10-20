@@ -15,7 +15,7 @@ import numpy as np
 from shapely.geometry import shape
 from shapely.geometry.base import BaseGeometry
 
-from hhsf.analysis.hydro import GaugeReference, GaugeTransferSettings
+from hhsf.analysis.hydro import GaugeReference, GaugeTransferSettings, outlet
 from hhsf.core import crs
 from hhsf.core.config import DATA_DIR, ReferenceGauge, data_source_settings
 from hhsf.ingest.arcgis import query_once
@@ -149,10 +149,7 @@ class GaugeTransfer:
 
     def covers(self, reach_geom: BaseGeometry) -> bool:
         """True if the reach's downstream end is inside the gauge's basin."""
-        line = crs.to_analysis(reach_geom)
-        if line.geom_type == "MultiLineString":
-            line = line.geoms[-1]
-        return self.basin.contains(line.interpolate(line.length))
+        return self.basin.contains(outlet(reach_geom))
 
 
 def load_transfer(gauge: ReferenceGauge, settings: GaugeTransferSettings) -> GaugeTransfer:
