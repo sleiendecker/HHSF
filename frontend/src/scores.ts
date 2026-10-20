@@ -149,6 +149,8 @@ const FLAG_TEXT: Record<string, string> = {
   streamstats_not_used: "StreamStats wasn't used",
   streamstats_drainage_area_mismatch: "StreamStats outlined a different basin than this stream's, so its answer was ignored",
   streamstats_no_estimate: "StreamStats gave no low-flow number",
+  streamstats_pour_point_moved:
+    "StreamStats was asked a little way up the stream (its first answer outlined the wrong basin), then scaled to the stream's end",
   below_regression_min_drainage_area: "Basin is smaller than the low-flow equations allow (1.3 sq mi)",
   missing_drainage_area: "No drainage area in NHDPlus",
   missing_mean_flow: "No mean flow in NHDPlus",

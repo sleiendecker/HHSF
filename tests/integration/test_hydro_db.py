@@ -201,3 +201,54 @@ def test_run_without_dem_keeps_whole_reaches(engine, sample_features):
     assert row.head_method == "nhdplus_vaa_smoothed_reach"
     assert (row.from_measure, row.to_measure) == (0, 100)
     assert row.length_m == row.reach and row.same
+
+
+def test_load_reaches_sums_the_drainage_area_flowing_in(engine, sample_features):
+    records = [hydrography.parse_feature(f) for f in sample_features]
+    with engine.begin() as conn:
+        hydrography.load_streams(conn, records)  # incl. the intermittent headwater
+        reaches = {r.nhdplusid: r for r in run.load_reaches(conn, AREA)}
+    test_creek, below = sorted(reaches.values(), key=lambda r: r.nhdplusid)
+    assert test_creek.upstream_drainage_area_sqkm == pytest.approx(0.5)  # intermittent inflow
+    assert below.upstream_drainage_area_sqkm == pytest.approx(8.98)  # Test Creek
+
+
+class WrongSnapAtOutlet:
+    """StreamStats stand-in: the outlet point snaps to a big stream, the next one is right."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def low_flow(self, lat, lon):
+        from hhsf.analysis.hydro import LowFlowEstimate
+        from hhsf.core import units
+
+        self.calls += 1
+        sqkm = 60.0 if self.calls == 1 else 6.9
+        return LowFlowEstimate(0.5, "GC1419", units.sqkm_to_sqmi(sqkm), 60.2)
+
+
+def test_moved_pour_point_is_saved_as_streamstats_q90(engine, sample_features):
+    records = [hydrography.parse_feature(f) for f in sample_features[:1]]  # Test Creek
+    records.append(hydrography.parse_feature(sample_features[2]))  # its 0.5 km2 inflow
+    with engine.begin() as conn:
+        hydrography.load_streams(conn, records)
+    source = WrongSnapAtOutlet()
+    run_id, summary = run.run_hydro(engine, AREA, source=source, echo=lambda _: None)
+
+    assert source.calls == 2
+    assert summary["streamstats_pour_point_moved"] == 1
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(
+                "SELECT flow_method, flow_confidence, flow_flags, firm_flow_cfs,"
+                " streamstats_drainage_area_sqkm FROM hydro_corridors WHERE run_id = :r"
+            ),
+            {"r": run_id},
+        ).one()
+    # A quarter of the way up: 8.98 - 0.25 x (8.98 - 0.5) = 6.86 km2.
+    assert row.flow_method == "streamstats_q90"
+    assert row.flow_confidence == "medium"
+    assert row.flow_flags == ["streamstats_pour_point_moved"]
+    assert row.firm_flow_cfs == pytest.approx(0.5 * 8.98 / 6.86)
+    assert row.streamstats_drainage_area_sqkm == pytest.approx(6.9)

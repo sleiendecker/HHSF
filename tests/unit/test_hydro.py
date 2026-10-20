@@ -12,6 +12,8 @@ SETTINGS = hydro.StreamStatsSettings(
     min_drainage_area_sqmi=1.3,
     max_drainage_area_mismatch=0.25,
     pour_point_offset_m=30,
+    pour_point_retry_shares=[0.25, 0.5, 0.75],
+    min_pour_point_area_share=0.5,
 )
 ASSUMPTIONS = hydro.HydroAssumptions(
     power_target_w=1000,
@@ -121,6 +123,32 @@ def test_streamstats_wrong_basin_falls_back_to_mean_flow():
     assert f.flags == ["streamstats_drainage_area_mismatch", "mean_flow_not_q90"]
 
 
+def test_moved_pour_point_q90_is_scaled_to_the_outlet():
+    # StreamStats answered 25% up the reach, where NHDPlus drains 8 km2.
+    est = estimate(drainage_area_sqmi=units.sqkm_to_sqmi(8.2), point_drainage_area_sqkm=8.0)
+    f = hydro.firm_flow(BIG_SQKM, 5.0, est, SETTINGS)
+    assert f.firm_flow_cfs == pytest.approx(0.8 * BIG_SQKM / 8.0)
+    assert f.method == hydro.FLOW_METHOD_STREAMSTATS
+    assert f.confidence == "medium"
+    assert f.flags == ["streamstats_pour_point_moved"]
+    assert f.streamstats_drainage_area_sqkm == pytest.approx(8.2)
+
+
+def test_moved_pour_point_is_checked_against_the_area_where_it_is():
+    # 10 km2 matches the outlet, but the point was where NHDPlus drains only 6 km2.
+    est = estimate(point_drainage_area_sqkm=6.0)
+    f = hydro.firm_flow(BIG_SQKM, 5.0, est, SETTINGS)
+    assert f.method == hydro.FLOW_METHOD_EROM
+    assert f.flags[0] == "streamstats_drainage_area_mismatch"
+
+
+def test_moved_pour_point_out_of_range_is_low_with_both_flags():
+    est = estimate(point_drainage_area_sqkm=BIG_SQKM, out_of_range=("RECESS",))
+    f = hydro.firm_flow(BIG_SQKM, 5.0, est, SETTINGS)
+    assert f.confidence == "low"
+    assert f.flags == ["out_of_range:RECESS", "streamstats_pour_point_moved"]
+
+
 def test_streamstats_without_a_value_falls_back():
     f = hydro.firm_flow(BIG_SQKM, 5.0, estimate(value_cfs=None), SETTINGS)
     assert f.method == hydro.FLOW_METHOD_EROM
@@ -216,6 +244,18 @@ def test_pour_point_on_short_reach_stays_within_ten_percent():
     line = crs.to_storage(LineString([(1_000_000, 1_400_000), (1_000_100, 1_400_000)]))
     p = crs.to_analysis(hydro.pour_point(MultiLineString([line]), 30))
     assert p.distance(Point(1_000_090, 1_400_000)) < 0.01
+
+
+def test_point_up_reach_measures_from_the_downstream_end():
+    line = crs.to_storage(LineString([(1_000_000, 1_400_000), (1_001_000, 1_400_000)]))
+    p = crs.to_analysis(hydro.point_up_reach(MultiLineString([line]), 0.25))
+    assert p.distance(Point(1_000_750, 1_400_000)) < 0.01
+
+
+def test_drainage_area_up_reach_interpolates_from_upstream_inflow():
+    assert hydro.drainage_area_up_reach(10.0, 6.0, 0.25) == pytest.approx(9.0)
+    assert hydro.drainage_area_up_reach(10.0, 6.0, 1.0) == pytest.approx(6.0)
+    assert hydro.drainage_area_up_reach(10.0, None, 0.5) == pytest.approx(5.0)  # headwater
 
 
 # --- gauge transfer ---

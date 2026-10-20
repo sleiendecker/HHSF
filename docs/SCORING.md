@@ -139,10 +139,37 @@ Only one StreamStats-backed stream clears 1 kW over 1,000 ft of pipe: Rogers Bra
 
 The low tier is two different groups:
 
-- **13 stretches on larger Collins River side creeks** (Conner, North Suck, Cain, Soddy and others) with 8–43 ft of head and 1–21 kW. Their flow is the NHDPlus *mean annual* flow, because StreamStats outlined the wrong basin for them (`streamstats_drainage_area_mismatch`) and they're outside the Whitwell gauge's basin. Mean flow runs about 130× StreamStats' Q90 here, so these power numbers are far too high; most would likely fall under 1 kW on a real dry-season flow.
+- **13 stretches on larger Collins River side creeks** (Conner, North Suck, Cain, Soddy and others) with 8–43 ft of head and 1–21 kW. Their flow is the NHDPlus *mean annual* flow, because StreamStats outlined the wrong basin for them (`streamstats_drainage_area_mismatch`) and they're outside the Whitwell gauge's basin. Mean flow runs about 130× StreamStats' Q90 here, so these power numbers are far too high; most would likely fall under 1 kW on a real dry-season flow. (Fixed in the next section: they're Walden Ridge creeks draining to the Tennessee River, not Collins River ones, and a retried StreamStats point gives all of them a Q90.)
 - **5 plateau-edge streams** with 247–414 ft of head and 1.1–1.5 kW, from the Whitwell gauge transfer (about 10× StreamStats, an upper bound).
 
 The breakpoints (D-11) were set before D-08 existed and may need another look now that heads are smaller.
+
+## With StreamStats retried up the reach (hydro run 28, profile hydro_v1, 2026-10-19)
+
+When StreamStats outlines the wrong basin at a reach's outlet, the tool now asks again further up the reach and scales the answer to the outlet ([ASSUMPTIONS.md](ASSUMPTIONS.md#when-streamstats-snaps-to-the-wrong-stream)). That gave a StreamStats Q90 to all 18 reaches that had been on the NHDPlus mean-flow fallback, so **no corridor uses mean flow any more** (unless StreamStats is down). On Q90 the 13 that had made the low tier produce 7–159 W, so they're filtered out below 1 kW. The scoring profile is unchanged: with no mean-flow corridors left there was no reason to rank them in a tier of their own.
+
+| | Corridors |
+| --- | --- |
+| Ranked, medium confidence | 1 |
+| Ranked, low confidence | 5 |
+| Ranked, head only (D-09) | 272 |
+| Filtered: below 1 kW | 686 |
+| Filtered: head-only under 10 ft | 24 |
+| Filtered: missing data | 1 |
+
+The top 20:
+
+| Rank | Tier | Score | Net head (ft) | Power (W) | Stream |
+| --- | --- | --- | --- | --- | --- |
+| 1 | medium | 71.0 | 287 | 1,345 | Rogers Branch |
+| 2 | low | 73.6 | 331 | 1,489 | Stillhouse Branch |
+| 3 | low | 69.6 | 414 | 1,262 | unnamed (NHDPlus 25000300018275) |
+| 4 | low | 66.9 | 247 | 1,109 | Dry Branch |
+| 5 | low | 66.8 | 409 | 1,105 | unnamed (NHDPlus 25000300000272) |
+| 6 | low | 66.3 | 408 | 1,075 | Cordell Lane Branch |
+| 7–20 | head only | — | 424 – 240 | — | 13 unnamed streams and Panther Branch |
+
+The low tier is now only the five plateau-edge streams on the Whitwell gauge transfer (an upper bound, about 10× StreamStats), so ranks 7–20 are head-only streams with no flow estimate. Penstock sensitivity (D-08): 1 / 6 / 19 corridors reach 1 kW at 500 / 1,000 / 2,000 ft, 0 / 1 / 3 of them at medium confidence.
 
 ## Not built yet
 

@@ -10,7 +10,8 @@ buffer_m: 500
 huc4: ["0513", "0602"]
 # Stream gauge whose measured low flow is scaled to reaches in its basin when
 # StreamStats can't give a Q90. Only reaches inside the gauge's 8-digit basin
-# (HUC8) use it. The Collins River side of the county isn't covered.
+# (HUC8) use it. The Collins River side and Walden Ridge's Tennessee River slope
+# (HUC8 06020001) aren't covered.
 reference_gauge:
   site_no: "03571000"       # Sequatchie River near Whitwell, TN (402 sq mi)
   huc8: "06020004"          # Sequatchie
