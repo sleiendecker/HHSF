@@ -4,7 +4,15 @@ import typer
 from alembic import command
 from alembic.config import Config
 
-from hhsf.analysis import gauges, hydro, run, scoring, scoring_run, streamstats
+from hhsf.analysis import (
+    export_run,
+    gauges,
+    hydro,
+    run,
+    scoring,
+    scoring_run,
+    streamstats,
+)
 from hhsf.core.config import REPO_ROOT, hydrography_source, load_aoi
 from hhsf.core.db import engine
 from hhsf.ingest import boundary, hydrography, nhdplus_bulk
@@ -18,6 +26,8 @@ app.add_typer(ingest_app, name="ingest")
 app.add_typer(analyze_app, name="analyze")
 score_app = typer.Typer(help="Score and rank analysis results", no_args_is_help=True)
 app.add_typer(score_app, name="score")
+export_app = typer.Typer(help="Write results to files in data/outputs/", no_args_is_help=True)
+app.add_typer(export_app, name="export")
 
 AOI_OPTION = typer.Option("sequatchie_tn", help="AOI key from config/aoi/")
 SOURCE_OPTION = typer.Option(
@@ -170,6 +180,27 @@ def score_hydro(
         watts = f"{r.firm_power_w:8,.0f}" if r.firm_power_w is not None else "       -"
         name = r.stream_name or f"(unnamed, NHDPlus {r.nhdplusid})"
         typer.echo(f"{r.rank:>4}  {r.tier:<9} {score}  {r.net_head_ft:7.0f}  {watts}  {name}")
+
+
+@export_app.command("hydro")
+def export_hydro(
+    aoi: str = AOI_OPTION,
+    run_id: int | None = typer.Option(
+        None, help="Score run to export. Default: the AOI's latest finished one."
+    ),
+) -> None:
+    """Shortlist (CSV + GeoJSON), every corridor (CSV) and a summary report for a score run."""
+    area = load_aoi(aoi)
+    try:
+        info, out_dir, files = export_run.export_hydro(engine(), area, run_id)
+    except export_run.NoScoreRun as e:
+        raise typer.BadParameter(str(e)) from e
+    typer.echo(
+        f"Exported score run {info.score_run_id} (hydro run {info.hydro_run_id}, profile "
+        f"{info.scoring_profile_version}) to {out_dir.relative_to(REPO_ROOT)}/:"
+    )
+    for path in files:
+        typer.echo(f"  {path.name}")
 
 
 if __name__ == "__main__":
