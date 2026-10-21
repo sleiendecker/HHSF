@@ -22,7 +22,8 @@ def fetch_county(aoi: AOI) -> dict:
     return features[0]
 
 
-def load_county(conn: Connection, feature: dict) -> None:
+def load_county(conn: Connection, feature: dict, aoi: AOI) -> None:
+    """Save the county and which AOI it is (one AOI per county), for the map's county names."""
     geom = shape(feature["geometry"])
     if geom.geom_type == "Polygon":
         geom = MultiPolygon([geom])
@@ -31,12 +32,16 @@ def load_county(conn: Connection, feature: dict) -> None:
     conn.execute(
         text(
             """
-            INSERT INTO counties (geoid, state_code, county_name, geom, source_key)
-            VALUES (:geoid, :state, :name, ST_GeomFromWKB(:wkb, 4326), :source_key)
+            INSERT INTO counties
+                (geoid, state_code, county_name, geom, source_key, aoi_key, aoi_name)
+            VALUES (:geoid, :state, :name, ST_GeomFromWKB(:wkb, 4326), :source_key, :aoi_key,
+                    :aoi_name)
             ON CONFLICT (geoid) DO UPDATE SET
                 state_code = EXCLUDED.state_code,
                 county_name = EXCLUDED.county_name,
                 geom = EXCLUDED.geom,
+                aoi_key = EXCLUDED.aoi_key,
+                aoi_name = EXCLUDED.aoi_name,
                 ingested_at = now()
             """
         ),
@@ -46,5 +51,7 @@ def load_county(conn: Connection, feature: dict) -> None:
             "name": props["NAME"],
             "wkb": geom.wkb,
             "source_key": SOURCE_KEY,
+            "aoi_key": aoi.key,
+            "aoi_name": aoi.name,
         },
     )

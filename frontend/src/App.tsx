@@ -7,6 +7,9 @@ import { CFS_TO_GPM, SCORE_LAYERS, scorePopupHtml } from "./scores";
 
 const TILES = `${window.location.origin}/tiles`;
 
+// Where the map opens until the analyzed counties' extent is known (Sequatchie County).
+const START_CENTER: [number, number] = [-85.42, 35.36];
+
 const M_TO_FT = 3.28084;
 const SQKM_TO_ACRES = 247.105;
 
@@ -19,6 +22,19 @@ function streamWidth(extra = 0): ExpressionSpecification {
   const byOrder = (low: number, high: number): ExpressionSpecification =>
     ["+", ["interpolate", ["linear"], ["get", "stream_order"], 1, low, 5, high], extra];
   return ["interpolate", ["linear"], ["zoom"], 9, byOrder(1, 3), 14, byOrder(2.5, 7)];
+}
+
+// Zoom to every loaded county. Martin works out a table's extent when it starts
+// (`make ingest` restarts it), and reports the whole world for an empty table.
+async function fitToCounties(map: maplibregl.Map) {
+  try {
+    const response = await fetch(`${TILES}/counties`);
+    const { bounds } = await response.json();
+    if (!Array.isArray(bounds) || bounds[2] - bounds[0] > 10) return;
+    map.fitBounds(bounds as [number, number, number, number], { padding: 40, duration: 0 });
+  } catch {
+    // No tile server yet: stay on the start view.
+  }
 }
 
 function popupHtml(f: MapGeoJSONFeature): string {
@@ -56,7 +72,7 @@ export function App() {
     const map = new maplibregl.Map({
       container: container.current!,
       style: LIGHT_STYLE,
-      center: [-85.42, 35.36],
+      center: START_CENTER,
       zoom: 10,
     });
     mapRef.current = map;
@@ -69,6 +85,7 @@ export function App() {
     map.addControl(new maplibregl.ScaleControl({ unit: "imperial" }));
 
     map.on("load", () => {
+      fitToCounties(map);
       addBasemapLayers(map);
       map.addSource("counties", { type: "vector", tiles: [`${TILES}/counties/{z}/{x}/{y}`] });
       map.addSource("streams", { type: "vector", tiles: [`${TILES}/streams/{z}/{x}/{y}`] });
@@ -153,8 +170,8 @@ export function App() {
         <h1>Hydro Homestead Site Finder</h1>
         <p>
           {showScores
-            ? "The steepest stretch (up to 1,000 ft) of each year-round stream in Sequatchie County, TN, colored by how well it could power a homestead. Click one to see why it scored what it did."
-            : "Perennial streams in Sequatchie County, TN. Click a stream for its numbers."}
+            ? "The steepest stretch (up to 1,000 ft) of each year-round stream in the analyzed counties (dashed outlines), colored by how well it could power a homestead. Click one to see why it scored what it did."
+            : "Perennial streams in the analyzed counties (dashed outlines). Click a stream for its numbers."}
         </p>
         <label className="toggle">
           <input type="checkbox" checked={showScores} onChange={(e) => setShowScores(e.target.checked)} />

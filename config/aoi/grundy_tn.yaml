@@ -1,0 +1,12 @@
+# Area of interest: Grundy County, TN (see sequatchie_tn.yaml for what each field means).
+key: grundy_tn
+name: Grundy County, TN
+county_geoid: "47061"   # state FIPS 47 + county FIPS 061
+buffer_m: 500
+# Cumberland (Collins River, 59% of the county), Middle Tennessee-Elk (Upper Elk and
+# Guntersville Lake, 33%) and Middle Tennessee-Hiwassee (Sequatchie side, 8%).
+huc4: ["0513", "0602", "0603"]
+# Only the eastern edge drains to the Sequatchie River above the Whitwell gauge.
+reference_gauge:
+  site_no: "03571000"       # Sequatchie River near Whitwell, TN (402 sq mi)
+  huc8: "06020004"          # Sequatchie

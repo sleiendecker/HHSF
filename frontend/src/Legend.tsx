@@ -72,7 +72,9 @@ export function Legend() {
           <span>Filtered out: under 1 kW on a StreamStats flow, or too little drop</span>
         </li>
       </ul>
-      <p className="hint">Every medium stream ranks above every low one. Zoom in for rank numbers.</p>
+      <p className="hint">
+        Each county is ranked on its own. Every medium stream ranks above every low one. Zoom in for rank numbers.
+      </p>
     </div>
   );
 }

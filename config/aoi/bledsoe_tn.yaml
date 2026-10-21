@@ -1,0 +1,13 @@
+# Area of interest: Bledsoe County, TN (see sequatchie_tn.yaml for what each field means).
+key: bledsoe_tn
+name: Bledsoe County, TN
+county_geoid: "47007"   # state FIPS 47 + county FIPS 007
+buffer_m: 500
+# Upper Tennessee (Watts Bar Lake side of Walden Ridge, HUC8 06010201), Cumberland
+# (Caney Fork headwaters on the plateau, 05130108) and Middle Tennessee-Hiwassee
+# (upper Sequatchie River and Walden Ridge's 06020001 slope).
+huc4: ["0513", "0601", "0602"]
+# Upstream of the Whitwell gauge on the Sequatchie River (46% of the county).
+reference_gauge:
+  site_no: "03571000"       # Sequatchie River near Whitwell, TN (402 sq mi)
+  huc8: "06020004"          # Sequatchie

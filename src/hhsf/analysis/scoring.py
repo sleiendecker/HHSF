@@ -75,6 +75,10 @@ class ScoringProfile(BaseModel):
     power_subscore: Curve
     head_only: HeadOnly
     rank_tiers: list[str]
+    # hydro_v3: corridors of 1 kW or more below this net head are filtered too (a
+    # big river with a foot of drop is no homestead site). None: only head_only and
+    # low_flow corridors have a minimum (head_only.min_net_head_ft).
+    min_net_head_ft: float | None = None
 
     @model_validator(mode="after")
     def _check(self) -> "ScoringProfile":
@@ -242,6 +246,17 @@ def score_corridor(c: CorridorInputs, p: ScoringProfile) -> Score:
                 None,
                 head_ft,
                 summary=f"{c.firm_power_w:,.0f} W firm power is below the {target_kw:g} kW target.",
+            )
+        if p.min_net_head_ft is not None and head_ft < p.min_net_head_ft:
+            return Score(
+                c.corridor_id,
+                BELOW_MIN_HEAD,
+                None,
+                head_ft,
+                summary=(
+                    f"{c.firm_power_w:,.0f} W firm power, but {head_ft:.0f} ft net head is below "
+                    f"{p.min_net_head_ft:g} ft."
+                ),
             )
         power = power_factor(c.firm_power_w, p)
         head = head_factor(head_ft, p, p.weights.head)

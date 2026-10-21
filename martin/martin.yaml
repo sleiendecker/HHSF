@@ -33,10 +33,11 @@ postgres:
       id_column: county_id
       properties:
         county_name: text
-    # The latest score run's corridors (a view, migrations 0005-0007): each one is the
+    # The latest score run's corridors (a view, migrations 0005-0009): each one is the
     # steepest stretch of a reach (D-08), so only that stretch is drawn. The map colors
-    # them by `hydro_score` and styles them by `tier`: medium, low, head_only, or
-    # empty for corridors that were filtered out. `factors` is JSON text: each
+    # them by `hydro_score` and styles them by `tier`: medium, low, low_flow, head_only,
+    # or empty for corridors that were filtered out. One row per reach across all AOIs;
+    # `rank` counts within the AOI named by `aoi_name`. `factors` is JSON text: each
     # factor's value, sub-score, weight and contribution, for the click popup.
     latest_hydro_scores:
       schema: public
@@ -69,3 +70,5 @@ postgres:
         corridor_length_m: float8
         reach_length_m: float8
         reach_drop_m: float8
+        aoi_key: text
+        aoi_name: text

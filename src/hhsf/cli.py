@@ -52,7 +52,7 @@ def ingest_boundary(aoi: str = AOI_OPTION) -> None:
     typer.echo(f"Fetching boundary for {area.name}...")
     feature = boundary.fetch_county(area)
     with engine().begin() as conn:
-        boundary.load_county(conn, feature)
+        boundary.load_county(conn, feature, area)
     typer.echo("Boundary loaded.")
 
 
@@ -197,7 +197,8 @@ def analyze_hydro(
     for basin, r in summary.get("regional_yield", {}).items():
         typer.echo(
             f"  regional yield {basin}: {r['yield_cfs_per_sqmi']:.4f} cfs/sq mi (median of "
-            f"{r['streamstats_reaches']} StreamStats reaches), {r['reaches_filled']} small basins"
+            f"{r['streamstats_reaches']} StreamStats reaches), "
+            f"filled in for {r['reaches_filled']} reaches"
         )
     typer.echo(
         f"  {summary['meets_power_target']} of {summary['with_power']} reaches with a power "
@@ -209,7 +210,7 @@ def analyze_hydro(
 @score_app.command("hydro")
 def score_hydro(
     aoi: str = AOI_OPTION,
-    profile: str = typer.Option("hydro_v2", help="Scoring profile from config/scoring_profiles/"),
+    profile: str = typer.Option("hydro_v3", help="Scoring profile from config/scoring_profiles/"),
     run_id: int | None = typer.Option(
         None, help="Hydro run to score. Default: the AOI's latest finished one."
     ),

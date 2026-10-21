@@ -115,7 +115,11 @@ def wants_streamstats(reach: Reach, s: hydro.StreamStatsSettings) -> bool:
 
 
 class _Breaker:
-    """Stops calling a service after N reaches in a row found it down."""
+    """Stops calling a service after N reaches in a row found it down.
+
+    Once open it stays open for the rest of the run: an answer that was already
+    on its way when it opened doesn't switch the service back on.
+    """
 
     def __init__(self, limit: int):
         self.limit = limit
@@ -128,7 +132,8 @@ class _Breaker:
 
     def record(self, ok: bool) -> None:
         with self.lock:
-            self.consecutive = 0 if ok else self.consecutive + 1
+            if not self.open:
+                self.consecutive = 0 if ok else self.consecutive + 1
 
 
 def streamstats_low_flow(
@@ -253,8 +258,12 @@ def analyze_reaches(
             corridors.append(corridor)
             if i % 50 == 0 or i == len(reaches):
                 echo(f"  analyzed {i}/{len(reaches)} reaches")
-    if source is not None and breaker.open:
-        echo("  StreamStats looks unavailable; remaining reaches use the fallback flows.")
+    down = sum("streamstats_unavailable" in c.flow.flags for c in corridors)
+    if down:
+        echo(
+            f"  StreamStats looks unavailable: {down} reaches got a fallback flow instead. "
+            "Run again later; answers already received are cached."
+        )
     return corridors
 
 
@@ -265,7 +274,8 @@ def fill_regional_yield(
 
     Runs after every reach has its own flow. Each medium-confidence StreamStats
     Q90 is turned into a yield (cfs per sq mi) and grouped by the HUC8 its reach
-    drains to. A small basin with no flow, or only a gauge transfer, then gets its
+    drains to. A small basin with no flow, or only a gauge transfer, and any
+    reach left on the NHDPlus mean flow (hydro.regional_yield_applies) then gets its
     drainage area times the median yield of its HUC8 (or of the HUC6/HUC4 if the
     HUC8 has too few), and its power is recomputed. Where no yield is found it
     keeps what it had. Returns the yields used, per basin, for the run summary.

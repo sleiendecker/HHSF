@@ -286,3 +286,24 @@ def test_low_flow_ranks_last_by_power():
     ranked = sorted((s for s in scores if s.rank), key=lambda s: s.rank)
     assert [s.corridor_id for s in ranked] == [4, 3, 2, 1]
     assert [s.tier_rank for s in ranked] == [1, 1, 1, 2]
+
+
+# --- Minimum head for every tier (hydro_v3) -------------------------------------
+
+V3 = scoring.load_profile("hydro_v3")
+
+
+def test_v3_differs_from_v2_only_by_the_minimum_head_for_every_tier():
+    v2, v3 = V2.model_dump(), V3.model_dump()
+    assert (v2.pop("min_net_head_ft"), v3.pop("min_net_head_ft")) == (None, 10)
+    assert {**v2, "version": "hydro_v3"} == v3
+
+
+def test_v3_filters_corridors_over_the_target_with_too_little_head():
+    # A big river: plenty of power, a foot of drop.
+    river = corridor(head_ft=1.0, watts=1200, conf="medium")
+    s = scoring.score_corridor(river, V3)
+    assert (s.status, s.tier, s.rank, s.hydro_score) == (scoring.BELOW_MIN_HEAD, None, None, None)
+    assert s.summary == "1,200 W firm power, but 1 ft net head is below 10 ft."
+    assert scoring.score_corridor(river, V2).status == scoring.SCORED
+    assert scoring.score_corridor(corridor(head_ft=10.0, watts=1200), V3).status == (scoring.SCORED)
