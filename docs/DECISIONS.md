@@ -56,6 +56,7 @@ Candidates from the plan: Hamilton, Sequatchie, Marion, Bledsoe, Rhea (TN); poss
 **Built (PART 16, 2026-10-20).** The 1-hour area is computed by Valhalla (a routing engine run locally) on OpenStreetMap roads, by car with no traffic, from Miller Park downtown (`config/drive_time.yaml`). It touches 20 counties; by share inside: Catoosa GA 100%, Dade GA 89%, Hamilton 85%, Whitfield GA 77%, Bradley 70%, Marion 58%, Sequatchie 55%, Walker GA 49%, DeKalb AL 16%, Rhea 12%, Gordon GA 11%, Jackson AL 8%, McMinn 5%, Grundy 5%, Murray GA 4%, Bledsoe 4%, and slivers (1% or less) of Polk, Franklin, Meigs and Coffee. `make drive-area` prints the current list. Of the 4,919 ranked stretches in the five analyzed counties, 1,266 end inside it; of the six 1 kW streams, only Rogers Branch (54 min) and Marion's unnamed stream (48 min) do. Details: [ASSUMPTIONS.md](ASSUMPTIONS.md#roads-and-drive-time).
 
 - **Decided (owner, 2026-10-20: "whatever is in the reqs"): flagged only, for now.** The requirements put drive time in the **Logistics** score (10% of the overall score, FR-7) and road access in the **Buildability** score (20%, FR-4), not in the hydro score. Neither exists yet: buildability also needs slope and septic soils, and the overall score also needs agriculture and privacy. So drive time and road distance stay columns and flags (`outside_drive_area`, `nearest_road_not_public`), and nothing is dropped or re-ranked on them. The 1-hour area decides which counties to load, not which streams to keep: dropping stretches outside it would remove four of the six 1 kW streams over an edge that assumes no traffic and a placeholder origin. When the overall score is built, drive time becomes its Logistics part and road distance part of Buildability.
+- **Built (PART 19, 2026-10-21):** the overall score now uses drive time as its Logistics part and the nearest public road as part of Buildability, ranking corridors within each confidence tier (D-15). Still not a filter.
 - **Open (owner):** which counties to add next. The biggest unanalyzed shares are Hamilton (needs its own parcel source) and the north Georgia counties (need Georgia parcel and flood sources). Counties with under ~10% inside may not be worth a full ingest.
 
 ### D-03 · Minimum acreage, budget, privacy weight: **Owner** (not needed until parcels are added)
@@ -116,7 +117,7 @@ PART 17 (FR-4, buildability) needs three thresholds the requirements don't give.
 
 What it does on the five counties (2026-10-21): soils are the main limit. Of 654,000 acres of turbine parcels, 56% is gently sloped but only 12% is also on septic-suitable soils. 1,700 of 4,919 ranked stretches have no buildable ground on their turbine parcel. Of the six 1 kW streams, Rogers Branch and Marion's unnamed stream have none; Bethel Creek's parcel has 2.6 acres and the Negro Den Creek / Elk River parcel 2.0, a third of a mile to 1¾ miles from the turbine ends; Big Creek's 10,481-acre parcel has 917.
 
-Flagged only, like flood zones (D-12) and drive time (D-02): the counts and `no_buildable_ground` remove nothing. Buildability becomes a sub-score (20%) of the overall score (FR-7) when that's built, along with road access. Details: [ASSUMPTIONS.md](ASSUMPTIONS.md#buildable-ground).
+Not a filter: the counts and `no_buildable_ground` remove nothing. Since PART 19 buildable ground and road access make up the Buildability part (20%) of the overall score that ranks each tier (D-15). Details: [ASSUMPTIONS.md](ASSUMPTIONS.md#buildable-ground).
 
 ### D-14 · What counts as farmland: **Default**
 
@@ -130,7 +131,26 @@ PART 18 (FR-5, agriculture) needs thresholds the requirements don't give. Starti
 
 What it does on the five counties (2026-10-21): 13% of the turbine parcels' 654,000 acres is prime farmland and 36% is class 1–3. 311 of the 4,919 ranked stretches have neither on their turbine parcel. Of the six 1 kW streams, Rogers Branch and Marion's unnamed stream have none; Bethel Creek's and the Negro Den Creek / Elk River parcels have about 28 acres of class 3 ground each (2 acres prime on the latter); Big Creek's parcel has 923 acres prime and 4,705 class 1–3.
 
-Flagged only, like buildable ground (D-13): the acres and `no_farmland` remove nothing. Agriculture becomes a sub-score (20%) of the overall score (FR-7) when that's built. Details: [ASSUMPTIONS.md](ASSUMPTIONS.md#farmland).
+Not a filter: the acres and `no_farmland` remove nothing. Since PART 19 they make up the Agriculture part (20%) of the overall score that ranks each tier (D-15). Details: [ASSUMPTIONS.md](ASSUMPTIONS.md#farmland).
+
+### D-15 · The overall score (FR-7): **Decided** (privacy and ranking), **Default** (curves)
+
+FR-7 gives the weights: Hydro 40%, Buildability 20%, Agriculture 20%, Privacy 10%, Logistics 10%. PART 19 builds it as `hydro_v4` (`config/scoring_profiles/hydro_v4.yaml`, explained in [SCORING.md](SCORING.md#the-overall-score-fr-7)).
+
+Decided by the owner (2026-10-21):
+
+- **Privacy is left out until FR-6 is built**, and the other four weights rescale (44 / 22 / 22 / 11). Not a made-up neutral score.
+- **The overall score re-ranks the shortlist within each confidence tier.** The hydro gate (1 kW, 10 ft) and the tiers stay as they are, so the overall score can't lift a low-confidence site above a medium one. The hydro score stays visible.
+
+Defaults (change them in a new profile):
+
+- **Missing data is left out, not scored as zero**, the same way: a factor or part with no data drops out and the rest rescale. Measured zeros (no buildable ground, no farmland) count as zeros. This keeps "never fill a gap with a made-up value" ([ASSUMPTIONS.md](ASSUMPTIONS.md)), at the cost of letting a corridor with no turbine parcel be scored on less.
+- **Buildability** (D-13, plus road access, D-02): buildable acres 50% (½ acre → 40, 5 acres → 100), distance to the nearest of it 25% (on it → 100, ¼ mile → 50, 1 mile → 0), distance to a public road 25% (500 ft → 100, 1 mile → 0).
+- **Agriculture** (D-14): prime (and statewide) farmland acres 40% (5 → 70, 20 → 100), class 1–3 cropland acres 30% (10 → 60, 40 → 100), pasture AUM 30% (60 → 50, 240 → 100). Acres are absolute, so a huge parcel tops out easily; that's fine for a homestead, which needs a few good acres, not a share.
+- **Logistics** (D-02): drive minutes from downtown Chattanooga, 30 → 100, 60 → 70, 120 → 0.
+- **The hydro part of a low-flow corridor** extends the power curve below the target (0 W → 0, 1 kW → 50), so its order still feels its power.
+
+What it does (2026-10-21): Big Creek (Grundy) moves from #3 to #1 on its land, Bethel Creek passes Marion's unnamed stream, and Rogers Branch stays #1 in Sequatchie. Details in SCORING.md.
 
 ---
 
@@ -208,6 +228,7 @@ Decisions that barely move the top 20 keep their default and stop being discusse
 
 | Date | Decision | Change |
 | --- | --- | --- |
+| 2026-10-21 | D-15 | Owner: the FR-7 overall score (PART 19, profile `hydro_v4`) re-ranks each confidence tier; privacy is left out with the other weights rescaled until FR-6 is built. Default sub-score curves; missing data left out, never scored as zero |
 | 2026-10-21 | D-14 | New default (PART 18): farmland is NRCS prime farmland (plus statewide importance, none here) and cropland is capability class 1–3; pasture from SSURGO grazing yields. Whole turbine parcel, no slope or floodplain test. Flagged only, never filtered or re-ranked |
 | 2026-10-21 | D-13 | New default (PART 17): buildable ground is slope 15% or less, outside the 100-year floodplain, on soils not Very limited for septic (Tennessee rating), in half-acre patches. Flagged only, never filtered or re-ranked |
 | 2026-10-20 | D-02 | Built the 1-hour drive area (PART 16): touches 20 counties. Owner deferred to the requirements: drive time and road distance are flagged only until the overall score (FR-7) gives them its Logistics (10%) and Buildability (20%) parts |

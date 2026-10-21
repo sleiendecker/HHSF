@@ -421,7 +421,7 @@ def analyze_drive_time(
 @score_app.command("hydro")
 def score_hydro(
     aoi: str = AOI_OPTION,
-    profile: str = typer.Option("hydro_v3", help="Scoring profile from config/scoring_profiles/"),
+    profile: str = typer.Option("hydro_v4", help="Scoring profile from config/scoring_profiles/"),
     run_id: int | None = typer.Option(
         None, help="Hydro run to score. Default: the AOI's latest finished one."
     ),
@@ -452,16 +452,25 @@ def score_hydro(
         f"low-flow below {p.head_only.min_net_head_ft:g} ft, {status.get(scoring.NOT_SCORABLE, 0)} "
         "missing data"
     )
+    if (left_out := summary.get("overall_parts_left_out")) is not None:
+        missing = ", ".join(f"{n:,} {part}" for part, n in sorted(left_out.items())) or "none"
+        typer.echo(f"  overall score: parts left out for lack of data: {missing} (and privacy)")
     if show <= 0:
         return
     with eng.connect() as conn:
         rows = scoring_run.top(conn, score_run_id, show)
-    typer.echo(f"\n{'rank':>4}  {'tier':<9} {'score':>5}  {'head ft':>7}  {'power W':>8}  stream")
+    typer.echo(
+        f"\n{'rank':>4}  {'tier':<9} {'overall':>7} {'hydro':>5}  {'head ft':>7}  "
+        f"{'power W':>8}  stream"
+    )
     for r in rows:
+        overall = f"{r.overall_score:7.1f}" if r.overall_score is not None else "      -"
         score = f"{r.hydro_score:5.1f}" if r.hydro_score is not None else "  -  "
         watts = f"{r.firm_power_w:8,.0f}" if r.firm_power_w is not None else "       -"
         name = r.stream_name or f"(unnamed, NHDPlus {r.nhdplusid})"
-        typer.echo(f"{r.rank:>4}  {r.tier:<9} {score}  {r.net_head_ft:7.0f}  {watts}  {name}")
+        typer.echo(
+            f"{r.rank:>4}  {r.tier:<9} {overall} {score}  {r.net_head_ft:7.0f}  {watts}  {name}"
+        )
 
 
 @export_app.command("hydro")

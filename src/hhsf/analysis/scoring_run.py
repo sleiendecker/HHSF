@@ -3,15 +3,22 @@
 Each scoring gets its own analysis_runs row (analysis = 'hydro_score') holding the
 scoring profile version, the whole profile and the hydro run it scored, then one
 hydro_scores row per corridor. Earlier score runs are kept.
+
+A profile with an `overall` section (hydro_v4 on) also reads each corridor's site
+data as it stands when scoring runs: its turbine parcel's buildable ground and
+farmland (`make analyze`), the nearest public road, and the drive time (`make
+drive-time`). Run those first; whatever is missing is left out of the overall score.
 """
 
 import json
 from collections import Counter
+from dataclasses import replace
 
 from sqlalchemy import Connection, Engine, text
 
 from hhsf.analysis import scoring
 from hhsf.analysis.run import code_version
+from hhsf.core import units
 from hhsf.core.config import AOI
 
 
@@ -46,12 +53,54 @@ def load_inputs(conn: Connection, hydro_run_id: int) -> list[scoring.CorridorInp
     return [scoring.CorridorInputs(*row[:6], tuple(row[6] or ())) for row in rows]
 
 
-def summarize(scores: list[scoring.Score]) -> dict:
+def load_site_inputs(conn: Connection, hydro_run_id: int) -> dict[int, scoring.SiteInputs]:
+    """Each corridor's site data for the overall score (None where there's none)."""
+    rows = conn.execute(
+        text(
+            """
+            SELECT c.corridor_id, b.buildable_acres, b.nearest_buildable_m,
+                   r.public_distance_m, f.prime_acres + f.statewide_acres AS farmland_acres,
+                   f.capable_acres, f.pasture_aum, d.minutes
+            FROM hydro_corridors c
+            LEFT JOIN corridor_turbine_buildable b USING (corridor_id)
+            LEFT JOIN corridor_turbine_roads r USING (corridor_id)
+            LEFT JOIN corridor_turbine_farmland f USING (corridor_id)
+            LEFT JOIN corridor_drive_times d USING (corridor_id)
+            WHERE c.run_id = :r
+            """
+        ),
+        {"r": hydro_run_id},
+    ).all()
+
+    def ft(m: float | None) -> float | None:
+        return None if m is None else units.m_to_ft(m)
+
     return {
+        r.corridor_id: scoring.SiteInputs(
+            buildable_acres=r.buildable_acres,
+            nearest_buildable_ft=ft(r.nearest_buildable_m),
+            public_road_ft=ft(r.public_distance_m),
+            farmland_acres=r.farmland_acres,
+            cropland_acres=r.capable_acres,
+            pasture_aum=r.pasture_aum,
+            drive_minutes=r.minutes,
+        )
+        for r in rows
+    }
+
+
+def summarize(scores: list[scoring.Score]) -> dict:
+    out = {
         "corridors": len(scores),
         "status": dict(Counter(s.status for s in scores)),
         "ranked_by_tier": dict(Counter(s.tier for s in scores if s.rank is not None)),
     }
+    overall = [s for s in scores if s.overall is not None]
+    if overall:
+        out["overall_parts_left_out"] = dict(
+            Counter(part for s in overall for part in s.overall["left_out"] if part != "privacy")
+        )
+    return out
 
 
 def save_scores(
@@ -64,10 +113,13 @@ def save_scores(
             """
             INSERT INTO hydro_scores (
                 run_id, corridor_id, status, tier, net_head_ft, head_subscore,
-                power_subscore, hydro_score, rank, tier_rank, explanation
+                power_subscore, hydro_score, rank, tier_rank, explanation, overall_score,
+                buildability_subscore, agriculture_subscore, logistics_subscore
             ) VALUES (
                 :run_id, :corridor_id, :status, :tier, :net_head_ft, :head_subscore,
-                :power_subscore, :hydro_score, :rank, :tier_rank, CAST(:explanation AS jsonb)
+                :power_subscore, :hydro_score, :rank, :tier_rank, CAST(:explanation AS jsonb),
+                :overall_score, :buildability_subscore, :agriculture_subscore,
+                :logistics_subscore
             )
             """
         ),
@@ -84,6 +136,10 @@ def save_scores(
                 "rank": s.rank,
                 "tier_rank": s.tier_rank,
                 "explanation": json.dumps(s.explanation(p)),
+                "overall_score": s.overall_score,
+                "buildability_subscore": s.buildability_subscore,
+                "agriculture_subscore": s.agriculture_subscore,
+                "logistics_subscore": s.logistics_subscore,
             }
             for s in scores
         ],
@@ -104,7 +160,11 @@ def score_hydro(
     with eng.begin() as conn:
         if hydro_run_id is None:
             hydro_run_id = latest_hydro_run(conn, aoi.key)
-        scores = scoring.score_all(load_inputs(conn, hydro_run_id), profile)
+        inputs = load_inputs(conn, hydro_run_id)
+        if profile.overall is not None:
+            site = load_site_inputs(conn, hydro_run_id)
+            inputs = [replace(c, site=site.get(c.corridor_id)) for c in inputs]
+        scores = scoring.score_all(inputs, profile)
         summary = summarize(scores)
         run_id = conn.execute(
             text(
@@ -143,7 +203,7 @@ def top(conn: Connection, run_id: int, n: int) -> list:
     return conn.execute(
         text(
             """
-            SELECT s.rank, s.tier, s.hydro_score, s.head_subscore, s.net_head_ft,
+            SELECT s.rank, s.tier, s.overall_score, s.hydro_score, s.head_subscore, s.net_head_ft,
                    c.firm_power_w, c.flow_method, st.stream_name, c.nhdplusid
             FROM hydro_scores s
             JOIN hydro_corridors c USING (corridor_id)

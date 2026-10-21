@@ -15,6 +15,12 @@ A corridor ends up in exactly one status:
 - below_min_head: head-only or low-flow corridor too low to run a small turbine;
   filtered out.
 - not_scorable: head or flow missing for some other reason; filtered out.
+
+With an `overall` section (hydro_v4 on, FR-7, D-15) every ranked corridor also gets
+an overall score: the hydro part plus buildability, agriculture and logistics
+sub-scores of its turbine parcel and turbine end, each made of factors with their own
+curves. Parts and factors with no data are left out and the rest rescale (privacy
+always, until FR-6 is built). Within each tier, corridors are then ranked by it.
 """
 
 from dataclasses import dataclass, field
@@ -63,6 +69,45 @@ class Weights(BaseModel):
         return self
 
 
+class SiteFactor(Curve):
+    """One overall-score factor: a curve and its weight within its part."""
+
+    weight: float
+
+
+# The FR-7 parts, and the factors each site part can use (SiteInputs fields).
+PARTS = ("hydro", "buildability", "agriculture", "privacy", "logistics")
+SITE_FACTORS = {
+    "buildability": ("buildable_acres", "nearest_buildable_ft", "public_road_ft"),
+    "agriculture": ("farmland_acres", "cropland_acres", "pasture_aum"),
+    "logistics": ("drive_minutes",),
+}
+
+
+def _adds_to_one(weights: list[float]) -> bool:
+    return all(w >= 0 for w in weights) and abs(sum(weights) - 1) <= 1e-9
+
+
+class Overall(BaseModel):
+    weights: dict[str, float]
+    low_flow_power_subscore: Curve
+    buildability: dict[str, SiteFactor]
+    agriculture: dict[str, SiteFactor]
+    logistics: dict[str, SiteFactor]
+
+    @model_validator(mode="after")
+    def _check(self) -> "Overall":
+        if set(self.weights) != set(PARTS) or not _adds_to_one(list(self.weights.values())):
+            raise ValueError(f"overall weights must name {', '.join(PARTS)} and add up to 1")
+        for part, allowed in SITE_FACTORS.items():
+            factors = getattr(self, part)
+            if not factors or not set(factors) <= set(allowed):
+                raise ValueError(f"overall.{part} factors must be some of {', '.join(allowed)}")
+            if not _adds_to_one([f.weight for f in factors.values()]):
+                raise ValueError(f"overall.{part} factor weights must add up to 1")
+        return self
+
+
 class HeadOnly(BaseModel):
     min_net_head_ft: float
 
@@ -79,6 +124,9 @@ class ScoringProfile(BaseModel):
     # big river with a foot of drop is no homestead site). None: only head_only and
     # low_flow corridors have a minimum (head_only.min_net_head_ft).
     min_net_head_ft: float | None = None
+    # hydro_v4: the FR-7 overall score ranks corridors within each tier. None: they're
+    # ranked by their hydro score (hydro_v1-v3).
+    overall: Overall | None = None
 
     @model_validator(mode="after")
     def _check(self) -> "ScoringProfile":
@@ -128,9 +176,9 @@ def piecewise(x: float, curve: Curve) -> tuple[float, str]:
 class Factor:
     """One factor's part in a score, with everything needed to explain it."""
 
-    name: str  # "head" or "power"
+    name: str  # "head", "power", or an overall-score factor such as "buildable_acres"
     input: str  # what was measured, e.g. "net_head_ft"
-    value: float
+    value: float | None  # None: nothing measured, scored as the far end (no buildable ground)
     breakpoints: list[tuple[float, float]]
     subscore: float
     weight: float
@@ -144,7 +192,7 @@ class Factor:
         return {
             "factor": self.name,
             "input": self.input,
-            "value": round(self.value, 2),
+            "value": None if self.value is None else round(self.value, 2),
             "breakpoints": [list(p) for p in self.breakpoints],
             "subscore": round(self.subscore, 2),
             "weight": self.weight,
@@ -193,6 +241,24 @@ class CorridorInputs:
     flow_confidence: str  # medium | low | below_applicability | unavailable
     flow_method: str | None = None
     flow_flags: tuple[str, ...] = ()
+    site: "SiteInputs | None" = None  # for the overall score; None: no site data
+
+
+@dataclass(frozen=True)
+class SiteInputs:
+    """What the overall score reads about a corridor's turbine parcel and turbine end.
+
+    None means no data (the layer isn't loaded, the step wasn't run, no turbine
+    parcel), and that factor is left out. Measured zeros are zeros.
+    """
+
+    buildable_acres: float | None = None
+    nearest_buildable_ft: float | None = None  # None with buildable_acres 0: there's none
+    public_road_ft: float | None = None
+    farmland_acres: float | None = None  # prime + statewide importance
+    cropland_acres: float | None = None  # capability class 1-3
+    pasture_aum: float | None = None
+    drive_minutes: float | None = None
 
 
 @dataclass
@@ -209,10 +275,18 @@ class Score:
     rank: int | None = None  # 1 = best, across all tiers
     tier_rank: int | None = None  # 1 = best within its tier
     firm_power_w: float | None = None  # kept for ordering the low_flow tier
+    overall_score: float | None = None  # FR-7; only with a profile's overall section
+    buildability_subscore: float | None = None
+    agriculture_subscore: float | None = None
+    logistics_subscore: float | None = None
+    overall: dict | None = None  # how the overall score was reached
 
     @property
     def sort_score(self) -> float:
-        """What orders a tier: hydro score; head for head-only; watts for low flow."""
+        """What orders a tier: the overall score when there is one; else hydro score,
+        head for head-only, watts for low flow."""
+        if self.overall_score is not None:
+            return self.overall_score
         if self.hydro_score is not None:
             return self.hydro_score
         if self.status == LOW_FLOW:
@@ -220,13 +294,16 @@ class Score:
         return self.head_subscore or 0.0
 
     def explanation(self, p: ScoringProfile) -> dict:
-        return {
+        out = {
             "profile": p.version,
             "status": self.status,
             "tier": self.tier,
             "summary": self.summary,
             "factors": [f.explain() for f in self.factors],
         }
+        if self.overall is not None:
+            out["overall"] = self.overall
+        return out
 
 
 def score_corridor(c: CorridorInputs, p: ScoringProfile) -> Score:
@@ -302,8 +379,8 @@ def score_corridor(c: CorridorInputs, p: ScoringProfile) -> Score:
             factors=[head],
             summary=(
                 f"HEAD ONLY: basin too small for a flow estimate (D-09), so no hydro score "
-                f"and no check against the {target_kw:g} kW target. Ranked on head "
-                f"{head.subscore:.1f} after every corridor with a power estimate. "
+                f"and no check against the {target_kw:g} kW target. Head sub-score "
+                f"{head.subscore:.1f}; ranked after every corridor with a power estimate. "
                 "Check flow on the visit."
             ),
         )
@@ -341,9 +418,126 @@ def low_flow_score(c: CorridorInputs, head_ft: float, p: ScoringProfile) -> Scor
         summary=(
             f"LOW FLOW: {c.firm_power_w:,.0f} W firm power is below the {target_kw:g} kW target, "
             f"but the flow is a low-confidence estimate ({basis}), so it stays on the list (D-01). "
-            "No hydro score; ranked by power after every other listed corridor. A spring or a "
+            "No hydro score; listed after every other ranked corridor. A spring or a "
             "dry-season measurement could change it."
         ),
+    )
+
+
+# --- Overall score (FR-7) -----------------------------------------------------
+
+SITE_FACTOR_TEXT = {
+    "buildable_acres": ("{:,.1f} acres of buildable ground", "no buildable ground computed"),
+    "nearest_buildable_ft": ("nearest buildable ground {:,.0f} ft away", "no buildable ground"),
+    "public_road_ft": ("public road {:,.0f} ft away", "no roads loaded"),
+    "farmland_acres": ("{:,.1f} acres of prime farmland", "no farmland computed"),
+    "cropland_acres": ("{:,.1f} acres of class 1-3 cropland", "no farmland computed"),
+    "pasture_aum": ("pasture for {:,.0f} AUM a year", "no farmland computed"),
+    "drive_minutes": ("{:,.0f} min drive", "no drive time"),
+}
+
+
+@dataclass(frozen=True)
+class Part:
+    """One FR-7 part of the overall score. `factors` carry weights rescaled over the
+    factors that had data, so their contributions add up to `subscore`."""
+
+    name: str
+    subscore: float | None  # None: no data at all, left out
+    factors: list[Factor]
+    missing: list[str]  # factors left out for lack of data
+
+
+def _rescaled(items: list[tuple[Factor, float]]) -> list[Factor]:
+    total = sum(w for _, w in items)
+    return [
+        Factor(f.name, f.input, f.value, f.breakpoints, f.subscore, w / total, f.reason)
+        for f, w in items
+    ]
+
+
+def site_part(name: str, spec: dict[str, SiteFactor], site: SiteInputs) -> Part:
+    """A buildability, agriculture or logistics sub-score from the site inputs."""
+    items, missing = [], []
+    for factor, curve in spec.items():
+        value = getattr(site, factor)
+        found, _ = SITE_FACTOR_TEXT[factor]
+        if value is not None:
+            score, where = piecewise(value, curve)
+            reason = f"{found.format(value)}: {where}"
+        elif factor == "nearest_buildable_ft" and site.buildable_acres == 0:
+            score = curve.breakpoints[-1][1]  # none at all scores as the far end
+            reason = f"no buildable ground on the turbine parcel -> {score:g}"
+        else:
+            missing.append(factor)
+            continue
+        items.append(
+            (Factor(factor, factor, value, curve.breakpoints, score, 1.0, reason), curve.weight)
+        )
+    if not items or sum(w for _, w in items) == 0:
+        return Part(name, None, [], missing)
+    factors = _rescaled(items)
+    return Part(name, sum(f.contribution for f in factors), factors, missing)
+
+
+def hydro_part(s: Score, p: ScoringProfile) -> Part:
+    """The hydro score, the head sub-score for head-only corridors, or for low-flow
+    ones the hydro formula with the power curve extended below the target."""
+    assert p.overall is not None
+    if s.status == SCORED:
+        return Part("hydro", s.hydro_score, s.factors, [])
+    if s.status == HEAD_ONLY:
+        return Part("hydro", s.head_subscore, s.factors, [])
+    curve = p.overall.low_flow_power_subscore
+    score, where = piecewise(s.firm_power_w or 0.0, curve)
+    power = Factor(
+        "power",
+        "firm_power_w",
+        s.firm_power_w,
+        curve.breakpoints,
+        score,
+        p.weights.power,
+        f"{s.firm_power_w or 0:,.0f} W firm power (below the target): {where}",
+    )
+    head = head_factor(s.net_head_ft or 0.0, p, p.weights.head)
+    return Part("hydro", power.contribution + head.contribution, [power, head], [])
+
+
+def add_overall(s: Score, site: SiteInputs | None, p: ScoringProfile) -> None:
+    """Give a ranked corridor its overall score, sub-scores and explanation, in place."""
+    o = p.overall
+    assert o is not None
+    site = site or SiteInputs()
+    parts = [hydro_part(s, p)] + [
+        site_part(name, getattr(o, name), site)
+        for name in ("buildability", "agriculture", "logistics")
+    ]
+    used = [(part, o.weights[part.name]) for part in parts if part.subscore is not None]
+    total = sum(w for _, w in used)
+    s.overall_score = sum(part.subscore * w for part, w in used) / total
+    by_name = {part.name: part.subscore for part in parts}
+    s.buildability_subscore = by_name["buildability"]
+    s.agriculture_subscore = by_name["agriculture"]
+    s.logistics_subscore = by_name["logistics"]
+    left_out = ["privacy"] + [part.name for part in parts if part.subscore is None]
+    s.overall = {
+        "score": round(s.overall_score, 2),
+        "parts": [
+            {
+                "part": part.name,
+                "subscore": round(part.subscore, 2),
+                "weight": round(w / total, 4),
+                "contribution": round(part.subscore * w / total, 2),
+                "factors": [f.explain() for f in part.factors],
+                "missing": part.missing,
+            }
+            for part, w in used
+        ],
+        "left_out": left_out,
+    }
+    terms = " + ".join(f"{part.name} {part.subscore:.1f} x {w / total:.2f}" for part, w in used)
+    s.summary += (
+        f" Overall {s.overall_score:.1f} = {terms} ({', '.join(left_out)} left out: no data)."
     )
 
 
@@ -355,8 +549,9 @@ def rank(scores: list[Score], p: ScoringProfile) -> list[Score]:
 
     Every corridor in an earlier tier ranks above every corridor in a later one
     (profile `rank_tiers`), so a low-confidence corridor can never outrank a
-    medium one on score alone. Ties break on net head, then corridor id, so the
-    order is always the same.
+    medium one on score alone. Within a tier, the overall score orders them when
+    there is one. Ties break on net head, then corridor id, so the order is always
+    the same.
     """
     order = {t: i for i, t in enumerate(p.rank_tiers)}
     ranked = sorted(
@@ -373,5 +568,9 @@ def rank(scores: list[Score], p: ScoringProfile) -> list[Score]:
 def score_all(corridors: list[CorridorInputs], p: ScoringProfile) -> list[Score]:
     """Score and rank every corridor. Returns all of them, filtered ones included."""
     scores = [score_corridor(c, p) for c in corridors]
+    if p.overall is not None:
+        for c, s in zip(corridors, scores, strict=True):
+            if s.status in RANKED:
+                add_overall(s, c.site, p)
     rank(scores, p)
     return scores

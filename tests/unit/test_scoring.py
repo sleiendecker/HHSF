@@ -307,3 +307,103 @@ def test_v3_filters_corridors_over_the_target_with_too_little_head():
     assert s.summary == "1,200 W firm power, but 1 ft net head is below 10 ft."
     assert scoring.score_corridor(river, V2).status == scoring.SCORED
     assert scoring.score_corridor(corridor(head_ft=10.0, watts=1200), V3).status == (scoring.SCORED)
+
+
+# --- Overall score (hydro_v4, FR-7) ---------------------------------------------
+
+V4 = scoring.load_profile("hydro_v4")
+GOOD_SITE = scoring.SiteInputs(
+    buildable_acres=5,
+    nearest_buildable_ft=0,
+    public_road_ft=500,
+    farmland_acres=20,
+    cropland_acres=40,
+    pasture_aum=240,
+    drive_minutes=30,
+)
+
+
+def test_v4_keeps_v3_hydro_rules_and_adds_fr7_weights():
+    v3 = scoring.load_profile("hydro_v3")
+    assert V4.model_dump(exclude={"version", "overall"}) == v3.model_dump(
+        exclude={"version", "overall"}
+    )
+    assert V4.overall.weights == {
+        "hydro": 0.4,
+        "buildability": 0.2,
+        "agriculture": 0.2,
+        "privacy": 0.1,
+        "logistics": 0.1,
+    }
+    assert v3.overall is None
+
+
+def test_overall_profile_rejects_bad_weights_and_unknown_factors():
+    raw = V4.overall.model_dump()
+    with pytest.raises(ValidationError, match="add up to 1"):
+        scoring.Overall.model_validate({**raw, "weights": {**raw["weights"], "hydro": 0.5}})
+    bad = {**raw, "logistics": {"fuel_price": {"weight": 1, "breakpoints": [[0, 0], [1, 100]]}}}
+    with pytest.raises(ValidationError, match="logistics factors"):
+        scoring.Overall.model_validate(bad)
+
+
+def test_best_site_scores_its_hydro_part_rescaled_without_privacy():
+    [s] = scoring.score_all([corridor(head_ft=200, watts=3000, site=GOOD_SITE)], V4)
+    assert s.hydro_score == pytest.approx(100)
+    assert (s.buildability_subscore, s.agriculture_subscore, s.logistics_subscore) == (
+        100,
+        100,
+        100,
+    )
+    assert s.overall_score == pytest.approx(100)
+    assert s.overall["left_out"] == ["privacy"]
+    weights = {p["part"]: p["weight"] for p in s.overall["parts"]}
+    assert weights["hydro"] == pytest.approx(0.4 / 0.9, abs=1e-4)
+    assert sum(p["contribution"] for p in s.overall["parts"]) == pytest.approx(100, abs=0.05)
+    assert "Overall 100.0 = hydro 100.0 x 0.44" in s.summary
+
+
+def test_missing_data_is_left_out_but_measured_zeros_count():
+    # No turbine parcel: only road access and drive time are known.
+    no_parcel = scoring.SiteInputs(public_road_ft=500, drive_minutes=30)
+    [s] = scoring.score_all([corridor(head_ft=200, watts=3000, site=no_parcel)], V4)
+    assert s.agriculture_subscore is None and s.buildability_subscore == 100
+    build = next(p for p in s.overall["parts"] if p["part"] == "buildability")
+    assert build["missing"] == ["buildable_acres", "nearest_buildable_ft"]
+    assert s.overall["left_out"] == ["privacy", "agriculture"]
+    assert s.overall_score == pytest.approx(100)
+    # Analyzed, and there's nothing: zeros, and the distance scores as the far end.
+    bare = scoring.SiteInputs(0, None, 5280, 0, 0, 0, 120)
+    [s] = scoring.score_all([corridor(head_ft=200, watts=3000, site=bare)], V4)
+    assert (s.buildability_subscore, s.agriculture_subscore, s.logistics_subscore) == (0, 0, 0)
+    assert s.overall_score == pytest.approx(100 * 0.4 / 0.9)
+    # No site data at all: the hydro part alone.
+    [s] = scoring.score_all([corridor(head_ft=200, watts=3000)], V4)
+    assert s.overall_score == pytest.approx(100)
+
+
+def test_low_flow_hydro_part_extends_the_power_curve_below_the_target():
+    c = corridor(head_ft=200, watts=500, conf="low", flow_method="regional_streamstats_yield")
+    [s] = scoring.score_all([c], V4)
+    assert s.status == scoring.LOW_FLOW and s.hydro_score is None
+    hydro = next(p for p in s.overall["parts"] if p["part"] == "hydro")
+    # 500 W is halfway to 1 kW: 25 x 0.7 + head 100 x 0.3.
+    assert hydro["subscore"] == pytest.approx(47.5)
+
+
+def test_v4_ranks_each_tier_by_overall_score():
+    poor_land = scoring.SiteInputs(0, None, 5280, 0, 0, 0, 120)
+    corridors = [
+        corridor(1, head_ft=200, watts=3000, site=poor_land),  # best hydro, no land
+        corridor(2, head_ft=150, watts=2000, site=GOOD_SITE),
+        corridor(3, head_ft=50, watts=1500, conf="low", site=GOOD_SITE),
+    ]
+    by_id = {s.corridor_id: s for s in scoring.score_all(corridors, V4)}
+    assert by_id[1].hydro_score > by_id[2].hydro_score
+    assert (by_id[2].rank, by_id[1].rank) == (1, 2)
+    # A low-confidence corridor never outranks a medium one, whatever its overall score.
+    assert by_id[3].overall_score > by_id[1].overall_score and by_id[3].rank == 3
+    # v3 ranks by hydro score and has no overall score.
+    v3 = {s.corridor_id: s for s in scoring.score_all(corridors, scoring.load_profile("hydro_v3"))}
+    assert (v3[1].rank, v3[2].rank) == (1, 2) and v3[1].overall_score is None
+    assert "overall" not in v3[1].explanation(PROFILE)
