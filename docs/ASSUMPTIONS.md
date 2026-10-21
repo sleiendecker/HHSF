@@ -387,3 +387,55 @@ The 1-hour area covers about 5,970 sq km and touches 20 counties. By share of th
 | Negro Den Creek | Grundy | 2,830 ft, local road (Hanging Rock Dr) | 2,830 ft | 83 min, 63 mi | no |
 | Elk River | Grundy | 2,360 ft, local road (Bluff Ridge Rd) | 2,360 ft | 90 min, 68 mi | no |
 | Big Creek | Grundy | 350 ft, 4WD trail | 1,480 ft | 100 min, 67 mi | no |
+
+## Buildable ground
+
+PART 17 is the first step of FR-4 (buildability): for every corridor's turbine parcel, how much ground could take a house and a septic field, and how far the nearest of it is from the turbine end. FR-4 names four tests: slope, flood risk, septic suitability and road access. This step combines the first three into one area; road access is the road columns of PART 16. It's a flag, not a filter: buildability is meant to be a sub-score (20%) of the overall score (FR-7), which doesn't exist yet, so nothing is filtered or re-ranked on it (D-02, D-12, D-13).
+
+### Soils (USDA SSURGO)
+
+- **Source:** the USDA NRCS Soil Survey Geographic database (SSURGO), read through Soil Data Access, NRCS's SQL web service over the same database Web Soil Survey shows (`config/data_sources.yaml`, `usda_ssurgo`). Public domain. Each county is one soil survey area (Sequatchie is `TN153`), updated yearly; the version and date go into `data_sources.version`.
+- **What's loaded:** `hhsf ingest soils --aoi <key>` (part of `make ingest`) saves the county's soil map unit polygons (about 4,000 to 10,000 per county) with each map unit's name, two septic ratings and a few summaries: hydric share, shallowest depth to bedrock and to the water table, flooding frequency and drainage class. Answers are cached in `data/raw/usda_ssurgo/<aoi>/` (about 15–30 MB per county, a few seconds).
+- **How a map unit is rated:** SSURGO maps soils as map units, each a mix of soil components (say 80% one soil, 15% another, 5% rock outcrop), and rates each component. The tool gives each map unit its **dominant condition**, as Web Soil Survey does by default: the rating held by the largest share of the map unit (components with the same rating add up), the more limiting one on a tie. So up to half of a map unit can be better or worse than its rating says.
+- **Which septic rating:** SSURGO has two. The national **"ENG - Septic Tank Absorption Fields"** rates a soil Very limited for bedrock within 100 cm, slope over 15%, any occasional flooding and more; it rates about three in four of the major soils here Very limited. The Tennessee **"ENG - Conventional On-Site Septic Systems (TN)"** approximates the state's own rules for conventional septic systems (TDEC's subsurface sewage disposal regulations, which NRCS wrote it with) and leaves flooding to be judged separately; about half are Very limited. **Buildable ground uses the Tennessee rating** (`septic_rating: septic_tn` in `config/buildability.yaml`), since it's the one closest to what a permit needs, and flooding is handled by the FEMA test. Both are saved, and the map shows the Tennessee one.
+- **Not rated** map units (water, rock outcrop, pits, urban land) don't count as buildable, and nor does ground with no soil survey loaded.
+
+### Slope
+
+- From the same USGS 3DEP 10 m elevation model as the hydro analysis. For each parcel, the elevations are resampled onto a 10 m grid in the analysis projection (equal-area meters, never degrees), and each cell's slope is worked out from its eight neighbors (Horn's method, the one GIS slope tools use).
+- **15% or less counts as gently sloped** (`max_slope_pct`). That's where NRCS's ratings for houses without basements and for septic fields turn Very limited; steeper ground needs real cut and fill for a house pad, and a drain field on it risks effluent seeping out downhill.
+- The elevation model was saved for the streams. A turbine parcel can reach past it (the biggest are thousands of acres), so `hhsf analyze buildable` grows the saved file to cover every turbine parcel first. On 2026-10-21 that took each county's file from 40–60 MB to 46–80 MB.
+
+### What counts as buildable
+
+A 10 m cell whose center is inside the turbine parcel counts if:
+
+1. its slope is at most 15%;
+2. it's outside FEMA's 100-year floodplain (the Special Flood Hazard Area, zones A and AE; see [Flood zones](#flood-zones));
+3. its soil's Tennessee septic rating is Slightly or Moderately limited (not Very limited or Not rated).
+
+Then only **patches of at least half an acre** (`min_patch_acres`, cells joined edge to edge) are kept: room for a house, a conventional drain field with its replacement area, and a driveway turnaround. Scattered single cells on a bench don't make a building site.
+
+Saved per parcel in `parcel_buildable` (`hhsf analyze buildable`, part of `make analyze`), with the settings used: the parcel's acres, its gently sloped acres, those also outside the floodplain, those also on suitable soils, the buildable acres (in patches), how many patches, and their outline (drawn on the map). `corridor_turbine_buildable`, a view computed when read (migration 0013), links each corridor to its turbine parcel's row and measures the straight line from the turbine end to the nearest buildable ground (0 when the turbine end is on it). It's raster work, so it's saved rather than computed when read: re-ingesting a county's parcels deletes their rows, and `make analyze` computes them again.
+
+- **Flags:** `no_buildable_ground` (none on the turbine parcel), `buildable_not_computed` (the parcel wasn't analyzed: run `make analyze` or `uv run hhsf analyze buildable`), and `soils_not_loaded`: at least half an acre of the parcel is gently sloped and dry but has no soils loaded, because the parcel reaches past its county's soil survey (into a county that hasn't been ingested, or across a survey edge that doesn't match the parcel's county). Its buildable acres may then be understated. Ingest every county's soils before analyzing any of them.
+- **What it can't see:** soil maps are drawn at 1:12,000–1:24,000 and a map unit's rating is its dominant condition, so a Very limited map unit can hold a pocket of good soil and the reverse. Tennessee permits a septic system only on a soil scientist's on-site evaluation, and an alternative system (a mound, drip or low-pressure field) can work where a conventional one can't. A 10 m elevation model smooths small benches and ledges. And most small creeks have no FEMA floodplain at all (see [Flood zones](#flood-zones)), so ground beside them counts as dry.
+
+### What it found (2026-10-21)
+
+Soils are the main limit. Across the 3,809 turbine parcels of the five counties' latest runs (654,000 acres), 56% of the ground is sloped 15% or less and 52% is also outside the 100-year floodplain, but only 12% is also on soils not Very limited for a septic field; 76,000 acres are buildable in half-acre patches. 1,688 parcels have none.
+
+Of the 4,919 ranked stretches on the map, **3,079 have some buildable ground on their turbine parcel** (median 26 acres), and for 2,115 of them it's within a quarter mile of the turbine end (530 have the turbine end on it). **1,700 have none.** 140 have no turbine parcel (they end outside the five counties). 258 are flagged `soils_not_loaded` (51 parcels that reach past their county's soil survey; one Grundy parcel lies almost wholly in Coffee County's).
+
+The six 1 kW streams:
+
+| Stream | County | Turbine parcel | Gently sloped | And outside the floodplain | And septic-suitable | Buildable (half-acre patches) | Nearest to the turbine end |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Rogers Branch | Sequatchie | 76 acres | 7.4 acres | 7.4 | 0.3 | **none** | – |
+| Unnamed (NHDPlus 25000300021756) | Marion | 44 acres | 1.4 acres | 1.3 | 0 | **none** | – |
+| Bethel Creek | Marion | 1,355 acres | 67 acres | 62 | 4.4 | 2.6 acres (2 patches) | 1,540 ft |
+| Negro Den Creek | Grundy | 1,901 acres | 109 acres | 109 | 3.4 | 2.0 acres (1 patch) | 1.7 mi |
+| Elk River | Grundy | same parcel | | | | 2.0 acres | 3,620 ft |
+| Big Creek | Grundy | 10,481 acres | 5,962 acres | 5,802 | 923 | 917 acres (51 patches) | 1.1 mi |
+
+Rogers Branch's and the Marion stream's parcels are almost all steep: the stretch that makes the power is the same slope that rules out a house beside it. A neighboring parcel, or an alternative septic system, may still work; that's for the visit.

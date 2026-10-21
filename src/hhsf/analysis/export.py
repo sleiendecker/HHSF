@@ -92,6 +92,10 @@ SHORTLIST_COLUMNS = [
     "drive_road_point_ft",
     "in_drive_area",
     "access_flags",
+    "turbine_parcel_gentle_acres",
+    "turbine_parcel_buildable_acres",
+    "nearest_buildable_ft",
+    "buildable_flags",
     "explanation",
 ]
 ALL_CORRIDORS_COLUMNS = ["status", *SHORTLIST_COLUMNS]
@@ -120,6 +124,14 @@ OUTSIDE_DRIVE_AREA = "outside_drive_area"  # the turbine end is outside the D-02
 NO_DRIVE_TIME = "no_drive_time"  # not computed yet, or Valhalla found no route
 ROAD_NOT_PUBLIC = "nearest_road_not_public"  # a 4WD trail or private road is nearer
 DRIVE_ENDS_ON_TRACK = "drive_ends_on_track"  # no route to the nearest public road; see below
+
+# buildable_flags values. Flags only: nothing is filtered or re-ranked on buildable ground.
+NO_BUILDABLE_GROUND = "no_buildable_ground"  # none on the turbine parcel
+BUILDABLE_NOT_COMPUTED = "buildable_not_computed"  # the turbine parcel wasn't analyzed
+# Gentle, dry ground on the parcel with no soils loaded (it reaches past the loaded soil
+# surveys, usually into a county that hasn't been ingested): buildable acres may be
+# understated.
+SOILS_NOT_LOADED = "soils_not_loaded"
 
 
 @dataclass(frozen=True)
@@ -176,6 +188,27 @@ class DriveArea:
 
 
 @dataclass(frozen=True)
+class Buildable:
+    """Buildable ground on the turbine parcel (hhsf.analysis.buildable)."""
+
+    gentle_acres: float  # slope at most the limit
+    buildable_acres: float  # and outside the 100-year floodplain, on septic-suitable soils
+    nearest_m: float | None  # turbine end to the nearest buildable ground; None: none
+    no_soil_acres: float = 0.0  # gentle and dry, but no soils loaded there
+
+
+@dataclass(frozen=True)
+class BuildableInfo:
+    """The settings the buildable ground was computed with (config/buildability.yaml)."""
+
+    max_slope_pct: float
+    septic_rating: str  # soils column: septic_tn or septic_national
+    septic_excluded: tuple[str, ...]
+    min_patch_acres: float
+    computed: str  # date of the latest computation
+
+
+@dataclass(frozen=True)
 class ExportRow:
     """One corridor of a score run, joined to its hydro numbers (storage units)."""
 
@@ -218,6 +251,8 @@ class ExportRow:
     drive_road_point_m: float | None = None  # turbine end to the road point the drive ends at
     in_drive_area: bool | None = None  # None: no drive-time area built
     access_flags: tuple[str, ...] = ()
+    turbine_buildable: Buildable | None = None  # None: no turbine parcel, or not computed
+    buildable_flags: tuple[str, ...] = ()
 
     @property
     def ranked(self) -> bool:
@@ -244,6 +279,8 @@ class RunInfo:
     flood_version: str | None = None  # fema_nfhl version and download date; None: not loaded
     roads_version: str | None = None  # tiger_roads version and download date; None: not loaded
     drive_area: DriveArea | None = None  # None: no drive-time area built
+    soils_version: str | None = None  # usda_ssurgo version and download date; None: not loaded
+    buildable: BuildableInfo | None = None  # None: buildable ground never computed
 
 
 # --- Rows ---------------------------------------------------------------------
@@ -318,6 +355,26 @@ def access_flags(
     return tuple(flags)
 
 
+def buildable_flags(
+    turbine: Parcel | None, b: Buildable | None, min_acres: float = 0.5
+) -> tuple[str, ...]:
+    """What to check about a house site (only when buildable ground has been computed).
+
+    `min_acres`: the smallest patch that counts; less unsurveyed ground than that can't
+    hide a building site.
+    """
+    if turbine is None:
+        return ()
+    if b is None:
+        return (BUILDABLE_NOT_COMPUTED,)
+    flags = []
+    if b.buildable_acres == 0:
+        flags.append(NO_BUILDABLE_GROUND)
+    if b.no_soil_acres >= min_acres:
+        flags.append(SOILS_NOT_LOADED)
+    return tuple(flags)
+
+
 def _ft(m: float | None) -> int | None:
     return None if m is None else round(units.m_to_ft(m))
 
@@ -330,6 +387,7 @@ def record(r: ExportRow) -> dict:
     fz = r.turbine_flood_zone
     sfha_m = r.stretch_sfha_m
     road = r.turbine_road
+    b = r.turbine_buildable
     return {
         "status": r.status,
         "rank": r.rank,
@@ -384,6 +442,10 @@ def record(r: ExportRow) -> dict:
         "drive_road_point_ft": _ft(r.drive_road_point_m),
         "in_drive_area": r.in_drive_area,
         "access_flags": "; ".join(r.access_flags),
+        "turbine_parcel_gentle_acres": b and round(b.gentle_acres, 1),
+        "turbine_parcel_buildable_acres": b and round(b.buildable_acres, 1),
+        "nearest_buildable_ft": b and _ft(b.nearest_m),
+        "buildable_flags": "; ".join(r.buildable_flags),
         "explanation": r.explanation.get("summary", ""),
     }
 
@@ -547,11 +609,12 @@ def caveats(info: RunInfo) -> list[str]:
         f"against the {_target(info)} target at all. They are ranked on head alone and need a "
         "flow check (springs, dry-season visit).",
         "StreamStats Q90 itself is a regression estimate (roughly ±60%), and nothing here "
-        "covers permits, access or soils.",
+        "covers permits.",
         _parcel_caveat(info),
         _flood_caveat(info),
         _roads_caveat(info),
         _drive_caveat(info),
+        _buildable_caveat(info),
     ]
 
 
@@ -636,6 +699,36 @@ def _drive_caveat(info: RunInfo) -> str:
     )
 
 
+def _buildable_caveat(info: RunInfo) -> str:
+    b = info.buildable
+    if b is None:
+        return (
+            "**Buildable ground isn't computed**, so its columns are empty. Run `make ingest` "
+            "(for soils) and `make analyze` (or `uv run hhsf analyze buildable`), then export "
+            "again."
+        )
+    soils = f", {info.soils_version}" if info.soils_version else ""
+    rule = "Tennessee" if b.septic_rating == "septic_tn" else "national"
+    return (
+        "**Buildable ground is a screen, not a site evaluation** (FR-4, D-13; computed "
+        f"{b.computed}). On the turbine parcel, `turbine_parcel_gentle_acres` is ground "
+        f"sloped {b.max_slope_pct:g}% or less on the USGS 10 m elevation model; "
+        "`turbine_parcel_buildable_acres` is the part of it also outside FEMA's 100-year "
+        f"floodplain and on soils whose {rule} septic rating isn't "
+        f"{' or '.join(b.septic_excluded)} (USDA SSURGO{soils}), in patches of "
+        f"{b.min_patch_acres:g} acres or more; `nearest_buildable_ft` is the straight line "
+        "from the turbine end to the nearest of it (0: on it). Flagged only: "
+        "`no_buildable_ground` removes nothing; `soils_not_loaded` means the parcel reaches "
+        "past the loaded soil surveys, so its buildable acres may be understated. "
+        "**Where the data runs out:** soil maps are "
+        "drawn at 1:24,000, so a map unit holds pockets of other soils, and its rating is "
+        "the one most of it has; Tennessee permits septic systems only on a soil "
+        "scientist's on-site evaluation. A 10 m elevation model smooths small benches and "
+        "ledges. Floodplains on small creeks are mostly unmapped (see the flood caveat). "
+        "Road access, the fourth FR-4 test, is in the road columns, not here."
+    )
+
+
 def _target(info: RunInfo) -> str:
     w = info.score_params.get("scoring_profile", {}).get("power_target_w")
     return "power" if w is None else f"{w / 1000:g} kW"
@@ -677,6 +770,11 @@ def _flood(r: ExportRow) -> str:
     return r.turbine_flood_zone.label
 
 
+def _buildable(r: ExportRow) -> str:
+    b = r.turbine_buildable
+    return "–" if b is None else f"{b.buildable_acres:,.1f}"
+
+
 def _public_road(r: ExportRow) -> str:
     return _fmt(None if r.turbine_public_road_m is None else units.m_to_ft(r.turbine_public_road_m))
 
@@ -700,6 +798,7 @@ def tier_table(rows: list[ExportRow], tier: str) -> list[str]:
             "Turbine parcel (acres)",
             "Owner",
             "Turbine flood zone",
+            "Buildable (ac)",
             "Public road (ft)",
             "Drive (min)",
             "NHDPlus ID",
@@ -716,6 +815,7 @@ def tier_table(rows: list[ExportRow], tier: str) -> list[str]:
                 _parcel(r),
                 _owner(r),
                 _flood(r),
+                _buildable(r),
                 _public_road(r),
                 _drive(r),
                 str(r.nhdplusid),
@@ -736,6 +836,7 @@ def tier_table(rows: list[ExportRow], tier: str) -> list[str]:
             "Turbine parcel (acres)",
             "Owner",
             "Turbine flood zone",
+            "Buildable (ac)",
             "Public road (ft)",
             "Drive (min)",
             "NHDPlus ID",
@@ -754,6 +855,7 @@ def tier_table(rows: list[ExportRow], tier: str) -> list[str]:
                 _parcel(r),
                 _owner(r),
                 _flood(r),
+                _buildable(r),
                 _public_road(r),
                 _drive(r),
                 str(r.nhdplusid),
@@ -806,6 +908,35 @@ def _access_counts(info: RunInfo, ranked: list[ExportRow]) -> list[str]:
     return [*_table(header, lines), ""]
 
 
+def _buildable_counts(info: RunInfo, ranked: list[ExportRow]) -> list[str]:
+    if info.buildable is None:
+        return []
+    quarter_mi_m = 402.336
+    with_ground = [
+        r for r in ranked if r.turbine_buildable and r.turbine_buildable.buildable_acres > 0
+    ]
+    near = sum(
+        r.turbine_buildable.nearest_m is not None and r.turbine_buildable.nearest_m <= quarter_mi_m
+        for r in with_ground
+    )
+    n = Counter(f for r in ranked for f in r.buildable_flags)
+    return [
+        *_table(
+            [
+                "Buildable ground on the turbine parcel (ranked corridors, flagged only)",
+                "Corridors",
+            ],
+            [
+                ["Some buildable ground", str(len(with_ground))],
+                ["Within 1/4 mile of the turbine end", str(near)],
+                ["None", str(n[NO_BUILDABLE_GROUND])],
+                ["Not computed (turbine parcel not analyzed)", str(n[BUILDABLE_NOT_COMPUTED])],
+            ],
+        ),
+        "",
+    ]
+
+
 def _count(rows: list[ExportRow], in_area: bool) -> str:
     return str(sum(r.in_drive_area is in_area for r in rows))
 
@@ -854,6 +985,7 @@ def render_report(info: RunInfo, rows: list[ExportRow], top_n: int = 20) -> str:
             + ([["tn_parcels (at export)", info.parcels_version]] if info.parcels_version else [])
             + ([["fema_nfhl (at export)", info.flood_version]] if info.flood_version else [])
             + ([["tiger_roads (at export)", info.roads_version]] if info.roads_version else [])
+            + ([["usda_ssurgo (at export)", info.soils_version]] if info.soils_version else [])
             + (
                 [["osm_valhalla (at export)", f"{a.engine_version}, area built {a.built}"]]
                 if (a := info.drive_area)
@@ -883,6 +1015,7 @@ def render_report(info: RunInfo, rows: list[ExportRow], top_n: int = 20) -> str:
         "",
         *_flood_counts(info, ranked),
         *_access_counts(info, ranked),
+        *_buildable_counts(info, ranked),
         "## Caveats",
         "",
         *[f"- {c}" for c in caveats(info)],
@@ -911,7 +1044,8 @@ def render_report(info: RunInfo, rows: list[ExportRow], top_n: int = 20) -> str:
         "`stretch_sfha_ft` how much of the stretch is in the 100-year floodplain. "
         "`turbine_public_road_ft` is the straight-line distance to the nearest public road "
         "and `drive_minutes` the drive from downtown Chattanooga to the road nearest the "
-        "turbine end.",
+        "turbine end. `turbine_parcel_buildable_acres` is the turbine parcel's gently "
+        "sloped, flood-free, septic-suitable ground.",
         "",
     ]
     return "\n".join(out)

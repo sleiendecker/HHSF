@@ -1,0 +1,22 @@
+# Buildable ground on each corridor's turbine parcel (PART 17, the first step of FR-4).
+# See docs/ASSUMPTIONS.md, "Buildable ground", and D-13 in docs/DECISIONS.md.
+# Flagged only: nothing is filtered or re-ranked on it until the FR-7 overall score.
+
+# Steepest ground counted as a house site, in percent (rise over run x 100), from the USGS
+# 10 m elevation model. 15% is where NRCS's "Dwellings without basements" and "Septic Tank
+# Absorption Fields" ratings turn Very limited; above it, a house pad and drain field need
+# real cut and fill.
+max_slope_pct: 15
+
+# Which SSURGO septic rating counts (a column of the soils table): septic_tn, the Tennessee
+# rule, or septic_national. Ground on soils rated one of `septic_excluded` doesn't count,
+# nor ground with no soil survey at all.
+septic_rating: septic_tn
+septic_excluded:
+  - Very limited
+  - Not rated  # water, rock outcrop, pits, urban land: no septic rating at all
+
+# Smallest patch of ground that counts, in acres: room for a house, a conventional drain
+# field with its replacement area, and a driveway turnaround. Gentle, dry, septic-suitable
+# patches smaller than this (a few 10 m cells on a bench) are left out.
+min_patch_acres: 0.5

@@ -7,7 +7,9 @@ data/outputs/<aoi>/run_<score run id>/, so each run's exports sit side by side.
 Parcels, flood zones and roads are linked when the export runs (views corridor_parcels
 and corridor_turbine_parcels, migration 0010; corridor_flood_zones and
 corridor_turbine_flood_zones, 0011; corridor_turbine_roads, 0012), so they match the
-latest ingest. Drive times are read from corridor_drive_times (`hhsf analyze drive-time`).
+latest ingest. Drive times are read from corridor_drive_times (`hhsf analyze drive-time`), and the
+turbine parcels' buildable ground from parcel_buildable (`hhsf analyze buildable`, linked
+through corridor_turbine_buildable, 0013).
 """
 
 import json
@@ -22,6 +24,7 @@ from hhsf.core.config import AOI, DATA_DIR, min_homestead_acres
 from hhsf.ingest.flood import SOURCE_KEY as FLOOD_SOURCE
 from hhsf.ingest.parcels import SOURCE_KEY as PARCELS_SOURCE
 from hhsf.ingest.roads import SOURCE_KEY as ROADS_SOURCE
+from hhsf.ingest.soils import SOURCE_KEY as SOILS_SOURCE
 
 OUTPUTS_DIR = DATA_DIR / "outputs"
 
@@ -101,6 +104,42 @@ def roads_version(conn: Connection) -> str | None:
     return _loaded_version(conn, ROADS_SOURCE, "roads")
 
 
+def soils_version(conn: Connection, county_geoid: str) -> str | None:
+    """The county's soil survey versions and download date, or None if none are loaded.
+
+    (One data_sources row covers every county, so the version is read off the soils.)
+    """
+    row = conn.execute(
+        text(
+            "SELECT string_agg(DISTINCT survey_version, '; ') AS versions,"
+            " to_char(max(ingested_at), 'YYYY-MM-DD') AS retrieved"
+            " FROM soils WHERE county_geoid = :g AND source_key = :k"
+        ),
+        {"g": county_geoid, "k": SOILS_SOURCE},
+    ).one()
+    return None if row.versions is None else f"{row.versions}, downloaded {row.retrieved}"
+
+
+def buildable_info(conn: Connection) -> export.BuildableInfo | None:
+    """The settings of the latest buildable-ground computation, or None if never run."""
+    row = conn.execute(
+        text(
+            "SELECT max_slope_pct, septic_rating, septic_excluded, min_patch_acres,"
+            " to_char(computed_at, 'YYYY-MM-DD') AS computed FROM parcel_buildable"
+            " ORDER BY computed_at DESC LIMIT 1"
+        )
+    ).one_or_none()
+    if row is None:
+        return None
+    return export.BuildableInfo(
+        max_slope_pct=row.max_slope_pct,
+        septic_rating=row.septic_rating,
+        septic_excluded=tuple(row.septic_excluded),
+        min_patch_acres=row.min_patch_acres,
+        computed=row.computed,
+    )
+
+
 def drive_area(conn: Connection) -> export.DriveArea | None:
     """The drive-time area corridors are checked against, or None if none is built."""
     row = conn.execute(
@@ -163,17 +202,33 @@ def _flood_zone(r: dict) -> export.FloodZone | None:
     )
 
 
+def _buildable(r: dict) -> export.Buildable | None:
+    if r["tb_buildable_acres"] is None:
+        return None
+    return export.Buildable(
+        gentle_acres=r["tb_gentle_acres"],
+        buildable_acres=r["tb_buildable_acres"],
+        nearest_m=r["tb_nearest_m"],
+        no_soil_acres=r["tb_no_soil_acres"],
+    )
+
+
 def load_rows(
     conn: Connection,
     score_run_id: int,
     flag_parcels: bool = True,
     flag_flood: bool = True,
     flag_drive: bool = True,
+    flag_buildable: bool = True,
+    min_patch_acres: float = 0.5,
 ) -> list[export.ExportRow]:
-    """The run's corridors with their parcels, flood zones, roads and drive times.
+    """The run's corridors with their parcels, flood zones, roads, drive times and
+    buildable ground.
 
-    `flag_parcels`, `flag_flood` and `flag_drive`: false when that layer isn't loaded (or
-    the drive-time area isn't built), so a missing layer isn't reported as "nothing found".
+    `flag_parcels`, `flag_flood`, `flag_drive` and `flag_buildable`: false when that layer
+    isn't loaded (or the drive-time area or buildable ground isn't computed), so a missing
+    layer isn't reported as "nothing found". `min_patch_acres`: the buildable ground's
+    smallest patch, for the `soils_not_loaded` flag.
     """
     min_acres = min_homestead_acres()
     rows = conn.execute(
@@ -199,7 +254,9 @@ def load_rows(
                    tr.public_distance_m AS turbine_public_road_m,
                    dt.minutes AS drive_minutes, dt.distance_km AS drive_km,
                    dt.road_point_m AS drive_road_point_m, dt.any_road AS dt_any_road,
-                   da.in_drive_area
+                   da.in_drive_area,
+                   tb.gentle_acres AS tb_gentle_acres, tb.buildable_acres AS tb_buildable_acres,
+                   tb.nearest_buildable_m AS tb_nearest_m, tb.no_soil_acres AS tb_no_soil_acres
             FROM hydro_scores s
             JOIN hydro_corridors c USING (corridor_id)
             JOIN streams st USING (stream_id)
@@ -229,6 +286,7 @@ def load_rows(
             ) sf
             LEFT JOIN corridor_turbine_roads tr USING (corridor_id)
             LEFT JOIN corridor_drive_times dt USING (corridor_id)
+            LEFT JOIN corridor_turbine_buildable tb USING (corridor_id)
             CROSS JOIN LATERAL (
                 SELECT bool_or(ST_Intersects(a.geom, o.pt)) AS in_drive_area
                 FROM drive_time_areas a
@@ -245,13 +303,14 @@ def load_rows(
         distance = r["tp_distance_m"]
         flood_zone = _flood_zone(r)
         road = _road(r)
+        build = _buildable(r)
         out.append(
             export.ExportRow(
                 **{
                     k: v
                     for k, v in r.items()
                     if k not in ("flow_flags", "geometry", "stretch_sfha_m")
-                    and not k.startswith(("tp_", "tf_", "tr_", "dt_", "stretch_"))
+                    and not k.startswith(("tp_", "tf_", "tr_", "dt_", "tb_", "stretch_"))
                 },
                 flow_flags=tuple(r["flow_flags"] or ()),
                 geometry=json.loads(r["geometry"]),
@@ -271,6 +330,12 @@ def load_rows(
                 turbine_road=road,
                 access_flags=export.access_flags(
                     road, r["drive_minutes"], r["in_drive_area"], flag_drive, bool(r["dt_any_road"])
+                ),
+                turbine_buildable=build,
+                buildable_flags=(
+                    export.buildable_flags(turbine, build, min_patch_acres)
+                    if flag_buildable
+                    else ()
                 ),
             )
         )
@@ -292,12 +357,16 @@ def export_hydro(
         flood = flood_version(conn)
         road_info = roads_version(conn)
         area = drive_area(conn)
+        soils = soils_version(conn, aoi.county_geoid)
+        build = buildable_info(conn)
         rows = load_rows(
             conn,
             score_run_id,
             flag_parcels=parcels is not None,
             flag_flood=flood is not None,
             flag_drive=area is not None,
+            flag_buildable=build is not None,
+            min_patch_acres=build.min_patch_acres if build else 0.5,
         )
     info = replace(
         info,
@@ -306,6 +375,8 @@ def export_hydro(
         flood_version=flood,
         roads_version=road_info,
         drive_area=area,
+        soils_version=soils,
+        buildable=build,
     )
     out_dir = out_root / aoi.key / f"run_{score_run_id}"
     return info, out_dir, export.write_exports(out_dir, info, rows)

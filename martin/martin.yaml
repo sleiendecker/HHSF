@@ -83,6 +83,43 @@ postgres:
       properties:
         origin_name: text
         minutes: int4
+    # USDA SSURGO soil map units (migration 0013), stored in pieces that keep the polygon's
+    # key. `septic_tn` is the Tennessee septic rating (dominant condition), the one the
+    # buildable-ground step uses; `septic_national` the national one. From zoom 11.
+    soils:
+      schema: public
+      table: soils
+      srid: 4326
+      geometry_column: geom
+      geometry_type: MULTIPOLYGON
+      id_column: soil_id
+      minzoom: 11
+      properties:
+        musym: text
+        muname: text
+        septic_tn: text
+        septic_national: text
+        hydric_pct: float8
+        bedrock_min_cm: float8
+        flooding: text
+        drainage: text
+    # Buildable ground on each turbine parcel (0013): gently sloped, outside the 100-year
+    # floodplain, on septic-suitable soils, in patches big enough for a homestead
+    # (config/buildability.yaml). One multipolygon per parcel. From zoom 11.
+    parcel_buildable:
+      schema: public
+      table: parcel_buildable
+      srid: 4326
+      geometry_column: geom
+      geometry_type: MULTIPOLYGON
+      # No id_column: the key (gislink) is text.
+      minzoom: 11
+      properties:
+        buildable_acres: float8
+        gentle_acres: float8
+        parcel_acres: float8
+        patches: int4
+        max_slope_pct: float8
     counties:
       schema: public
       table: counties
@@ -102,7 +139,10 @@ postgres:
     # stretch is in the 100-year floodplain (0011). turbine_road_* is the nearest TIGER road
     # to the turbine end and turbine_public_road_m the nearest public one; drive_minutes and
     # drive_km the drive from downtown Chattanooga, and in_drive_area whether the turbine end
-    # is inside the drive-time area (0012). `factors` is JSON text: each
+    # is inside the drive-time area (0012). turbine_buildable_acres is the turbine parcel's
+    # buildable ground, turbine_gentle_acres its gently sloped ground, and
+    # nearest_buildable_m how far the nearest buildable ground is from the turbine end
+    # (0013). `factors` is JSON text: each
     # factor's value, sub-score, weight and contribution, for the click popup.
     latest_hydro_scores:
       schema: public
@@ -153,3 +193,6 @@ postgres:
         drive_minutes: float8
         drive_km: float8
         in_drive_area: bool
+        turbine_buildable_acres: float8
+        turbine_gentle_acres: float8
+        nearest_buildable_m: float8

@@ -1,5 +1,8 @@
 """Terrain: the USGS 3DEP 1/3 arc-second (~10 m) DEM under the AOI's streams.
 
+(And under the corridors' turbine parcels: `hhsf analyze buildable` grows the saved
+file when a parcel reaches past the streams' extent.)
+
 USGS publishes it as 1x1 degree cloud-optimized GeoTIFFs (about 470 MB each for
 Tennessee). Those files are tiled internally, so instead of downloading whole
 tiles this reads just the part under the AOI's streams over HTTP (range
@@ -133,7 +136,7 @@ def fetch_dem(
         share = share_of_tile(bounds, name)
         echo(
             f"Reading about {size * share / 1e6:.0f} MB of 3DEP tile {name} "
-            f"({size / 1e6:.0f} MB in all, updated {date}): only the part under the streams."
+            f"({size / 1e6:.0f} MB in all, updated {date}): only the part needed."
         )
     tiles = ", ".join(f"{n} {d}" for n, d in zip(names, dates, strict=True))
     version = f"{source.version} ({tiles})"
