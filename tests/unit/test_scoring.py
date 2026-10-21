@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import pytest
 from pydantic import ValidationError
 
@@ -312,6 +314,17 @@ def test_v3_filters_corridors_over_the_target_with_too_little_head():
 # --- Overall score (hydro_v4, FR-7) ---------------------------------------------
 
 V4 = scoring.load_profile("hydro_v4")
+V5 = scoring.load_profile("hydro_v5")
+# Analyzed, and there's nothing: no buildable ground, farmland or open land; a long drive.
+BARE = scoring.SiteInputs(
+    buildable_acres=0,
+    public_road_ft=5280,
+    farmland_acres=0,
+    cropland_acres=0,
+    pasture_aum=0,
+    open_cropland_acres=0,
+    drive_minutes=120,
+)
 GOOD_SITE = scoring.SiteInputs(
     buildable_acres=5,
     nearest_buildable_ft=0,
@@ -373,7 +386,7 @@ def test_missing_data_is_left_out_but_measured_zeros_count():
     assert s.overall["left_out"] == ["privacy", "agriculture"]
     assert s.overall_score == pytest.approx(100)
     # Analyzed, and there's nothing: zeros, and the distance scores as the far end.
-    bare = scoring.SiteInputs(0, None, 5280, 0, 0, 0, 120)
+    bare = BARE
     [s] = scoring.score_all([corridor(head_ft=200, watts=3000, site=bare)], V4)
     assert (s.buildability_subscore, s.agriculture_subscore, s.logistics_subscore) == (0, 0, 0)
     assert s.overall_score == pytest.approx(100 * 0.4 / 0.9)
@@ -392,7 +405,7 @@ def test_low_flow_hydro_part_extends_the_power_curve_below_the_target():
 
 
 def test_v4_ranks_each_tier_by_overall_score():
-    poor_land = scoring.SiteInputs(0, None, 5280, 0, 0, 0, 120)
+    poor_land = BARE
     corridors = [
         corridor(1, head_ft=200, watts=3000, site=poor_land),  # best hydro, no land
         corridor(2, head_ft=150, watts=2000, site=GOOD_SITE),
@@ -407,3 +420,20 @@ def test_v4_ranks_each_tier_by_overall_score():
     v3 = {s.corridor_id: s for s in scoring.score_all(corridors, scoring.load_profile("hydro_v3"))}
     assert (v3[1].rank, v3[2].rank) == (1, 2) and v3[1].overall_score is None
     assert "overall" not in v3[1].explanation(PROFILE)
+
+
+def test_v5_counts_open_cropland_and_v4_ignores_it():
+    forested = replace(GOOD_SITE, open_cropland_acres=0)
+    [v4] = scoring.score_all([corridor(head_ft=200, watts=3000, site=forested)], V4)
+    [v5] = scoring.score_all([corridor(head_ft=200, watts=3000, site=forested)], V5)
+    assert v4.agriculture_subscore == pytest.approx(100)
+    assert v5.agriculture_subscore == pytest.approx(70)  # 0.3 of it is open cropland
+    agri = next(p for p in v5.overall["parts"] if p["part"] == "agriculture")
+    assert [f["factor"] for f in agri["factors"]][-1] == "open_cropland_acres"
+    # Land cover not computed: that factor is left out, not scored as zero.
+    [s] = scoring.score_all([corridor(head_ft=200, watts=3000, site=GOOD_SITE)], V5)
+    assert s.agriculture_subscore == pytest.approx(100)
+    assert (
+        "open_cropland_acres"
+        in next(p for p in s.overall["parts"] if p["part"] == "agriculture")["missing"]
+    )

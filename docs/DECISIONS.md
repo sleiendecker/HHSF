@@ -152,6 +152,14 @@ Defaults (change them in a new profile):
 
 What it does (2026-10-21): Big Creek (Grundy) moves from #3 to #1 on its land, Bethel Creek passes Marion's unnamed stream, and Rogers Branch stays #1 in Sequatchie. Details in SCORING.md.
 
+### D-16 · Farmland that's already open: **Default**
+
+PART 20 adds USGS NLCD 2021 land cover ([ASSUMPTIONS.md](ASSUMPTIONS.md#land-cover)), and profile `hydro_v5` (now the default) uses it: the agriculture part gains a fourth factor, **cropland soils (class 1–3) that are open now** (pasture, hay, crops or grassland), 0 → 0, 5 acres → 60, 20 acres → 100. The other three keep their curves and drop to prime farmland 30%, cropland 20%, pasture 20%, so good soil under forest still counts, for less. `hydro_v4` is unchanged and still available.
+
+Why: 79% of the turbine parcels' ground is forest, and only 27% of their cropland soils are open. Clearing woods for a field is real money and years of work, so a parcel with ten open acres on good soil is worth more to a homestead than one with a hundred acres of the same soil under trees.
+
+What it does (2026-10-21): the six 1 kW streams keep their order (all their parcels are about 99% forest; Negro Den Creek's agriculture part drops from 64 to 43). The median agriculture part across ranked stretches drops from 70 to 63, and low-flow stretches move an average of 44 places.
+
 ---
 
 ## To be measured on real data
@@ -228,6 +236,7 @@ Decisions that barely move the top 20 keep their default and stop being discusse
 
 | Date | Decision | Change |
 | --- | --- | --- |
+| 2026-10-21 | D-16 | New default (PART 20, profile `hydro_v5`): the agriculture part counts class 1–3 cropland that's open now (NLCD 2021) at 30%, prime farmland 30%, cropland 20%, pasture 20% |
 | 2026-10-21 | D-15 | Owner: the FR-7 overall score (PART 19, profile `hydro_v4`) re-ranks each confidence tier; privacy is left out with the other weights rescaled until FR-6 is built. Default sub-score curves; missing data left out, never scored as zero |
 | 2026-10-21 | D-14 | New default (PART 18): farmland is NRCS prime farmland (plus statewide importance, none here) and cropland is capability class 1–3; pasture from SSURGO grazing yields. Whole turbine parcel, no slope or floodplain test. Flagged only, never filtered or re-ranked |
 | 2026-10-21 | D-13 | New default (PART 17): buildable ground is slope 15% or less, outside the 100-year floodplain, on soils not Very limited for septic (Tennessee rating), in half-acre patches. Flagged only, never filtered or re-ranked |

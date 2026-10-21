@@ -722,3 +722,34 @@ def test_record_and_report_have_the_overall_score():
     assert "hydro 0.4, buildability 0.2, agriculture 0.2, privacy 0.1, logistics 0.1" in report
     assert "The overall score ranks each tier" in report and "never scored as zero" in report
     assert "The overall score ranks each tier" not in export.render_report(INFO, [r])
+
+
+# --- Land cover ---------------------------------------------------------------
+
+OPEN = export.Landcover(
+    open_acres=12.34, open_cropland_acres=8.0, forest_acres=60.0, developed_acres=1.0,
+    canopy_pct=71.6,
+)  # fmt: skip
+
+
+def test_landcover_flags_and_record():
+    assert export.landcover_flags(PARCEL, OPEN) == ()
+    closed = replace(OPEN, open_acres=0.0, open_cropland_acres=0.0)
+    assert export.landcover_flags(PARCEL, closed) == (export.NO_OPEN_LAND,)
+    assert export.landcover_flags(PARCEL, None) == (export.LANDCOVER_NOT_COMPUTED,)
+    assert export.landcover_flags(None, None) == ()
+    r = export.record(replace(ON_PARCEL, turbine_landcover=OPEN))
+    assert r["turbine_parcel_open_acres"] == 12.3 and r["turbine_parcel_canopy_pct"] == 72
+
+
+def test_report_counts_land_cover():
+    loaded = replace(INFO, landcover_year=2021)
+    rows = [
+        replace(ON_PARCEL, turbine_landcover=OPEN),
+        row(2, rank=2, tier_rank=2, turbine_parcel=PARCEL, landcover_flags=(export.NO_OPEN_LAND,)),
+    ]
+    report = export.render_report(loaded, rows)
+    assert "| Some open land (field, pasture, crops) | 1 |" in report
+    assert "| No open land (all forest, shrub, water or built up) | 1 |" in report
+    assert "Land cover is from USGS NLCD 2021" in report
+    assert "Land cover isn't computed" in export.render_report(INFO, ROWS)

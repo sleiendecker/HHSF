@@ -403,6 +403,17 @@ function farmlandText(p: Record<string, unknown>): string {
   return `${acres(prime)} ac prime, ${acres(crop)} ac cropland (class 1–${top})${pasture}`;
 }
 
+// What the turbine parcel is now (migration 0016, USGS NLCD 2021): open field vs forest.
+function landCoverText(p: Record<string, unknown>): string {
+  if (typeof p.turbine_open_acres !== "number") return "Not computed";
+  const acres = (x: number) => fmt(x, x < 10 ? 1 : 0);
+  const canopy = typeof p.turbine_canopy_pct === "number" ? `; ${fmt(p.turbine_canopy_pct)}% tree canopy` : "";
+  const forest = typeof p.turbine_forest_acres === "number" ? `, ${acres(p.turbine_forest_acres)} ac forest` : "";
+  if (p.turbine_open_acres === 0) return `<b>No open land</b>${forest}${canopy}`;
+  const good = Number(p.turbine_open_cropland_acres) || 0;
+  return `${acres(p.turbine_open_acres)} ac open (${acres(good)} on cropland soils)${forest}${canopy}`;
+}
+
 export function scorePopupHtml(f: MapGeoJSONFeature): string {
   const p = f.properties as Record<string, unknown>;
   let factors: Factor[] = [];
@@ -432,6 +443,7 @@ export function scorePopupHtml(f: MapGeoJSONFeature): string {
         <dt>Turbine parcel</dt><dd>${parcelText(p)}</dd>
         <dt>Buildable ground</dt><dd>${buildableText(p)}</dd>
         <dt>Farmland</dt><dd>${farmlandText(p)}</dd>
+        <dt>Land cover</dt><dd>${landCoverText(p)}</dd>
         <dt>Parcels crossed</dt><dd>${fmt(p.parcels_crossed)}</dd>
         <dt>Turbine flood zone</dt><dd>${floodText(p)}</dd>
         <dt>Stretch flooding</dt><dd>${stretchFloodText(p)}</dd>

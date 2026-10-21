@@ -18,6 +18,7 @@ services:
       - "127.0.0.1:5433:5432"   # 5433 on the host so it won't clash with a local Postgres
     volumes:
       - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped   # back up after a reboot (stopped only by `make down`)
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U hhsf -d hhsf"]
       interval: 2s
@@ -37,6 +38,7 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    restart: unless-stopped
 
   routing:
     # Valhalla, the drive-time engine (PART 16). Not started by `make up`: run `make routing`.

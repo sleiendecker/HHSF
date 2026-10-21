@@ -6,7 +6,7 @@ hydro_scores row per corridor. Earlier score runs are kept.
 
 A profile with an `overall` section (hydro_v4 on) also reads each corridor's site
 data as it stands when scoring runs: its turbine parcel's buildable ground and
-farmland (`make analyze`), the nearest public road, and the drive time (`make
+farmland and land cover (`make analyze`), the nearest public road, and the drive time (`make
 drive-time`). Run those first; whatever is missing is left out of the overall score.
 """
 
@@ -60,11 +60,12 @@ def load_site_inputs(conn: Connection, hydro_run_id: int) -> dict[int, scoring.S
             """
             SELECT c.corridor_id, b.buildable_acres, b.nearest_buildable_m,
                    r.public_distance_m, f.prime_acres + f.statewide_acres AS farmland_acres,
-                   f.capable_acres, f.pasture_aum, d.minutes
+                   f.capable_acres, f.pasture_aum, l.open_cropland_acres, d.minutes
             FROM hydro_corridors c
             LEFT JOIN corridor_turbine_buildable b USING (corridor_id)
             LEFT JOIN corridor_turbine_roads r USING (corridor_id)
             LEFT JOIN corridor_turbine_farmland f USING (corridor_id)
+            LEFT JOIN corridor_turbine_landcover l USING (corridor_id)
             LEFT JOIN corridor_drive_times d USING (corridor_id)
             WHERE c.run_id = :r
             """
@@ -83,6 +84,7 @@ def load_site_inputs(conn: Connection, hydro_run_id: int) -> dict[int, scoring.S
             farmland_acres=r.farmland_acres,
             cropland_acres=r.capable_acres,
             pasture_aum=r.pasture_aum,
+            open_cropland_acres=r.open_cropland_acres,
             drive_minutes=r.minutes,
         )
         for r in rows

@@ -10,7 +10,8 @@ corridor_turbine_flood_zones, 0011; corridor_turbine_roads, 0012), so they match
 latest ingest. Drive times are read from corridor_drive_times (`hhsf analyze drive-time`), and the
 turbine parcels' buildable ground from parcel_buildable (`hhsf analyze buildable`, linked
 through corridor_turbine_buildable, 0013) and their farmland from parcel_farmland (`hhsf
-analyze farmland`, through corridor_turbine_farmland, 0014).
+analyze farmland`, through corridor_turbine_farmland, 0014) and their land cover from
+parcel_landcover (`hhsf analyze landcover`, through corridor_turbine_landcover, 0016).
 """
 
 import json
@@ -159,6 +160,13 @@ def farmland_info(conn: Connection) -> export.FarmlandInfo | None:
     )
 
 
+def landcover_year(conn: Connection) -> int | None:
+    """The NLCD year of the latest land cover computation, or None if never run."""
+    return conn.execute(
+        text("SELECT nlcd_year FROM parcel_landcover ORDER BY computed_at DESC LIMIT 1")
+    ).scalar_one_or_none()
+
+
 def drive_area(conn: Connection) -> export.DriveArea | None:
     """The drive-time area corridors are checked against, or None if none is built."""
     row = conn.execute(
@@ -247,6 +255,18 @@ def _farmland(r: dict) -> export.Farmland | None:
     )
 
 
+def _landcover(r: dict) -> export.Landcover | None:
+    if r["tlc_open_acres"] is None:
+        return None
+    return export.Landcover(
+        open_acres=r["tlc_open_acres"],
+        open_cropland_acres=r["tlc_open_cropland_acres"],
+        forest_acres=r["tlc_forest_acres"],
+        developed_acres=r["tlc_developed_acres"],
+        canopy_pct=r["tlc_canopy_pct"],
+    )
+
+
 def load_rows(
     conn: Connection,
     score_run_id: int,
@@ -256,6 +276,7 @@ def load_rows(
     flag_buildable: bool = True,
     min_patch_acres: float = 0.5,
     flag_farmland: bool = True,
+    flag_landcover: bool = True,
 ) -> list[export.ExportRow]:
     """The run's corridors with their parcels, flood zones, roads, drive times,
     buildable ground and farmland.
@@ -299,7 +320,12 @@ def load_rows(
                    tfm.prime_acres AS tfm_prime_acres, tfm.prime_if_acres AS tfm_prime_if_acres,
                    tfm.statewide_acres AS tfm_statewide_acres,
                    tfm.capable_acres AS tfm_capable_acres, tfm.wet_acres AS tfm_wet_acres,
-                   tfm.pasture_aum AS tfm_pasture_aum
+                   tfm.pasture_aum AS tfm_pasture_aum,
+                   tlc.open_acres AS tlc_open_acres,
+                   tlc.open_cropland_acres AS tlc_open_cropland_acres,
+                   tlc.forest_acres AS tlc_forest_acres,
+                   tlc.developed_acres AS tlc_developed_acres,
+                   tlc.canopy_pct AS tlc_canopy_pct
             FROM hydro_scores s
             JOIN hydro_corridors c USING (corridor_id)
             JOIN streams st USING (stream_id)
@@ -331,6 +357,7 @@ def load_rows(
             LEFT JOIN corridor_drive_times dt USING (corridor_id)
             LEFT JOIN corridor_turbine_buildable tb USING (corridor_id)
             LEFT JOIN corridor_turbine_farmland tfm USING (corridor_id)
+            LEFT JOIN corridor_turbine_landcover tlc USING (corridor_id)
             CROSS JOIN LATERAL (
                 SELECT bool_or(ST_Intersects(a.geom, o.pt)) AS in_drive_area
                 FROM drive_time_areas a
@@ -349,13 +376,16 @@ def load_rows(
         road = _road(r)
         build = _buildable(r)
         farm = _farmland(r)
+        cover = _landcover(r)
         out.append(
             export.ExportRow(
                 **{
                     k: v
                     for k, v in r.items()
                     if k not in ("flow_flags", "geometry", "stretch_sfha_m")
-                    and not k.startswith(("tp_", "tf_", "tr_", "dt_", "tb_", "tfm_", "stretch_"))
+                    and not k.startswith(
+                        ("tp_", "tf_", "tr_", "dt_", "tb_", "tfm_", "tlc_", "stretch_")
+                    )
                 },
                 flow_flags=tuple(r["flow_flags"] or ()),
                 geometry=json.loads(r["geometry"]),
@@ -384,6 +414,8 @@ def load_rows(
                 ),
                 turbine_farmland=farm,
                 farmland_flags=export.farmland_flags(turbine, farm) if flag_farmland else (),
+                turbine_landcover=cover,
+                landcover_flags=export.landcover_flags(turbine, cover) if flag_landcover else (),
             )
         )
     return out
@@ -407,6 +439,7 @@ def export_hydro(
         soils = soils_version(conn, aoi.county_geoid)
         build = buildable_info(conn)
         farm = farmland_info(conn)
+        cover_year = landcover_year(conn)
         rows = load_rows(
             conn,
             score_run_id,
@@ -416,6 +449,7 @@ def export_hydro(
             flag_buildable=build is not None,
             min_patch_acres=build.min_patch_acres if build else 0.5,
             flag_farmland=farm is not None,
+            flag_landcover=cover_year is not None,
         )
     info = replace(
         info,
@@ -427,6 +461,7 @@ def export_hydro(
         soils_version=soils,
         buildable=build,
         farmland=farm,
+        landcover_year=cover_year,
     )
     out_dir = out_root / aoi.key / f"run_{score_run_id}"
     return info, out_dir, export.write_exports(out_dir, info, rows)
