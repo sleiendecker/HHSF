@@ -14,13 +14,22 @@ up:  ## Start the database, apply migrations, start the tile server
 	uv run hhsf db upgrade
 	docker compose up -d tiles
 
-ingest:  ## Download and load boundary, streams, elevations, parcels and flood zones for an AOI (default: sequatchie_tn)
+ingest:  ## Download and load boundary, streams, elevations, parcels, flood zones and roads for an AOI (default: sequatchie_tn)
 	uv run hhsf ingest all --aoi $(AOI)
 	@# The tile server measures each table's extent when it starts; the map opens on the counties' extent.
 	docker compose restart tiles
 
 analyze:  ## Find each stream's steepest stretch; compute head, firm flow and firm power (needs make ingest)
 	uv run hhsf analyze hydro --aoi $(AOI)
+
+routing:  ## Start the Valhalla drive-time service (the first start downloads OpenStreetMap and builds for 10-30 min)
+	docker compose up -d --wait routing
+
+drive-area:  ## Build the 1-hour drive area from downtown Chattanooga and list the counties it touches (needs make routing)
+	uv run hhsf analyze drive-area
+
+drive-time:  ## Drive time from downtown Chattanooga to every corridor of the latest hydro run (needs make routing, make analyze)
+	uv run hhsf analyze drive-time --aoi $(AOI)
 
 score:  ## Score and rank the latest hydro run against the 1 kW target (needs make analyze)
 	uv run hhsf score hydro --aoi $(AOI)
@@ -41,4 +50,4 @@ lint:  ## Check code style
 down:  ## Stop services (data is kept)
 	docker compose down
 
-.PHONY: help setup up ingest analyze score export web test lint down
+.PHONY: help setup up ingest analyze routing drive-area drive-time score export web test lint down

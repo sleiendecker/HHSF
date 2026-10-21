@@ -323,6 +323,38 @@ function stretchFloodText(p: Record<string, unknown>): string {
   return p.stretch_sfha_m > 0 ? `${distance(p.stretch_sfha_m)} in the 100-year floodplain` : "None in the 100-year floodplain";
 }
 
+// TIGER road classes (src/hhsf/ingest/roads.py ROAD_CLASSES), as the exports label them.
+const ROAD_TYPES: Record<string, string> = {
+  primary: "interstate or divided highway",
+  secondary: "US or state highway",
+  local: "local road",
+  "4wd_trail": "4WD trail",
+  ramp: "highway ramp",
+  service: "frontage road",
+  alley: "alley",
+  private: "private road",
+  parking_lot: "parking lot road",
+};
+
+// The nearest TIGER road to the bottom of the stretch, and the nearest public one (migration 0012).
+function roadText(p: Record<string, unknown>): string {
+  if (typeof p.turbine_road_m !== "number") return "Roads not loaded";
+  const type = ROAD_TYPES[String(p.turbine_road_class)] ?? esc(p.turbine_road_class);
+  const name = typeof p.turbine_road_name === "string" ? ` (${esc(p.turbine_road_name)})` : "";
+  const nearest = `${distance(p.turbine_road_m)}, ${type}${name}`;
+  const pub = p.turbine_public_road_m;
+  if (typeof pub !== "number" || pub <= p.turbine_road_m) return nearest;
+  return `${nearest}; public road ${distance(pub)}`;
+}
+
+// The drive from downtown Chattanooga to the road nearest the turbine end (D-02).
+function driveText(p: Record<string, unknown>): string {
+  const area = p.in_drive_area === true ? "inside the 1-hour area" : p.in_drive_area === false ? "<b>outside the 1-hour area</b>" : "";
+  if (typeof p.drive_minutes !== "number") return area ? `Not computed; ${area}` : "Not computed";
+  const miles = typeof p.drive_km === "number" ? ` (${fmt(p.drive_km / 1.609344)} mi)` : "";
+  return `${fmt(p.drive_minutes)} min${miles}${area ? `, ${area}` : ""}`;
+}
+
 export function scorePopupHtml(f: MapGeoJSONFeature): string {
   const p = f.properties as Record<string, unknown>;
   let factors: Factor[] = [];
@@ -351,6 +383,8 @@ export function scorePopupHtml(f: MapGeoJSONFeature): string {
         <dt>Parcels crossed</dt><dd>${fmt(p.parcels_crossed)}</dd>
         <dt>Turbine flood zone</dt><dd>${floodText(p)}</dd>
         <dt>Stretch flooding</dt><dd>${stretchFloodText(p)}</dd>
+        <dt>Nearest road</dt><dd>${roadText(p)}</dd>
+        <dt>Drive from Chattanooga</dt><dd>${driveText(p)}</dd>
       </dl>
       <p><b>Flow source:</b> ${flowSource(p.flow_method, p.flow_reference_gauge)}.</p>
       ${tier ? `<p><b>${tier.label}:</b> ${tier.detail}</p>` : ""}

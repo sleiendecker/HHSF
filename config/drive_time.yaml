@@ -1,0 +1,29 @@
+# Drive time from Chattanooga (D-02): the search region is the area within this drive.
+# Read by `hhsf analyze drive-area` (the area itself, and which counties it touches) and
+# `hhsf analyze drive-time` (minutes to each corridor's turbine end). Both need the
+# Valhalla routing service: `make routing`. See docs/ASSUMPTIONS.md, "Roads and drive time".
+
+# Where the drive starts. A placeholder for "downtown Chattanooga" (D-02); swap in a
+# specific address's coordinates and a new key, then run `make drive-area` again.
+origin:
+  key: downtown_chattanooga
+  name: Downtown Chattanooga (Miller Park, Market St at M.L. King Blvd)
+  lat: 35.0448
+  lon: -85.3094
+
+minutes: 60  # D-02: within a 1-hour drive
+
+# Valhalla's car profile, with no traffic (free-flowing roads at each road's typical speed).
+costing: auto
+valhalla_url: http://localhost:8002
+# Which roads a drive may end on: the turbine end is joined to the nearest road of these
+# classes (Valhalla's search_filter). Residential and better leaves out driveways, parking
+# aisles and dirt tracks: a track in a state forest is often the nearest road in
+# OpenStreetMap, but reaching it can mean a long detour (or a locked gate). Interstates
+# and ramps are left out too: you can't stop on them.
+end_on_roads:
+  min_road_class: residential
+  max_road_class: trunk
+  exclude_ramp: true
+# Turbine ends sent per request. Valhalla's default limit is 2,500 origin-target pairs.
+batch_size: 1000

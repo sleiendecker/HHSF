@@ -53,6 +53,11 @@ Candidates from the plan: Hamilton, Sequatchie, Marion, Bledsoe, Rhea (TN); poss
 - Needs a road network and a routing tool to build the 1-hour area (see the missing-data notes in site-selection.md §2.C). Sequatchie County, the v0.1 test county, sits mostly inside it.
 - v0.1 stays Sequatchie-only; the 1-hour area is used from the regional run onward.
 
+**Built (PART 16, 2026-10-20).** The 1-hour area is computed by Valhalla (a routing engine run locally) on OpenStreetMap roads, by car with no traffic, from Miller Park downtown (`config/drive_time.yaml`). It touches 20 counties; by share inside: Catoosa GA 100%, Dade GA 89%, Hamilton 85%, Whitfield GA 77%, Bradley 70%, Marion 58%, Sequatchie 55%, Walker GA 49%, DeKalb AL 16%, Rhea 12%, Gordon GA 11%, Jackson AL 8%, McMinn 5%, Grundy 5%, Murray GA 4%, Bledsoe 4%, and slivers (1% or less) of Polk, Franklin, Meigs and Coffee. `make drive-area` prints the current list. Of the 4,919 ranked stretches in the five analyzed counties, 1,266 end inside it; of the six 1 kW streams, only Rogers Branch (54 min) and Marion's unnamed stream (48 min) do. Details: [ASSUMPTIONS.md](ASSUMPTIONS.md#roads-and-drive-time).
+
+- **Open (owner):** drive time and road distance are only columns and flags (`outside_drive_area`, `nearest_road_not_public`). Should stretches outside the hour be dropped, ranked lower, or kept as they are? Should distance to a public road count in the score? Until decided, nothing is filtered or re-ranked.
+- **Open (owner):** which counties to add next. The biggest unanalyzed shares are Hamilton (needs its own parcel source) and the north Georgia counties (need Georgia parcel and flood sources). Counties with under ~10% inside may not be worth a full ingest.
+
 ### D-03 · Minimum acreage, budget, privacy weight: **Owner** (not needed until parcels are added)
 
 - Minimum usable acreage for a homestead: placeholder **10 acres**
@@ -174,6 +179,7 @@ Decisions that barely move the top 20 keep their default and stop being discusse
 
 | Date | Decision | Change |
 | --- | --- | --- |
+| 2026-10-20 | D-02 | Built the 1-hour drive area (PART 16): touches 20 counties; drive time and road distance flagged only, filtering on them open |
 | 2026-10-20 | D-12 | Decided by the owner: FEMA flood zones (PART 15) are flagged only, never filtered or re-ranked; revisit for the house site with the buildable-land step |
 | 2026-10-20 | D-03 | Owner: parcels loaded (PART 14); minimum acreage only flags, filters nothing until D-03 is decided. Owner names stay out of map tiles and the repo, in a separate table read only by the local exports |
 | 2026-10-18 | All | Initial defaults |

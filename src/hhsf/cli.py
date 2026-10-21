@@ -4,9 +4,11 @@ import shapely
 import typer
 from alembic import command
 from alembic.config import Config
+from sqlalchemy import text
 
 from hhsf.analysis import (
     basins,
+    drive_time,
     export_run,
     gauges,
     hydro,
@@ -17,7 +19,7 @@ from hhsf.analysis import (
 )
 from hhsf.core.config import REPO_ROOT, hydrography_source, load_aoi
 from hhsf.core.db import engine, record_source
-from hhsf.ingest import boundary, flood, hydrography, nhdplus_bulk, parcels, terrain
+from hhsf.ingest import boundary, flood, hydrography, nhdplus_bulk, parcels, roads, terrain
 
 app = typer.Typer(help="Hydro Homestead Site Finder", no_args_is_help=True)
 db_app = typer.Typer(help="Database schema", no_args_is_help=True)
@@ -137,14 +139,32 @@ def ingest_flood(
         typer.echo(f"Loaded {n:,} flood zones ({sfha:,} in the 100-year floodplain).")
 
 
+@ingest_app.command("roads")
+def ingest_roads(
+    aoi: str = AOI_OPTION,
+    refresh: bool = typer.Option(
+        False, help="Download again instead of using data/raw/ (TIGER/Line updates yearly)."
+    ),
+) -> None:
+    """Load the AOI county's drivable roads from Census TIGER/Line."""
+    area = load_aoi(aoi)
+    typer.echo(f"Fetching Census TIGER/Line roads for {area.name}...")
+    records = roads.fetch_roads(area, refresh)
+    with engine().begin() as conn:
+        n = roads.load_roads(conn, area, records)
+    public = sum(roads.ROAD_CLASSES[r.mtfcc].public for r in records)
+    typer.echo(f"Loaded {n:,} road segments ({public:,} public roads).")
+
+
 @ingest_app.command("all")
 def ingest_all(aoi: str = AOI_OPTION, source: str | None = SOURCE_OPTION) -> None:
-    """Boundary, then hydrography, terrain, parcels and flood zones."""
+    """Boundary, then hydrography, terrain, parcels, flood zones and roads."""
     ingest_boundary(aoi)
     ingest_hydrography(aoi, source)
     ingest_terrain(aoi)
     ingest_parcels(aoi)
     ingest_flood(aoi)
+    ingest_roads(aoi)
 
 
 @analyze_app.command("hydro")
@@ -243,6 +263,69 @@ def analyze_hydro(
         f"estimate reach the 1 kW target ({summary['meets_power_target_medium_confidence']} "
         "of them at medium confidence)."
     )
+
+
+_AOI_COUNTIES = text("SELECT geoid, aoi_key FROM counties WHERE aoi_key IS NOT NULL")
+
+
+def _fail(message: str) -> int:
+    typer.echo(message, err=True)
+    return 1
+
+
+@analyze_app.command("drive-area")
+def analyze_drive_area() -> None:
+    """Build the area within the D-02 drive of the origin, and list the counties it touches.
+
+    Needs the Valhalla routing service (`make routing`). Settings: config/drive_time.yaml.
+    """
+    cfg = drive_time.load_config()
+    routing = drive_time.Valhalla(cfg)
+    try:
+        _, shares = drive_time.build_area(engine(), cfg, routing, typer.echo)
+    except drive_time.RoutingUnavailable as e:
+        raise typer.Exit(_fail(str(e))) from e
+    with engine().connect() as conn:
+        analyzed = {r.geoid: r.aoi_key for r in conn.execute(_AOI_COUNTIES)}
+    sqkm = sum(s.inside_sqkm for s in shares)
+    typer.echo(
+        f"Saved the {cfg.minutes}-minute drive area ({sqkm:,.0f} sq km). "
+        f"It touches {len(shares)} counties:"
+    )
+    typer.echo(f"  {'county':<26} {'inside':>7}  {'sq km':>7}  AOI")
+    for s in shares:
+        aoi = analyzed.get(s.geoid) or "-"
+        typer.echo(f"  {s.label:<26} {s.share:7.0%}  {s.inside_sqkm:7,.0f}  {aoi}")
+    typer.echo("Counties without an AOI are the ones to add next (D-02).")
+
+
+@analyze_app.command("drive-time")
+def analyze_drive_time(
+    aoi: str = AOI_OPTION,
+    run_id: int | None = typer.Option(
+        None, help="Hydro run whose corridors to time. Default: the AOI's latest finished one."
+    ),
+) -> None:
+    """Drive time from the origin to every corridor's turbine end (needs `make routing`)."""
+    area = load_aoi(aoi)
+    cfg = drive_time.load_config()
+    try:
+        hydro_run_id, times = drive_time.compute_drive_times(
+            engine(), area, cfg, drive_time.Valhalla(cfg), run_id
+        )
+    except drive_time.RoutingUnavailable as e:
+        raise typer.Exit(_fail(str(e))) from e
+    except scoring_run.NoHydroRun as e:
+        raise typer.BadParameter(str(e)) from e
+    found = [t.minutes for t in times if t.minutes is not None]
+    inside = sum(m <= cfg.minutes for m in found)
+    typer.echo(
+        f"Drive times from {cfg.origin.name} to {len(times):,} corridors of hydro run "
+        f"{hydro_run_id}: {inside:,} within {cfg.minutes} min, {len(found) - inside:,} beyond, "
+        f"{len(times) - len(found):,} with no route."
+    )
+    if found:
+        typer.echo(f"  closest {min(found):.0f} min, farthest {max(found):.0f} min.")
 
 
 @score_app.command("hydro")

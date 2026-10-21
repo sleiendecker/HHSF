@@ -347,3 +347,43 @@ Computed by two database views (migration 0011), like the parcel links, so they 
 - **Flags, not filters:** `turbine_in_floodway`, `turbine_in_sfha` and `stretch_in_sfha`. Nothing is filtered or re-ranked, by decision (D-12). A run-of-river intake and turbine normally sit right by the creek, so being in its floodplain mostly means a permit and flood-proofing the powerhouse; the house site is what needs to stay out, and that's chosen on the visit.
 
 On the five counties' latest runs, 369 of 5,233 ranked corridors touch the 100-year floodplain. 331 have their turbine end in it (240 in zone A, 91 in AE), 13 of those in a floodway; 4,735 end in minimal-hazard zone X. 161 are "not mapped": 158 end outside the five counties, and 3 sit within 8 m of a county line, where FEMA's county outline and the Census one differ by a few meters. None of the six 1 kW streams has its turbine end in a flood hazard area: all six end in zone X, minimal hazard. Only Bethel Creek's stretch crosses the 100-year floodplain, for about 240 ft (72 m).
+
+## Roads and drive time
+
+PART 16 adds, for every corridor, the nearest road to its turbine end and the drive from downtown Chattanooga, and builds the 1-hour drive area that D-02 makes the search region. They're flags for planning visits, not filters: nothing is filtered or re-ranked on them until that's decided.
+
+### Roads (Census TIGER/Line)
+
+- **Source:** the Census Bureau's TIGER/Line roads file for each county (2025 release, `config/data_sources.yaml`, `tiger_roads`), about 1 MB per county, cached in `data/raw/tiger_roads/`. Public domain. `hhsf ingest roads --aoi <key>` (part of `make ingest`) replaces the county's roads.
+- **Types:** each road keeps its Census class (MTFCC), shown as a plain type: interstate or divided highway, US or state highway, local road, 4WD trail, highway ramp, frontage road, alley, private road (logging, farm, utility), parking lot road. Walkways, stairs, bike and bridle paths aren't loaded, and nor are the unnamed lines Census marks "internal use" (about a sixth of Sequatchie's road length, with no stated meaning).
+- **Public roads:** every type except 4WD trails, private roads and parking lot roads. TIGER doesn't say who maintains a road, so a "local road" can still be a private subdivision road, and a public road near the creek isn't proof of a right of way to the parcel.
+- **Nearest road** (`corridor_turbine_roads`, a view computed when read, migration 0012): the straight-line distance from the bottom of the stretch to the nearest road of any type except interstates and ramps (no driveway can join them), and separately to the nearest public road. Only the loaded counties' roads count, so near a county line the real nearest road may be in the next county.
+- **What TIGER misses:** most driveways, logging roads and farm tracks. The real way in is often closer than the nearest TIGER road; the satellite basemap shows tracks TIGER doesn't.
+
+On the five counties' latest runs, the median distance from a ranked turbine end to a public road is about 1,100 ft; 2,817 of 4,919 are within a quarter mile, and for 644 the nearest road is a 4WD trail or private road.
+
+### Drive time (Valhalla on OpenStreetMap)
+
+- **Engine:** [Valhalla](https://github.com/valhalla/valhalla) 3.9.1, an open-source routing engine (MIT license), running locally in Docker (`make routing`). It was chosen over a hand-built graph on TIGER roads because TIGER has no speeds and joins roads where an overpass crosses them; Valhalla uses OpenStreetMap's road types, speed limits, one-way streets and bridges.
+- **Road data:** OpenStreetMap for Tennessee, Georgia and Alabama, from Geofabrik's daily extracts, downloaded once into `data/valhalla/` (about 700 MB). OpenStreetMap is ODbL: the drive area and drive times are free to share with the credit "© OpenStreetMap contributors"; the road data itself is share-alike if passed on. To refresh the roads, empty `data/valhalla/`, then `make routing`.
+- **Assumptions:** a car, no traffic: each road at its typical free-flowing speed. Rush hour, weather and a slow last mile on gravel will make real drives longer. The origin is a placeholder for "downtown Chattanooga" (Miller Park, Market St at M.L. King Blvd); swap in an address in `config/drive_time.yaml`.
+- **The 1-hour area** (`drive_time_areas`, `make drive-area`): Valhalla's isochrone, everywhere reachable within 60 minutes on any road. It's saved with every county it touches and how much of each is inside (`drive_time_area_counties`), counties fetched from Census TIGERweb.
+- **Each drive** (`corridor_drive_times`, `make drive-time`): minutes and miles from the origin to the turbine end, measured to the nearest public road (residential or bigger in OpenStreetMap, no interstates or ramps). Not to the nearest track: in a state forest or natural area the nearest OpenStreetMap road is often a dirt track that's only reachable by a long loop (or behind a gate), which made one Savage Gulf stream 4 hours away instead of 1¾. Where the nearest public road has no route (a gated or private section), the drive ends on the nearest track or driveway instead, flagged `drive_ends_on_track`. The walk or track from that road point to the creek isn't included; `drive_road_point_ft` says how far it is.
+- **Saved, not computed when read:** each drive is a call to Valhalla, so drive times are stored per corridor. A new hydro run has new corridors: run `make drive-time` again after `make analyze`. Changing the origin and running `make drive-area` deletes the old origin's drive times.
+
+The two can disagree near the edge: the area uses every road and Valhalla's isochrone grid, and the drive times end on public roads. About 8% of ranked stretches are inside the area at over 60 minutes, or outside it at under 60. `in_drive_area` is the search-region flag; treat anything within about 10 minutes of the hour as borderline.
+
+### What it found (2026-10-20)
+
+The 1-hour area covers about 5,970 sq km and touches 20 counties. By share of the county inside: Catoosa GA 100%, Dade GA 89%, Hamilton TN 85%, Whitfield GA 77%, Bradley TN 70%, **Marion 58%**, **Sequatchie 55%**, Walker GA 49%, DeKalb AL 16%, **Rhea 12%**, Gordon GA 11%, Jackson AL 8%, McMinn TN 5%, **Grundy 5%**, Murray GA 4%, **Bledsoe 4%**, and 1% or less of Polk, Franklin, Meigs and Coffee TN. The five analyzed counties are in bold. Most of Bledsoe, Grundy and Rhea is beyond the hour: the area mostly follows the Tennessee River valley, I-24, I-75 and US-27.
+
+1,266 of the 4,919 ranked stretches on the map end inside it. The six 1 kW streams:
+
+| Stream | County | Nearest road | Nearest public road | Drive from Chattanooga | In the 1-hour area |
+| --- | --- | --- | --- | --- | --- |
+| Unnamed (NHDPlus 25000300021756) | Marion | 730 ft, private road | 960 ft | 48 min, 25 mi | yes |
+| Rogers Branch | Sequatchie | 590 ft, local road (Smith Mountain Rd) | 590 ft | 54 min, 43 mi | yes |
+| Bethel Creek | Marion | 2,270 ft, local road (Ravens Den Rd) | 2,270 ft | 75 min, 52 mi (ends on a track) | no |
+| Negro Den Creek | Grundy | 2,830 ft, local road (Hanging Rock Dr) | 2,830 ft | 83 min, 63 mi | no |
+| Elk River | Grundy | 2,360 ft, local road (Bluff Ridge Rd) | 2,360 ft | 90 min, 68 mi | no |
+| Big Creek | Grundy | 350 ft, 4WD trail | 1,480 ft | 100 min, 67 mi | no |

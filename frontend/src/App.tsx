@@ -62,6 +62,11 @@ const FLOOD_MIN_ZOOM = 10;
 // Floodway, the rest of the 100-year floodplain (SFHA), the 0.2% annual chance area. Zone X
 // "minimal hazard" covers everything else and isn't drawn.
 const FLOOD_COLORS = { floodway: "#1d4ed8", sfha: "#3b82f6", moderate: "#93c5fd" };
+// TIGER roads from zoom 10. Public roads solid; 4WD trails, private and parking lot roads dashed.
+const ROADS_MIN_ZOOM = 10;
+const ROAD_COLORS = { public: "#d97706", other: "#78350f" };
+// The area within a 1-hour drive of downtown Chattanooga (D-02, migration 0012).
+const DRIVE_AREA_COLOR = "#15803d";
 
 // Scores and plain streams are the same lines, so only one set shows at a time.
 function setScoresVisible(map: maplibregl.Map, visible: boolean) {
@@ -79,6 +84,10 @@ export function App() {
   const showParcelsRef = useRef(showParcels);
   const [showFlood, setShowFlood] = useState(false);
   const showFloodRef = useRef(showFlood);
+  const [showRoads, setShowRoads] = useState(false);
+  const showRoadsRef = useRef(showRoads);
+  const [showDriveArea, setShowDriveArea] = useState(false);
+  const showDriveAreaRef = useRef(showDriveArea);
   const [zoom, setZoom] = useState(10);
 
   useEffect(() => {
@@ -114,6 +123,17 @@ export function App() {
         minzoom: FLOOD_MIN_ZOOM,
         attribution: "Flood zones: FEMA National Flood Hazard Layer",
       });
+      map.addSource("roads", {
+        type: "vector",
+        tiles: [`${TILES}/roads/{z}/{x}/{y}`],
+        minzoom: ROADS_MIN_ZOOM,
+        attribution: "Roads: US Census Bureau TIGER/Line",
+      });
+      map.addSource("drive-area", {
+        type: "vector",
+        tiles: [`${TILES}/drive_time_areas/{z}/{x}/{y}`],
+        attribution: "Drive time: Valhalla, © OpenStreetMap contributors",
+      });
       map.addSource("scores", {
         type: "vector",
         tiles: [`${TILES}/latest_hydro_scores/{z}/{x}/{y}`],
@@ -125,6 +145,25 @@ export function App() {
         source: "counties",
         "source-layer": "counties",
         paint: { "line-color": "#555", "line-width": 1.5, "line-dasharray": [3, 2] },
+      });
+
+      // The drive-time area: a light wash with a solid edge, under everything else.
+      const driveVisibility = showDriveAreaRef.current ? "visible" : "none";
+      map.addLayer({
+        id: "drive-area-fill",
+        type: "fill",
+        source: "drive-area",
+        "source-layer": "drive_time_areas",
+        layout: { visibility: driveVisibility },
+        paint: { "fill-color": DRIVE_AREA_COLOR, "fill-opacity": 0.08 },
+      });
+      map.addLayer({
+        id: "drive-area-outline",
+        type: "line",
+        source: "drive-area",
+        "source-layer": "drive_time_areas",
+        layout: { visibility: driveVisibility },
+        paint: { "line-color": DRIVE_AREA_COLOR, "line-width": 2 },
       });
 
       // Flood zones under everything else. Stored in pieces (migration 0011), so fill only: outlines would show the seams.
@@ -159,6 +198,21 @@ export function App() {
         minzoom: PARCELS_MIN_ZOOM,
         layout: { visibility: showParcelsRef.current ? "visible" : "none" },
         paint: { "line-color": "#c2549d", "line-width": ["interpolate", ["linear"], ["zoom"], 12, 0.6, 16, 1.6] },
+      });
+
+      // TIGER roads under the streams.
+      map.addLayer({
+        id: "roads",
+        type: "line",
+        source: "roads",
+        "source-layer": "roads",
+        minzoom: ROADS_MIN_ZOOM,
+        layout: { visibility: showRoadsRef.current ? "visible" : "none", "line-cap": "round" },
+        paint: {
+          "line-color": ["case", ["==", ["get", "public"], true], ROAD_COLORS.public, ROAD_COLORS.other],
+          "line-width": ["interpolate", ["linear"], ["zoom"], 10, 0.8, 16, 2.5],
+          "line-dasharray": ["case", ["==", ["get", "public"], true], ["literal", [1, 0]], ["literal", [2, 1.5]]],
+        },
       });
 
       // A white outline so streams stand out on imagery; showBasemap() sets how strong.
@@ -232,6 +286,19 @@ export function App() {
   }, [showFlood]);
 
   useEffect(() => {
+    showRoadsRef.current = showRoads;
+    if (mapRef.current?.getLayer("roads"))
+      mapRef.current.setLayoutProperty("roads", "visibility", showRoads ? "visible" : "none");
+  }, [showRoads]);
+
+  useEffect(() => {
+    showDriveAreaRef.current = showDriveArea;
+    for (const layer of ["drive-area-fill", "drive-area-outline"])
+      if (mapRef.current?.getLayer(layer))
+        mapRef.current.setLayoutProperty(layer, "visibility", showDriveArea ? "visible" : "none");
+  }, [showDriveArea]);
+
+  useEffect(() => {
     showScoresRef.current = showScores;
     if (mapRef.current?.getLayer("scores-hit")) setScoresVisible(mapRef.current, showScores);
   }, [showScores]);
@@ -265,6 +332,26 @@ export function App() {
             <span className="swatch" style={{ background: FLOOD_COLORS.floodway }} /> floodway{" "}
             <span className="swatch" style={{ background: FLOOD_COLORS.sfha }} /> 100-year{" "}
             <span className="swatch" style={{ background: FLOOD_COLORS.moderate }} /> 500-year. Small creeks are mostly unmapped.
+          </p>
+        )}
+        <label className="toggle">
+          <input type="checkbox" checked={showRoads} onChange={(e) => setShowRoads(e.target.checked)} />
+          Show Census roads
+        </label>
+        {showRoads && (
+          <p className="hint">
+            {zoom < ROADS_MIN_ZOOM && "Zoom in to see roads. "}
+            <span className="swatch" style={{ background: ROAD_COLORS.public }} /> public{" "}
+            <span className="swatch" style={{ background: ROAD_COLORS.other }} /> 4WD trail or private (dashed). Most driveways and logging roads are missing.
+          </p>
+        )}
+        <label className="toggle">
+          <input type="checkbox" checked={showDriveArea} onChange={(e) => setShowDriveArea(e.target.checked)} />
+          Show 1-hour drive from downtown Chattanooga
+        </label>
+        {showDriveArea && (
+          <p className="hint">
+            <span className="swatch" style={{ background: DRIVE_AREA_COLOR }} /> by car, no traffic (the search region, D-02).
           </p>
         )}
       </div>

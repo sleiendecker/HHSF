@@ -4,9 +4,10 @@ Loads one finished score run (default: the AOI's latest) with its hydro numbers 
 hands the rows to export.py, which does all the formatting. Files go to
 data/outputs/<aoi>/run_<score run id>/, so each run's exports sit side by side.
 
-Parcels and flood zones are linked when the export runs (views corridor_parcels and
-corridor_turbine_parcels, migration 0010; corridor_flood_zones and
-corridor_turbine_flood_zones, 0011), so they match the latest ingest.
+Parcels, flood zones and roads are linked when the export runs (views corridor_parcels
+and corridor_turbine_parcels, migration 0010; corridor_flood_zones and
+corridor_turbine_flood_zones, 0011; corridor_turbine_roads, 0012), so they match the
+latest ingest. Drive times are read from corridor_drive_times (`hhsf analyze drive-time`).
 """
 
 import json
@@ -20,6 +21,7 @@ from hhsf.analysis.run import code_version
 from hhsf.core.config import AOI, DATA_DIR, min_homestead_acres
 from hhsf.ingest.flood import SOURCE_KEY as FLOOD_SOURCE
 from hhsf.ingest.parcels import SOURCE_KEY as PARCELS_SOURCE
+from hhsf.ingest.roads import SOURCE_KEY as ROADS_SOURCE
 
 OUTPUTS_DIR = DATA_DIR / "outputs"
 
@@ -94,6 +96,41 @@ def flood_version(conn: Connection) -> str | None:
     return _loaded_version(conn, FLOOD_SOURCE, "flood_zones")
 
 
+def roads_version(conn: Connection) -> str | None:
+    """TIGER/Line roads version and download date, or None if no roads are loaded."""
+    return _loaded_version(conn, ROADS_SOURCE, "roads")
+
+
+def drive_area(conn: Connection) -> export.DriveArea | None:
+    """The drive-time area corridors are checked against, or None if none is built."""
+    row = conn.execute(
+        text(
+            "SELECT origin_name, minutes, engine_version,"
+            " to_char(built_at, 'YYYY-MM-DD') AS built FROM drive_time_areas"
+            " ORDER BY area_id DESC LIMIT 1"
+        )
+    ).one_or_none()
+    if row is None:
+        return None
+    return export.DriveArea(
+        origin_name=row.origin_name,
+        minutes=row.minutes,
+        built=row.built,
+        engine_version=row.engine_version,
+    )
+
+
+def _road(r: dict) -> export.Road | None:
+    if r["tr_distance_m"] is None:
+        return None
+    return export.Road(
+        road_class=r["tr_road_class"],
+        name=r["tr_name"],
+        public=r["tr_public"],
+        distance_m=r["tr_distance_m"],
+    )
+
+
 def _parcel(r: dict) -> export.Parcel | None:
     if r["tp_parcel_id"] is None:
         return None
@@ -127,12 +164,16 @@ def _flood_zone(r: dict) -> export.FloodZone | None:
 
 
 def load_rows(
-    conn: Connection, score_run_id: int, flag_parcels: bool = True, flag_flood: bool = True
+    conn: Connection,
+    score_run_id: int,
+    flag_parcels: bool = True,
+    flag_flood: bool = True,
+    flag_drive: bool = True,
 ) -> list[export.ExportRow]:
-    """The run's corridors with their parcels and flood zones.
+    """The run's corridors with their parcels, flood zones, roads and drive times.
 
-    `flag_parcels` and `flag_flood`: false when that layer isn't loaded, so a missing
-    layer isn't reported as "nothing found".
+    `flag_parcels`, `flag_flood` and `flag_drive`: false when that layer isn't loaded (or
+    the drive-time area isn't built), so a missing layer isn't reported as "nothing found".
     """
     min_acres = min_homestead_acres()
     rows = conn.execute(
@@ -152,7 +193,13 @@ def load_rows(
                    sp.ids AS stretch_parcel_ids, sp.owners AS stretch_parcel_owners,
                    tf.zone AS tf_zone, tf.subtype AS tf_subtype, tf.sfha AS tf_sfha,
                    tf.floodway AS tf_floodway, sf.zones AS stretch_flood_zones,
-                   sf.sfha_m AS stretch_sfha_m
+                   sf.sfha_m AS stretch_sfha_m,
+                   tr.distance_m AS tr_distance_m, tr.road_class AS tr_road_class,
+                   tr.name AS tr_name, tr.public AS tr_public,
+                   tr.public_distance_m AS turbine_public_road_m,
+                   dt.minutes AS drive_minutes, dt.distance_km AS drive_km,
+                   dt.road_point_m AS drive_road_point_m, dt.any_road AS dt_any_road,
+                   da.in_drive_area
             FROM hydro_scores s
             JOIN hydro_corridors c USING (corridor_id)
             JOIN streams st USING (stream_id)
@@ -180,6 +227,12 @@ def load_rows(
                 FROM corridor_flood_zones f
                 WHERE f.corridor_id = s.corridor_id
             ) sf
+            LEFT JOIN corridor_turbine_roads tr USING (corridor_id)
+            LEFT JOIN corridor_drive_times dt USING (corridor_id)
+            CROSS JOIN LATERAL (
+                SELECT bool_or(ST_Intersects(a.geom, o.pt)) AS in_drive_area
+                FROM drive_time_areas a
+            ) da
             WHERE s.run_id = :r
             ORDER BY s.corridor_id
             """
@@ -191,13 +244,14 @@ def load_rows(
         turbine = _parcel(r)
         distance = r["tp_distance_m"]
         flood_zone = _flood_zone(r)
+        road = _road(r)
         out.append(
             export.ExportRow(
                 **{
                     k: v
                     for k, v in r.items()
                     if k not in ("flow_flags", "geometry", "stretch_sfha_m")
-                    and not k.startswith(("tp_", "tf_", "stretch_"))
+                    and not k.startswith(("tp_", "tf_", "tr_", "dt_", "stretch_"))
                 },
                 flow_flags=tuple(r["flow_flags"] or ()),
                 geometry=json.loads(r["geometry"]),
@@ -213,6 +267,10 @@ def load_rows(
                 stretch_sfha_m=r["stretch_sfha_m"],
                 flood_flags=(
                     export.flood_flags(flood_zone, r["stretch_sfha_m"]) if flag_flood else ()
+                ),
+                turbine_road=road,
+                access_flags=export.access_flags(
+                    road, r["drive_minutes"], r["in_drive_area"], flag_drive, bool(r["dt_any_road"])
                 ),
             )
         )
@@ -232,9 +290,22 @@ def export_hydro(
         info = load_run_info(conn, aoi, score_run_id)
         parcels = parcels_version(conn)
         flood = flood_version(conn)
+        road_info = roads_version(conn)
+        area = drive_area(conn)
         rows = load_rows(
-            conn, score_run_id, flag_parcels=parcels is not None, flag_flood=flood is not None
+            conn,
+            score_run_id,
+            flag_parcels=parcels is not None,
+            flag_flood=flood is not None,
+            flag_drive=area is not None,
         )
-    info = replace(info, exported_with=code_version(), parcels_version=parcels, flood_version=flood)
+    info = replace(
+        info,
+        exported_with=code_version(),
+        parcels_version=parcels,
+        flood_version=flood,
+        roads_version=road_info,
+        drive_area=area,
+    )
     out_dir = out_root / aoi.key / f"run_{score_run_id}"
     return info, out_dir, export.write_exports(out_dir, info, rows)
