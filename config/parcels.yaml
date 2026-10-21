@@ -1,0 +1,5 @@
+# Parcels and owners (PART 14). See docs/ASSUMPTIONS.md, "Parcels and owners".
+
+# D-03 placeholder (still open): parcels smaller than this get the flag
+# `parcel_under_min_acres` in the exports. Nothing is filtered or re-ranked on it yet.
+min_homestead_acres: 10

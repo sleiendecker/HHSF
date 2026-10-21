@@ -17,7 +17,7 @@ from hhsf.analysis import (
 )
 from hhsf.core.config import REPO_ROOT, hydrography_source, load_aoi
 from hhsf.core.db import engine, record_source
-from hhsf.ingest import boundary, hydrography, nhdplus_bulk, terrain
+from hhsf.ingest import boundary, hydrography, nhdplus_bulk, parcels, terrain
 
 app = typer.Typer(help="Hydro Homestead Site Finder", no_args_is_help=True)
 db_app = typer.Typer(help="Database schema", no_args_is_help=True)
@@ -101,12 +101,29 @@ def ingest_terrain(aoi: str = AOI_OPTION) -> None:
     typer.echo("Terrain ready.")
 
 
+@ingest_app.command("parcels")
+def ingest_parcels(
+    aoi: str = AOI_OPTION,
+    refresh: bool = typer.Option(
+        False, help="Download again instead of using data/raw/ (the layer updates monthly)."
+    ),
+) -> None:
+    """Load the AOI county's property parcels and owners from the Tennessee Comptroller."""
+    area = load_aoi(aoi)
+    typer.echo(f"Fetching parcels for {area.name} from the Tennessee Comptroller...")
+    records = parcels.fetch_parcels(area, refresh, echo=typer.echo)
+    with engine().begin() as conn:
+        n = parcels.load_parcels(conn, area, records)
+    typer.echo(f"Loaded {n:,} parcels (owner names kept apart, for local exports only).")
+
+
 @ingest_app.command("all")
 def ingest_all(aoi: str = AOI_OPTION, source: str | None = SOURCE_OPTION) -> None:
-    """Boundary, then hydrography, then terrain."""
+    """Boundary, then hydrography, terrain and parcels."""
     ingest_boundary(aoi)
     ingest_hydrography(aoi, source)
     ingest_terrain(aoi)
+    ingest_parcels(aoi)
 
 
 @analyze_app.command("hydro")

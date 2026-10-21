@@ -55,6 +55,9 @@ function popupHtml(f: MapGeoJSONFeature): string {
     </div>`;
 }
 
+// Martin serves parcels from zoom 12 (martin/martin.yaml): the five counties hold ~80,000.
+const PARCELS_MIN_ZOOM = 12;
+
 // Scores and plain streams are the same lines, so only one set shows at a time.
 function setScoresVisible(map: maplibregl.Map, visible: boolean) {
   const show = (on: boolean) => (on ? "visible" : "none");
@@ -67,6 +70,9 @@ export function App() {
   const mapRef = useRef<maplibregl.Map>();
   const [showScores, setShowScores] = useState(true);
   const showScoresRef = useRef(showScores);
+  const [showParcels, setShowParcels] = useState(false);
+  const showParcelsRef = useRef(showParcels);
+  const [zoom, setZoom] = useState(10);
 
   useEffect(() => {
     const map = new maplibregl.Map({
@@ -89,6 +95,12 @@ export function App() {
       addBasemapLayers(map);
       map.addSource("counties", { type: "vector", tiles: [`${TILES}/counties/{z}/{x}/{y}`] });
       map.addSource("streams", { type: "vector", tiles: [`${TILES}/streams/{z}/{x}/{y}`] });
+      map.addSource("parcels", {
+        type: "vector",
+        tiles: [`${TILES}/parcels/{z}/{x}/{y}`],
+        minzoom: PARCELS_MIN_ZOOM,
+        attribution: "Parcels: Tennessee Comptroller of the Treasury",
+      });
       map.addSource("scores", {
         type: "vector",
         tiles: [`${TILES}/latest_hydro_scores/{z}/{x}/{y}`],
@@ -100,6 +112,17 @@ export function App() {
         source: "counties",
         "source-layer": "counties",
         paint: { "line-color": "#555", "line-width": 1.5, "line-dasharray": [3, 2] },
+      });
+
+      // Property lines under the streams; showBasemap() sets the color. No owner data in these tiles.
+      map.addLayer({
+        id: "parcel-outline",
+        type: "line",
+        source: "parcels",
+        "source-layer": "parcels",
+        minzoom: PARCELS_MIN_ZOOM,
+        layout: { visibility: showParcelsRef.current ? "visible" : "none" },
+        paint: { "line-color": "#c2549d", "line-width": ["interpolate", ["linear"], ["zoom"], 12, 0.6, 16, 1.6] },
       });
 
       // A white outline so streams stand out on imagery; showBasemap() sets how strong.
@@ -155,8 +178,16 @@ export function App() {
       }
     });
 
+    map.on("zoomend", () => setZoom(map.getZoom()));
+
     return () => map.remove();
   }, []);
+
+  useEffect(() => {
+    showParcelsRef.current = showParcels;
+    if (mapRef.current?.getLayer("parcel-outline"))
+      mapRef.current.setLayoutProperty("parcel-outline", "visibility", showParcels ? "visible" : "none");
+  }, [showParcels]);
 
   useEffect(() => {
     showScoresRef.current = showScores;
@@ -177,6 +208,11 @@ export function App() {
           <input type="checkbox" checked={showScores} onChange={(e) => setShowScores(e.target.checked)} />
           Show hydro scores
         </label>
+        <label className="toggle">
+          <input type="checkbox" checked={showParcels} onChange={(e) => setShowParcels(e.target.checked)} />
+          Show property lines
+        </label>
+        {showParcels && zoom < PARCELS_MIN_ZOOM && <p className="hint">Zoom in to see property lines.</p>}
       </div>
       {showScores && <Legend />}
     </>

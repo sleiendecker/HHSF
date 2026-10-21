@@ -24,6 +24,23 @@ postgres:
         min_elev_m: float8
         slope: float8
         mean_flow_cfs: float8
+    # Property outlines from the Tennessee Comptroller (migration 0010). Owner names live
+    # in parcel_owners, which is personal information: never list it here, and never
+    # add owner or address columns to this layer (tests/unit/test_martin_config.py checks).
+    # From zoom 12 only: the five counties hold ~80,000 parcels.
+    parcels:
+      schema: public
+      table: parcels
+      srid: 4326
+      geometry_column: geom
+      geometry_type: MULTIPOLYGON
+      # No id_column: vector tile feature IDs must be integers, and the key (gislink) is text.
+      minzoom: 12
+      properties:
+        parcel_id: text
+        county_name: text
+        acres: float8
+        deed_acres: float8
     counties:
       schema: public
       table: counties
@@ -37,7 +54,8 @@ postgres:
     # steepest stretch of a reach (D-08), so only that stretch is drawn. The map colors
     # them by `hydro_score` and styles them by `tier`: medium, low, low_flow, head_only,
     # or empty for corridors that were filtered out. One row per reach across all AOIs;
-    # `rank` counts within the AOI named by `aoi_name`. `factors` is JSON text: each
+    # `rank` counts within the AOI named by `aoi_name`. The turbine_parcel_* columns are the
+    # parcel at the bottom of the stretch (migration 0010); no owner fields, ever. `factors` is JSON text: each
     # factor's value, sub-score, weight and contribution, for the click popup.
     latest_hydro_scores:
       schema: public
@@ -72,3 +90,8 @@ postgres:
         reach_drop_m: float8
         aoi_key: text
         aoi_name: text
+        turbine_parcel_id: text
+        turbine_parcel_acres: float8
+        turbine_parcel_deed_acres: float8
+        turbine_parcel_distance_m: float8
+        parcels_crossed: int4

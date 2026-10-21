@@ -292,6 +292,17 @@ function headline(p: Record<string, unknown>): string {
   return `<div class="score-line"><span class="badge filtered">Not on the shortlist</span></div><p>${esc(p.summary)}</p>`;
 }
 
+// The parcel at the bottom of the stretch (migration 0010). Owners are only in the local exports.
+function parcelText(p: Record<string, unknown>): string {
+  if (typeof p.turbine_parcel_id !== "string") return "No parcel loaded here (outside the loaded counties)";
+  const deed = typeof p.turbine_parcel_deed_acres === "number" ? `, deed ${fmt(p.turbine_parcel_deed_acres, 1)}` : "";
+  const away =
+    typeof p.turbine_parcel_distance_m === "number" && p.turbine_parcel_distance_m > 0
+      ? `; nearest one, ${distance(p.turbine_parcel_distance_m)} away`
+      : "";
+  return `${esc(p.turbine_parcel_id)}: ${fmt(p.turbine_parcel_acres, 1)} acres${deed}${away}`;
+}
+
 export function scorePopupHtml(f: MapGeoJSONFeature): string {
   const p = f.properties as Record<string, unknown>;
   let factors: Factor[] = [];
@@ -316,6 +327,8 @@ export function scorePopupHtml(f: MapGeoJSONFeature): string {
         <dt>Head (net drop)</dt><dd>${withUnit(p.net_head_ft, "ft")}</dd>
         <dt>Firm flow</dt><dd>${flow === undefined ? "—" : `${fmt(flow, 2)} cfs (${fmt(flow * CFS_TO_GPM)} gpm)`}</dd>
         <dt>Firm power</dt><dd>${withUnit(p.firm_power_w, "W")}</dd>
+        <dt>Turbine parcel</dt><dd>${parcelText(p)}</dd>
+        <dt>Parcels crossed</dt><dd>${fmt(p.parcels_crossed)}</dd>
       </dl>
       <p><b>Flow source:</b> ${flowSource(p.flow_method, p.flow_reference_gauge)}.</p>
       ${tier ? `<p><b>${tier.label}:</b> ${tier.detail}</p>` : ""}

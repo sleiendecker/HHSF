@@ -178,7 +178,7 @@ def test_geojson_has_one_feature_per_row_in_wgs84():
     first = fc["features"][0]
     assert first["id"] == 4
     assert first["geometry"] == LINE
-    assert list(first["properties"]) == export.SHORTLIST_COLUMNS
+    assert list(first["properties"]) == export.GEOJSON_COLUMNS
     assert first["properties"]["firm_power_w"] == 2000
     json.dumps(fc)  # serializable
 
@@ -306,3 +306,72 @@ def test_exports_are_reproducible(tmp_path, name):
     export.write_exports(tmp_path / "a", INFO, ROWS)
     export.write_exports(tmp_path / "b", INFO, list(reversed(ROWS)))
     assert (tmp_path / "a" / name).read_text() == (tmp_path / "b" / name).read_text()
+
+
+# --- Parcels ------------------------------------------------------------------
+
+PARCEL = export.Parcel(
+    parcel_id="030 001.33",
+    county_name="Sequatchie",
+    acres=76.34,
+    deed_acres=81.39,
+    tpad_url="https://assessment.cot.tn.gov/TPAD/Parcel/GIS?gislink=077030",
+    owner="SMITH JOHN",
+    owner2="SMITH JANE",
+    property_address="100 ROGERS RD",
+)
+ON_PARCEL = row(
+    turbine_parcel=PARCEL,
+    turbine_parcel_distance_m=0.0,
+    stretch_parcel_ids=("030 001.33", "030 037.00"),
+    stretch_parcel_owners=("DOE ANN", "SMITH JOHN"),
+)
+
+
+def test_parcel_flags():
+    small = replace(PARCEL, acres=4.0)
+    assert export.parcel_flags(PARCEL, 0.0, 10) == ()
+    assert export.parcel_flags(None, None, 10) == (export.NO_PARCEL,)
+    assert export.parcel_flags(small, 30.0, 10) == (
+        export.OUTSIDE_PARCEL,
+        export.UNDER_MIN_ACRES,
+    )
+
+
+def test_record_has_parcels_and_owners():
+    r = export.record(ON_PARCEL)
+    assert r["turbine_parcel_id"] == "030 001.33"
+    assert r["turbine_parcel_acres"] == 76.3
+    assert r["turbine_parcel_distance_ft"] == 0
+    assert r["stretch_parcel_count"] == 2
+    assert r["stretch_parcel_ids"] == "030 001.33; 030 037.00"
+    assert r["turbine_parcel_owner"] == "SMITH JOHN"
+    assert r["stretch_parcel_owners"] == "DOE ANN; SMITH JOHN"
+
+
+def test_record_without_parcels_is_blank():
+    r = export.record(row())
+    assert r["turbine_parcel_id"] is None
+    assert r["stretch_parcel_count"] is None
+    assert r["turbine_parcel_owner"] is None
+
+
+def test_owners_are_in_the_csv_but_never_the_geojson():
+    [csv_row] = read_csv(export.to_csv([ON_PARCEL], export.SHORTLIST_COLUMNS))
+    assert csv_row["turbine_parcel_owner"] == "SMITH JOHN"
+    props = export.to_geojson([ON_PARCEL], INFO)["features"][0]["properties"]
+    assert props["turbine_parcel_id"] == "030 001.33"
+    assert not export.OWNER_COLUMNS & props.keys()
+    assert "SMITH" not in json.dumps(props)
+
+
+def test_report_lists_the_turbine_parcel_and_owner():
+    loaded = replace(INFO, parcels_version="TNMap parcels, downloaded 2026-10-20")
+    report = export.render_report(loaded, [ON_PARCEL])
+    assert "| 030 001.33 (76) | SMITH JOHN & SMITH JANE |" in report
+    assert "| tn_parcels (at export) | TNMap parcels, downloaded 2026-10-20 |" in report
+    assert "not legal boundaries" in report
+
+
+def test_report_says_when_parcels_are_not_loaded():
+    assert "No parcels are loaded" in export.render_report(INFO, ROWS)

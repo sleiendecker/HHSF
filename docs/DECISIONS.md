@@ -59,6 +59,8 @@ Candidates from the plan: Hamilton, Sequatchie, Marion, Bledsoe, Rhea (TN); poss
 - Rough budget ceiling (filters parcels later, via assessed value): placeholder **none**
 - Privacy weight in the overall score (spec says 10%): placeholder **10%**
 
+Parcels are loaded now (PART 14). Until this is decided, the 10-acre placeholder (`config/parcels.yaml`) only **flags** small turbine parcels in the exports (`parcel_under_min_acres`); nothing is filtered or re-ranked.
+
 **Decision:** _\_\_\_\__
 
 ---
@@ -159,6 +161,7 @@ Decisions that barely move the top 20 keep their default and stop being discusse
 
 | Date | Decision | Change |
 | --- | --- | --- |
+| 2026-10-20 | D-03 | Owner: parcels loaded (PART 14); minimum acreage only flags, filters nothing until D-03 is decided. Owner names stay out of map tiles and the repo, in a separate table read only by the local exports |
 | 2026-10-18 | All | Initial defaults |
 | 2026-10-18 | D-01 | Power target set to 1.0 kW continuous (provisional, pending owner) |
 | 2026-10-18 | D-01 | Confirmed as 1.0 kW initial minimum (shortlist filter) |

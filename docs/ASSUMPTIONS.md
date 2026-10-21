@@ -272,3 +272,43 @@ Endpoints, limits and timeouts are in [`config/data_sources.yaml`](../config/dat
 - Every `hhsf analyze hydro` writes a new `analysis_runs` row (`analysis = 'hydro'`) with the AOI, `git describe` code version, the data source versions, every assumption above (`params`, including `corridor_method` and the penstock length), and a summary of counts. Its corridors carry that `run_id`; earlier runs are never changed.
 - `status` is `running` while it works, `finished` when saved, `failed` if it crashed (with no corridors).
 - To read the latest run: `SELECT * FROM hydro_corridors WHERE run_id = (SELECT max(run_id) FROM analysis_runs WHERE analysis = 'hydro' AND status = 'finished')`.
+
+## Parcels and owners
+
+PART 14 links every corridor to the property it sits on, so the shortlist becomes a list of properties to visit and owners to contact.
+
+- **Source:** the Tennessee Comptroller of the Treasury's statewide parcel layer, "Tennessee Property Boundaries Public Use" (`config/data_sources.yaml`, `tn_parcels`). It covers 86 of Tennessee's 95 counties, all five analyzed ones included, and is updated monthly. Chester, Davidson, **Hamilton** (Chattanooga), Hickman, Knox, Montgomery, Rutherford, Shelby and Williamson keep their own parcels and aren't in it.
+- **Terms:** the layer is a public service, "not intended for commercial use", with no warranty. It's for graphical reference: the lines aren't legal descriptions or surveyed boundaries, and the owner names aren't proof of ownership. Check the deed (the TPAD link) before relying on either. The Comptroller's per-county shapefiles are the commercial route and add the full assessment table (mailing address, values), but they're downloaded by hand through a web form and the Comptroller asks for no automated downloads, so they aren't used.
+- **What's loaded:** `hhsf ingest parcels --aoi <key>` (part of `make ingest`) queries one county at a time, 2,000 parcels per page, cached in `data/raw/tn_parcels/<aoi>/` (about 10 seconds per county). `--refresh` downloads again for the monthly update. A county's parcels are replaced as a whole on each ingest, because parcels split and merge. A handful of parcels are drawn as several pieces; they're merged into one.
+
+| County | Parcels |
+| --- | --- |
+| Sequatchie | 12,652 |
+| Marion | 22,263 |
+| Bledsoe | 11,376 |
+| Grundy | 11,947 |
+| Rhea | 21,468 |
+
+- **Parcel ID** (`parcels.parcel_id`) is the assessor's control map, group (often blank) and parcel number, e.g. `030 001.33` or `048M D 001.10`: what the county assessor and the Comptroller's site use. `gislink` is the Comptroller's key, used in their links.
+- **Acreage:** `acres` is measured from the outline (in the equal-area CRS). `deed_acres` is what the assessor recorded; the layer gives 0 for about half the parcels (48%), stored as unknown. Where both exist (1 acre or more), half agree within 4% and three quarters within 9%.
+
+### Owner names are personal information
+
+The layer returns owner names (`OWNER`, `OWNER2`) and the property's street address with the outlines. They are split off on the way in:
+
+- `parcels` holds outlines, IDs and acreage. It's served as map tiles.
+- `parcel_owners` holds the owner names and property address, keyed by `gislink`. **The tile server never publishes it** (`martin/martin.yaml` lists tables one by one, with `auto_publish: false`), and `tests/unit/test_martin_config.py` fails if any map layer gets an owner, address or link column.
+- Owner names reach only `shortlist.csv`, `all_corridors.csv` and `report.md` in `data/outputs/`, which stay on this computer (`data/` is never committed). `shortlist.geojson` has parcel IDs and acreage but no owner names, since GeoJSON is the file that gets passed around.
+- The raw cache in `data/raw/tn_parcels/` holds owner names too, and is never committed either.
+
+Don't paste owner names into docs, issues, screenshots or chat.
+
+### Which parcels a corridor is on
+
+Computed by two database views (migration 0010), so they always match the latest parcel ingest; there's no separate step to run.
+
+- **Turbine parcel** (`corridor_turbine_parcels`): the parcel under the bottom of the stretch, where the turbine would go. On a shared property line the bigger parcel wins. If the point falls in a gap between parcels (a road, a river bed), it's the nearest parcel within 100 m, with its distance, flagged `turbine_outside_parcel`. Beyond 100 m there's no turbine parcel (`no_parcel_found`).
+- **Parcels crossed** (`corridor_parcels`): every parcel the stretch touches, longest share first. Streams are often property lines, so a stretch running along one counts the parcels on **both** banks. That's on purpose: both owners would have a say in a diversion.
+- **Minimum acreage (D-03, still open):** turbine parcels under the 10-acre placeholder (`config/parcels.yaml`) are flagged `parcel_under_min_acres`. Nothing is filtered or re-ranked on it yet.
+
+On the five counties' latest runs, 4,779 of 4,919 ranked corridors have a turbine parcel; the 140 without all end outside the five counties (streams within 500 m of a county line are analyzed for both counties). Of the six streams that reach 1 kW, Negro Den Creek and the Elk River headwater share one 1,901-acre Grundy parcel, Big Creek sits on a 10,481-acre one and Bethel Creek on a 1,355-acre one. Parcels that large are often timber company, conservation or public land, which changes who to contact. Rogers Branch's turbine parcel is 76 acres (the stretch crosses 3 parcels) and the unnamed Marion stream's is 44 acres.
