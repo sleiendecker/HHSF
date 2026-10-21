@@ -79,7 +79,7 @@ class SiteFactor(Curve):
 PARTS = ("hydro", "buildability", "agriculture", "privacy", "logistics")
 SITE_FACTORS = {
     "buildability": ("buildable_acres", "nearest_buildable_ft", "public_road_ft"),
-    "agriculture": ("farmland_acres", "cropland_acres", "pasture_aum"),
+    "agriculture": ("farmland_acres", "cropland_acres", "pasture_aum", "open_cropland_acres"),
     "logistics": ("drive_minutes",),
 }
 
@@ -258,6 +258,7 @@ class SiteInputs:
     farmland_acres: float | None = None  # prime + statewide importance
     cropland_acres: float | None = None  # capability class 1-3
     pasture_aum: float | None = None
+    open_cropland_acres: float | None = None  # open land (NLCD) on class 1-3 soils
     drive_minutes: float | None = None
 
 
@@ -433,6 +434,10 @@ SITE_FACTOR_TEXT = {
     "farmland_acres": ("{:,.1f} acres of prime farmland", "no farmland computed"),
     "cropland_acres": ("{:,.1f} acres of class 1-3 cropland", "no farmland computed"),
     "pasture_aum": ("pasture for {:,.0f} AUM a year", "no farmland computed"),
+    "open_cropland_acres": (
+        "{:,.1f} acres of class 1-3 cropland already open",
+        "no land cover computed",
+    ),
     "drive_minutes": ("{:,.0f} min drive", "no drive time"),
 }
 

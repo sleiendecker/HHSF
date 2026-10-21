@@ -107,6 +107,12 @@ SHORTLIST_COLUMNS = [
     "turbine_parcel_wet_acres",
     "turbine_parcel_pasture_aum",
     "farmland_flags",
+    "turbine_parcel_open_acres",
+    "turbine_parcel_open_cropland_acres",
+    "turbine_parcel_forest_acres",
+    "turbine_parcel_developed_acres",
+    "turbine_parcel_canopy_pct",
+    "landcover_flags",
     "explanation",
 ]
 ALL_CORRIDORS_COLUMNS = ["status", *SHORTLIST_COLUMNS]
@@ -152,6 +158,10 @@ FARMLAND_NOT_COMPUTED = "farmland_not_computed"  # the turbine parcel wasn't ana
 # The parcel has at least this many acres with no soils loaded (soils_not_loaded, as for
 # buildable ground): its farmland may be understated.
 FARMLAND_UNSURVEYED_ACRES = 1.0
+
+# landcover_flags values. Not a filter.
+NO_OPEN_LAND = "no_open_land"  # no field, pasture or crops on the turbine parcel (NLCD 2021)
+LANDCOVER_NOT_COMPUTED = "landcover_not_computed"  # the turbine parcel wasn't analyzed
 
 
 @dataclass(frozen=True)
@@ -243,6 +253,17 @@ class Farmland:
 
 
 @dataclass(frozen=True)
+class Landcover:
+    """What the turbine parcel is now (hhsf.analysis.landcover, NLCD 2021), in acres."""
+
+    open_acres: float  # grassland, pasture/hay, crops
+    open_cropland_acres: float  # open land on capability class 1-3 soils
+    forest_acres: float
+    developed_acres: float
+    canopy_pct: float | None  # mean tree canopy cover
+
+
+@dataclass(frozen=True)
 class FarmlandInfo:
     """The settings farmland was computed with (config/farmland.yaml)."""
 
@@ -298,6 +319,8 @@ class ExportRow:
     buildable_flags: tuple[str, ...] = ()
     turbine_farmland: Farmland | None = None  # None: no turbine parcel, or not computed
     farmland_flags: tuple[str, ...] = ()
+    turbine_landcover: Landcover | None = None  # None: no turbine parcel, or not computed
+    landcover_flags: tuple[str, ...] = ()
     overall_score: float | None = None  # FR-7; only for profiles with an overall section
     buildability_subscore: float | None = None  # None: no data, left out
     agriculture_subscore: float | None = None
@@ -331,6 +354,7 @@ class RunInfo:
     soils_version: str | None = None  # usda_ssurgo version and download date; None: not loaded
     buildable: BuildableInfo | None = None  # None: buildable ground never computed
     farmland: FarmlandInfo | None = None  # None: farmland never computed
+    landcover_year: int | None = None  # NLCD year; None: land cover never computed
 
 
 # --- Rows ---------------------------------------------------------------------
@@ -439,6 +463,15 @@ def farmland_flags(turbine: Parcel | None, f: Farmland | None) -> tuple[str, ...
     return tuple(flags)
 
 
+def landcover_flags(turbine: Parcel | None, lc: Landcover | None) -> tuple[str, ...]:
+    """What to check about the turbine parcel's land cover (only when it's computed)."""
+    if turbine is None:
+        return ()
+    if lc is None:
+        return (LANDCOVER_NOT_COMPUTED,)
+    return (NO_OPEN_LAND,) if lc.open_acres == 0 else ()
+
+
 def _ft(m: float | None) -> int | None:
     return None if m is None else round(units.m_to_ft(m))
 
@@ -453,6 +486,7 @@ def record(r: ExportRow) -> dict:
     road = r.turbine_road
     b = r.turbine_buildable
     f = r.turbine_farmland
+    lc = r.turbine_landcover
     return {
         "status": r.status,
         "rank": r.rank,
@@ -522,6 +556,12 @@ def record(r: ExportRow) -> dict:
         "turbine_parcel_wet_acres": f and round(f.wet_acres, 1),
         "turbine_parcel_pasture_aum": f and round(f.pasture_aum),
         "farmland_flags": "; ".join(r.farmland_flags),
+        "turbine_parcel_open_acres": lc and round(lc.open_acres, 1),
+        "turbine_parcel_open_cropland_acres": lc and round(lc.open_cropland_acres, 1),
+        "turbine_parcel_forest_acres": lc and round(lc.forest_acres, 1),
+        "turbine_parcel_developed_acres": lc and round(lc.developed_acres, 1),
+        "turbine_parcel_canopy_pct": lc and _round(lc.canopy_pct, 0),
+        "landcover_flags": "; ".join(r.landcover_flags),
         "explanation": r.explanation.get("summary", ""),
     }
 
@@ -701,6 +741,7 @@ def caveats(info: RunInfo) -> list[str]:
         _drive_caveat(info),
         _buildable_caveat(info),
         _farmland_caveat(info),
+        _landcover_caveat(info),
         *_overall_caveat(info),
     ]
 
@@ -841,6 +882,26 @@ def _farmland_caveat(info: RunInfo) -> str:
         "soil survey loaded. **Where the data runs out:** a forested parcel is scored on "
         "its soils as if cleared; soil maps are drawn at 1:24,000 and each map unit gets "
         "its main soil's class, so pockets of better or worse ground hide in it."
+    )
+
+
+def _landcover_caveat(info: RunInfo) -> str:
+    if info.landcover_year is None:
+        return (
+            "**Land cover isn't computed**, so its columns are empty. Run `make analyze` (or "
+            "`uv run hhsf analyze landcover`), then export again."
+        )
+    return (
+        f"**Land cover is from USGS NLCD {info.landcover_year}** (30 m cells classified from "
+        "Landsat imagery, with the USFS tree canopy cover of the same year). "
+        "`turbine_parcel_open_acres` is grassland, pasture/hay and crops on the turbine "
+        "parcel: ground that could be farmed without clearing trees. "
+        "`turbine_parcel_open_cropland_acres` is the part of it on class 1–3 cropland soils, "
+        "the farmland that's usable now; the farmland columns count the soils under the "
+        "forest too. `turbine_parcel_canopy_pct` is the mean tree canopy cover. Not a filter: "
+        "`no_open_land` removes nothing. **Where the data runs out:** it's a few years old "
+        "and 30 m cells blur fields smaller than about half an acre and the edges of "
+        "woods; clear-cuts can show as grassland or shrub until they grow back."
     )
 
 
@@ -1112,6 +1173,31 @@ def _farmland_counts(info: RunInfo, ranked: list[ExportRow]) -> list[str]:
     ]
 
 
+def _landcover_counts(info: RunInfo, ranked: list[ExportRow]) -> list[str]:
+    if info.landcover_year is None:
+        return []
+    covers = [r.turbine_landcover for r in ranked if r.turbine_landcover]
+    n = Counter(f for r in ranked for f in r.landcover_flags)
+    return [
+        *_table(
+            [f"Land cover on the turbine parcel (NLCD {info.landcover_year}, ranked)", "Corridors"],
+            [
+                [
+                    "Some open land (field, pasture, crops)",
+                    str(sum(c.open_acres > 0 for c in covers)),
+                ],
+                [
+                    "Some of it on class 1–3 cropland soils",
+                    str(sum(c.open_cropland_acres > 0 for c in covers)),
+                ],
+                ["No open land (all forest, shrub, water or built up)", str(n[NO_OPEN_LAND])],
+                ["Not computed (turbine parcel not analyzed)", str(n[LANDCOVER_NOT_COMPUTED])],
+            ],
+        ),
+        "",
+    ]
+
+
 def _count(rows: list[ExportRow], in_area: bool) -> str:
     return str(sum(r.in_drive_area is in_area for r in rows))
 
@@ -1192,6 +1278,7 @@ def render_report(info: RunInfo, rows: list[ExportRow], top_n: int = 20) -> str:
         *_access_counts(info, ranked),
         *_buildable_counts(info, ranked),
         *_farmland_counts(info, ranked),
+        *_landcover_counts(info, ranked),
         "## Caveats",
         "",
         *[f"- {c}" for c in caveats(info)],

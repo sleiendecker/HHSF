@@ -1,6 +1,6 @@
 # Hydro Scoring and Ranking
 
-How `hhsf score hydro` (or `make score`) turns a finished hydro run into a ranked shortlist, and why it ranks the way it does. The numbers it scores (head, firm flow, firm power) are explained in [ASSUMPTIONS.md](ASSUMPTIONS.md). The judgment calls behind the rules are in [DECISIONS.md](DECISIONS.md) (D-01, D-09, D-11). Every breakpoint and weight lives in the scoring profile, [`config/scoring_profiles/hydro_v4.yaml`](../config/scoring_profiles/hydro_v4.yaml) by default. `hydro_v2` is `hydro_v1` plus the `low_flow` tier (D-09, decided 2026-10-19); `hydro_v3` is `hydro_v2` with the 10 ft net-head minimum applied to every tier (D-11, 2026-10-20); `hydro_v4` keeps `hydro_v3`'s hydro rules and adds the [overall score](#the-overall-score-fr-7) that ranks each tier (FR-7, D-15, 2026-10-21). Earlier score runs used the older profiles.
+How `hhsf score hydro` (or `make score`) turns a finished hydro run into a ranked shortlist, and why it ranks the way it does. The numbers it scores (head, firm flow, firm power) are explained in [ASSUMPTIONS.md](ASSUMPTIONS.md). The judgment calls behind the rules are in [DECISIONS.md](DECISIONS.md) (D-01, D-09, D-11). Every breakpoint and weight lives in the scoring profile, [`config/scoring_profiles/hydro_v5.yaml`](../config/scoring_profiles/hydro_v5.yaml) by default. `hydro_v2` is `hydro_v1` plus the `low_flow` tier (D-09, decided 2026-10-19); `hydro_v3` is `hydro_v2` with the 10 ft net-head minimum applied to every tier (D-11, 2026-10-20); `hydro_v4` keeps `hydro_v3`'s hydro rules and adds the [overall score](#the-overall-score-fr-7) that ranks each tier (FR-7, D-15, 2026-10-21); `hydro_v5` adds cropland that's already open to its agriculture part (D-16, 2026-10-21). Earlier score runs used the older profiles.
 
 ## The short version
 
@@ -83,13 +83,14 @@ Within a tier: higher overall score first (`hydro_v4`; with older profiles, high
 | Buildability (20%) | Buildable acres on the turbine parcel (50%) | 0 → 0, ½ acre → 40, 5 acres → 100 |
 | | Turbine end to the nearest buildable ground, ft (25%) | 0 → 100, ¼ mile → 50, 1 mile → 0; none → 0 |
 | | Turbine end to the nearest public road, ft (25%) | 500 → 100, 1 mile → 0 |
-| Agriculture (20%) | Prime farmland and farmland of statewide importance, acres (40%) | 0 → 0, 5 → 70, 20 → 100 |
-| | Cropland (capability class 1–3), acres (30%) | 0 → 0, 10 → 60, 40 → 100 |
-| | Pasture, AUM a year (30%) | 0 → 0, 60 (5 cows) → 50, 240 (20 cows) → 100 |
+| Agriculture (20%) | Prime farmland and farmland of statewide importance, acres (30%; 40% in `hydro_v4`) | 0 → 0, 5 → 70, 20 → 100 |
+| | Cropland (capability class 1–3), acres (20%; 30% in `hydro_v4`) | 0 → 0, 10 → 60, 40 → 100 |
+| | Pasture, AUM a year (20%; 30% in `hydro_v4`) | 0 → 0, 60 (5 cows) → 50, 240 (20 cows) → 100 |
+| | Cropland that's open now (NLCD 2021 field, pasture or crops on class 1–3 soils), acres (30%; `hydro_v5` only, D-16) | 0 → 0, 5 → 60, 20 → 100 |
 | Privacy (10%) | Not built (FR-6) | always left out |
 | Logistics (10%) | Drive from downtown Chattanooga, minutes | 30 → 100, 60 → 70, 120 → 0 |
 
-The site numbers are the flags of PARTs 15–18: buildable ground ([ASSUMPTIONS.md](ASSUMPTIONS.md#buildable-ground)), farmland ([ASSUMPTIONS.md](ASSUMPTIONS.md#farmland)), the nearest public road and the drive time ([ASSUMPTIONS.md](ASSUMPTIONS.md#roads-and-drive-time)). They're read when `make score` runs, so run `make analyze` and `make drive-time` first, and score again after either.
+The site numbers are the flags of PARTs 15–18 and 20: buildable ground ([ASSUMPTIONS.md](ASSUMPTIONS.md#buildable-ground)), farmland ([ASSUMPTIONS.md](ASSUMPTIONS.md#farmland)), land cover ([ASSUMPTIONS.md](ASSUMPTIONS.md#land-cover)), the nearest public road and the drive time ([ASSUMPTIONS.md](ASSUMPTIONS.md#roads-and-drive-time)). They're read when `make score` runs, so run `make analyze` and `make drive-time` first, and score again after either.
 
 **Missing data is left out, never scored as zero** (D-15). A factor with no data (no turbine parcel, a step not run, no route) is dropped and the part's other weights rescale; a part with nothing left is dropped and the other parts' weights rescale. Privacy has no data at all yet, so the four built parts always count as 44%, 22%, 22% and 11% (owner, D-15). A measured nothing is a zero, though: a parcel with no buildable ground or no farmland scores 0 on that factor. So a corridor with no turbine parcel (it ends outside the loaded counties) is scored on hydro, road access and drive time alone, and can look better than one whose parcel was checked and found wanting. 140 ranked corridors are in that position.
 
@@ -98,6 +99,8 @@ The site numbers are the flags of PARTs 15–18: buildable ground ([ASSUMPTIONS.
 ### What it did (five counties, profile hydro_v4, 2026-10-21)
 
 The three Grundy streams change order: Big Creek (hydro 40, overall 58: 917 buildable acres and 923 acres of prime farmland on its parcel) goes from #3 to #1, ahead of Negro Den Creek (hydro 64, overall 57) and the Elk River (52). In Marion, Bethel Creek (overall 55) passes the unnamed stream (hydro 66, overall 43: no buildable ground or farmland on its 44-acre parcel). Rogers Branch, Sequatchie's only medium-confidence site, stays #1 at 47 (hydro 71; buildability 25, agriculture 7). The 4,913 low-flow corridors are almost all reordered: their order now follows the land more than their tiny power estimates. Across ranked corridors the median buildability is 71, agriculture 70 and logistics 55; 140 have no agriculture part (no turbine parcel) and 34 no logistics part (no drive time).
+
+With `hydro_v5` (the same day, PART 20) the 1 kW order doesn't change: all six parcels are about 99% forest, so open cropland adds nothing to any of them (Big Creek 56, Negro Den Creek 52, Elk River 48, Bethel Creek 51, Marion's unnamed stream 43, Rogers Branch 47). The median agriculture part drops from 70 to 63, and low-flow corridors move an average of 44 places.
 
 ## The explanation
 

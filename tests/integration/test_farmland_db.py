@@ -5,6 +5,7 @@ import csv
 from dataclasses import replace
 
 import pytest
+import shapely
 from shapely.geometry import MultiPolygon, box
 from sqlalchemy import text
 
@@ -20,6 +21,10 @@ pytestmark = pytest.mark.integration
 
 SETTINGS = farmland.Settings(max_capability_class=3, wet_drainage=["Poorly drained"])
 HALF = 0.004  # the parcel reaches this many degrees each way from the turbine end
+
+
+def dense(*bounds):
+    return shapely.segmentize(box(*bounds), 0.0005)
 
 
 @pytest.fixture
@@ -51,8 +56,9 @@ def site(engine, hydro_run):  # noqa: F811
             AREA,
             [prime, steep],
             [
-                soils.SoilPolygon(1, "1", "TN999", MultiPolygon([box(x - 1, y, x + 1, y + 1)])),
-                soils.SoilPolygon(2, "2", "TN999", MultiPolygon([box(x - 1, y - 1, x + 1, y)])),
+                # Densified: a long straight edge in degrees bends when projected to meters.
+                soils.SoilPolygon(1, "1", "TN999", MultiPolygon([dense(x - 1, y, x + 1, y + 1)])),
+                soils.SoilPolygon(2, "2", "TN999", MultiPolygon([dense(x - 1, y - 1, x + 1, y)])),
             ],
             {"TN999": "TN999 version 1 (1/1/2026)"},
         )
@@ -75,8 +81,8 @@ def test_soils_keep_their_farmland_attributes(engine, site):  # noqa: F811
     with engine.connect() as conn:
         rows = conn.execute(
             text(
-                "SELECT mukey, farmland_class, capability_class, capability_pct, pasture_aum"
-                " FROM soils ORDER BY 1"
+                "SELECT DISTINCT mukey, farmland_class, capability_class, capability_pct,"
+                " pasture_aum FROM soils ORDER BY 1"  # densified polygons come in pieces
             )
         ).all()
     assert [tuple(r) for r in rows] == [
@@ -185,3 +191,83 @@ def test_overall_score_reads_farmland_and_drive_time(engine, site, tmp_path):  #
     _, out_dir, _ = export_run.export_hydro(engine, AREA, out_root=tmp_path)
     with (out_dir / "shortlist.csv").open() as f:
         assert all(r["overall_score"] for r in csv.DictReader(f))
+
+
+def write_landcover(folder, x, y):
+    """Pasture with no trees north of the turbine end, forest at 80% canopy south of it
+    (NLCD's 30 m grid in EPSG:5070)."""
+    import numpy as np
+    import rasterio
+    from rasterio.transform import from_origin
+    from shapely.geometry import Point
+
+    from hhsf.core import crs
+
+    pt = crs.to_analysis(Point(x, y))
+    x0 = (pt.x // 30) * 30 - 3000 + 15
+    y1 = (pt.y // 30) * 30 + 3000 + 15
+    n = 200
+    rows_y = y1 - (np.arange(n) + 0.5) * 30
+    north = np.repeat((rows_y > pt.y)[:, None], n, axis=1)
+    layers = {
+        "land_cover": np.where(north, 81, 41).astype("uint8"),
+        "tree_canopy": np.where(north, 0, 80).astype("uint8"),
+    }
+    paths = {}
+    for layer, data in layers.items():
+        paths[layer] = folder / f"{layer}.tif"
+        with rasterio.open(
+            paths[layer], "w", driver="GTiff", width=n, height=n, count=1, dtype="uint8",
+            crs="EPSG:5070", transform=from_origin(x0, y1, 30, 30),
+        ) as f:  # fmt: skip
+            f.write(data, 1)
+    return paths
+
+
+def test_land_cover_counts_open_good_soil_and_feeds_the_score(engine, site, tmp_path):  # noqa: F811
+    from hhsf.analysis import landcover
+    from tests.integration.test_flood_db import outlet as turbine_end
+
+    corridor, parcel_acres = site
+    _, x, y = turbine_end(engine)
+    run(engine)  # farmland
+    rasters = write_landcover(tmp_path, x, y)
+    with engine.begin() as conn:
+        targets = buildable.turbine_parcels(conn, buildable.latest_hydro_run(conn, AREA.key))
+        [r] = landcover.run_landcover(conn, AREA, targets, rasters, SETTINGS, 2021, lambda _: None)
+    assert r.parcel_acres == pytest.approx(parcel_acres, rel=0.05)
+    assert r.open_acres == pytest.approx(parcel_acres / 2, rel=0.1)
+    assert r.forest_acres == pytest.approx(parcel_acres / 2, rel=0.1)
+    # The pasture is on the prime class 2 soil (north): open prime = open cropland = open.
+    assert r.open_prime_acres == pytest.approx(r.open_acres, rel=0.05)
+    assert r.open_cropland_acres == pytest.approx(r.open_acres, rel=0.05)
+    assert r.canopy_pct == pytest.approx(40, abs=5)
+
+    with engine.connect() as conn:
+        link = conn.execute(
+            text("SELECT open_acres FROM corridor_turbine_landcover WHERE corridor_id = :c"),
+            {"c": corridor},
+        ).scalar_one()
+    assert link == pytest.approx(r.open_acres)
+
+    run_id, _, _ = scoring_run.score_hydro(engine, AREA, scoring.load_profile("hydro_v5"))
+    with engine.connect() as conn:
+        e = conn.execute(
+            text("SELECT explanation FROM hydro_scores WHERE run_id = :r AND corridor_id = :c"),
+            {"r": run_id, "c": corridor},
+        ).scalar_one()
+        view = conn.execute(
+            text(
+                "SELECT turbine_open_acres, turbine_canopy_pct FROM latest_hydro_scores"
+                " WHERE corridor_id = :c"
+            ),
+            {"c": corridor},
+        ).one()
+    agri = next(p for p in e["overall"]["parts"] if p["part"] == "agriculture")
+    assert "open_cropland_acres" in [f["factor"] for f in agri["factors"]]
+    assert view.turbine_open_acres == pytest.approx(r.open_acres)
+    _, out_dir, _ = export_run.export_hydro(engine, AREA, out_root=tmp_path)
+    with (out_dir / "all_corridors.csv").open() as f:
+        exported = [x for x in csv.DictReader(f) if x["turbine_parcel_open_acres"]]
+    assert len(exported) == 1 and exported[0]["landcover_flags"] == ""
+    assert "Land cover is from USGS NLCD 2021" in (out_dir / "report.md").read_text()

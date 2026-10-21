@@ -14,12 +14,14 @@ from hhsf.analysis import (
     farmland,
     gauges,
     hydro,
+    landcover,
     run,
     scoring,
     scoring_run,
     streamstats,
 )
-from hhsf.core.config import REPO_ROOT, hydrography_source, load_aoi
+from hhsf.core import crs
+from hhsf.core.config import REPO_ROOT, data_source_settings, hydrography_source, load_aoi
 from hhsf.core.db import engine, record_source
 from hhsf.ingest import (
     boundary,
@@ -31,6 +33,7 @@ from hhsf.ingest import (
     soils,
     terrain,
 )
+from hhsf.ingest import landcover as nlcd
 
 app = typer.Typer(help="Hydro Homestead Site Finder", no_args_is_help=True)
 db_app = typer.Typer(help="Database schema", no_args_is_help=True)
@@ -389,6 +392,41 @@ def analyze_farmland(aoi: str = AOI_OPTION) -> None:
     )
 
 
+@analyze_app.command("landcover")
+def analyze_landcover(
+    aoi: str = AOI_OPTION,
+    refresh: bool = typer.Option(False, help="Download the land cover again, ignoring the cache"),
+) -> None:
+    """Land cover on each corridor's turbine parcel: open field, forest, built up, tree
+    canopy, and open land on good soils, from USGS NLCD 2021 (needs make ingest and
+    analyze hydro)."""
+    area = load_aoi(aoi)
+    settings = farmland.load_settings()
+    with engine().connect() as conn:
+        hydro_run = buildable.latest_hydro_run(conn, area.key)
+        if hydro_run is None:
+            raise typer.BadParameter(f"No hydro run for {area.name}. Run `make analyze` first.")
+        targets = buildable.turbine_parcels(conn, hydro_run)
+    if not targets:
+        typer.echo(f"No turbine parcels for hydro run {hydro_run}: are parcels loaded?")
+        return
+    needed = shapely.GeometryCollection([crs.to_analysis(g) for _, g in targets]).bounds
+    rasters, source = nlcd.fetch_landcover(area.key, needed, refresh, echo=typer.echo)
+    year = int(data_source_settings(nlcd.SOURCE_KEY)["year"])
+    typer.echo(f"Land cover on {len(targets):,} turbine parcels of hydro run {hydro_run}...")
+    with engine().begin() as conn:
+        record_source(conn, source)
+        results = landcover.run_landcover(conn, area, targets, rasters, settings, year, typer.echo)
+    total = sum(r.parcel_acres for r in results)
+    opened = sum(r.open_acres for r in results)
+    typer.echo(
+        f"Saved {len(results):,} parcels: {opened:,.0f} of {total:,.0f} acres open "
+        f"({opened / total:.0%}), {sum(r.open_cropland_acres for r in results):,.0f} of them on "
+        f"class 1-{settings.max_capability_class} soils; "
+        f"{sum(r.open_acres == 0 for r in results):,} parcels have no open land."
+    )
+
+
 @analyze_app.command("drive-time")
 def analyze_drive_time(
     aoi: str = AOI_OPTION,
@@ -421,7 +459,7 @@ def analyze_drive_time(
 @score_app.command("hydro")
 def score_hydro(
     aoi: str = AOI_OPTION,
-    profile: str = typer.Option("hydro_v4", help="Scoring profile from config/scoring_profiles/"),
+    profile: str = typer.Option("hydro_v5", help="Scoring profile from config/scoring_profiles/"),
     run_id: int | None = typer.Option(
         None, help="Hydro run to score. Default: the AOI's latest finished one."
     ),

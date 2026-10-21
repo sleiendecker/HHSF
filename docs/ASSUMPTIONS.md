@@ -489,3 +489,31 @@ The six 1 kW streams:
 | Big Creek | Grundy | 10,481 acres | 923 acres | 4,705 acres | 10 | 31,171 |
 
 As with buildable ground, the steep ground that makes the power leaves little to farm on the small parcels: Rogers Branch's and the Marion stream's parcels are class 6–7 slopes with almost no pasture yield. Bethel Creek's parcel is half class 7 and half class 8 (rock outcrop and the like), Negro Den Creek's almost all class 7, each with about 28 acres of class 2–3 ground. Only Big Creek's parcel, on the plateau top, has real farmland.
+
+## Land cover
+
+PART 20 adds what each turbine parcel is **now**. The farmland step counts what the soils could do; most of these parcels are wooded, so good soil under forest is a field only after clearing, stumping and liming it. This uses the USGS National Land Cover Database (NLCD) for 2021, the latest year MRLC's coverage service serves: one land-cover class per 30 m cell, classified from Landsat imagery, plus the USFS tree canopy cover for the same year (the percent of each cell under tree crowns).
+
+- **Source:** MRLC's coverage service (`config/data_sources.yaml`, `mrlc_nlcd`), public domain. It serves the rasters in Albers equal-area, the analysis projection, so they're used as they are, not resampled. `hhsf analyze landcover` (part of `make analyze`) downloads only a box around the AOI's turbine parcels (1–3 MB per county, a second or two), cached in `data/raw/mrlc_nlcd/<aoi>/`.
+- **What's counted on each turbine parcel**, over the 30 m cells whose center is inside it, saved in `parcel_landcover`:
+
+| Column | NLCD classes |
+| --- | --- |
+| `open_acres` | grassland/herbaceous (71), pasture/hay (81), cultivated crops (82): land that could be grazed, hayed or planted without clearing trees |
+| `pasture_hay_acres`, `crop_acres` | 81 and 82 alone |
+| `forest_acres` | deciduous, evergreen and mixed forest (41–43) |
+| `developed_acres` | developed open space (lawns, roadsides), low, medium and high intensity (21–24) |
+| `open_prime_acres` | open land on prime farmland soils (or farmland of statewide importance) |
+| `open_cropland_acres` | open land on cropland soils, capability class 1–3 (`config/farmland.yaml`): good soil that's already cleared |
+| `canopy_pct` | mean tree canopy cover over the parcel |
+
+  The soils are drawn onto the same 30 m grid, so a cell counts as open cropland when its center is on a class 1–3 soil. `corridor_turbine_landcover` links each corridor to its turbine parcel's row. Re-ingesting parcels deletes the rows; `make analyze` computes them again.
+- **Flags:** `no_open_land` (no field, pasture or crops on the turbine parcel) and `landcover_not_computed`. Not a filter.
+- **In the score:** profile `hydro_v5` adds `open_cropland_acres` to the agriculture part (D-16, [SCORING.md](SCORING.md#the-overall-score-fr-7)).
+- **What it can't see:** 2021 is a few years old. 30 m cells blur fields smaller than about half an acre and the edges of woods. A recent clear-cut can show as grassland or shrub, and a hayfield gone to brush can still show as pasture.
+
+### What it found (2026-10-21)
+
+The turbine parcels are mostly forest: of their 654,000 acres, 516,000 (79%) are forest and 96,000 (15%) open; median tree canopy across ranked stretches is 76%. Only 43% of the prime farmland soils and 27% of the class 1–3 cropland soils on them are open today. Of the 4,919 ranked stretches, 1,043 have no open land at all on their turbine parcel (140 more have no turbine parcel).
+
+All six 1 kW streams' turbine parcels are about 99% forest, with 86–91% canopy: Big Creek's 10,488 acres have 11 acres open (8 of them on cropland soils, 2.4 on prime farmland); Negro Den Creek and the Elk River share a parcel with none; Rogers Branch's and Bethel Creek's have a fraction of an acre; Marion's unnamed stream's has none. Every one would mean clearing land to farm.

@@ -91,6 +91,25 @@ usgs_3dep_13:
   license: Public domain (US Government work)
   version: 3DEP 1/3 arc-second, current tiles  # the ingest adds each tile's last-modified date
 
+mrlc_nlcd:
+  description: >-
+    USGS National Land Cover Database (NLCD) 2021 land cover, 30 m, and the USFS NLCD tree
+    canopy cover 2021 (percent of each 30 m cell under tree crowns), from the Multi-Resolution
+    Land Characteristics Consortium's coverage service (WCS) in Albers equal-area (EPSG:5070,
+    the analysis projection). Only a box around the AOI's turbine parcels is downloaded,
+    cached in data/raw/mrlc_nlcd/<aoi>/. Used for what each turbine parcel is now: open
+    field, forest or built up (PART 20); see docs/ASSUMPTIONS.md, "Land cover".
+  url: https://www.mrlc.gov/geoserver/mrlc_download/wcs
+  license: >-
+    Public domain (US Government work: USGS and USFS, via MRLC). Cite as "U.S. Geological
+    Survey, National Land Cover Database 2021" and "USDA Forest Service, NLCD Tree Canopy
+    Cover 2021". Classified from 30 m Landsat imagery: a planning screen, not a survey.
+  version: NLCD 2021 Land Cover (CONUS); NLCD Tree Canopy Cover 2021 (v2021-4)
+  coverages:
+    land_cover: mrlc_download__NLCD_2021_Land_Cover_L48
+    tree_canopy: mrlc_download__nlcd_tcc_conus_2021_v2021-4
+  year: 2021
+
 fema_nfhl:
   description: >-
     FEMA National Flood Hazard Layer (NFHL), "Flood Hazard Zones" (layer 28, the S_FLD_HAZ_AR

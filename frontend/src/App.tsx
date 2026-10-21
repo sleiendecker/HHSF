@@ -82,6 +82,12 @@ const BUILDABLE_COLOR = "#16a34a";
 // and other cropland (capability class 1-3: keep in step with config/farmland.yaml). Nothing else is drawn.
 const FARMLAND_COLORS = { prime: "#1b7837", primeIf: "#7fbf7b", cropland: "#d9b44a" };
 const MAX_CROPLAND_CLASS = 3;
+// USGS NLCD 2021 land cover (PART 20), drawn by MRLC's own map service in NLCD's standard colors.
+const NLCD_WMS =
+  "https://www.mrlc.gov/geoserver/mrlc_display/NLCD_2021_Land_Cover_L48/ows?service=WMS&version=1.3.0" +
+  "&request=GetMap&layers=NLCD_2021_Land_Cover_L48&styles=&format=image/png&transparent=true" +
+  "&crs=EPSG:3857&width=256&height=256&bbox={bbox-epsg-3857}";
+const NLCD_COLORS = { pasture: "#dcd939", crops: "#ab6c28", grassland: "#dfdfc2", forest: "#68ab5f", developed: "#eb0000" };
 
 // Scores and plain streams are the same lines, so only one set shows at a time.
 function setScoresVisible(map: maplibregl.Map, visible: boolean) {
@@ -109,6 +115,8 @@ export function App() {
   const showBuildableRef = useRef(showBuildable);
   const [showFarmland, setShowFarmland] = useState(false);
   const showFarmlandRef = useRef(showFarmland);
+  const [showLandCover, setShowLandCover] = useState(false);
+  const showLandCoverRef = useRef(showLandCover);
   const [zoom, setZoom] = useState(10);
 
   useEffect(() => {
@@ -161,6 +169,12 @@ export function App() {
         minzoom: SOILS_MIN_ZOOM,
         attribution: "Soils: USDA NRCS SSURGO",
       });
+      map.addSource("nlcd", {
+        type: "raster",
+        tiles: [NLCD_WMS],
+        tileSize: 256,
+        attribution: "Land cover: USGS NLCD 2021 (MRLC)",
+      });
       map.addSource("buildable", {
         type: "vector",
         tiles: [`${TILES}/parcel_buildable/{z}/{x}/{y}`],
@@ -169,6 +183,15 @@ export function App() {
       map.addSource("scores", {
         type: "vector",
         tiles: [`${TILES}/latest_hydro_scores/{z}/{x}/{y}`],
+      });
+
+      // Land cover at the very bottom, over the basemap.
+      map.addLayer({
+        id: "nlcd-raster",
+        type: "raster",
+        source: "nlcd",
+        layout: { visibility: showLandCoverRef.current ? "visible" : "none" },
+        paint: { "raster-opacity": 0.6 },
       });
 
       map.addLayer({
@@ -408,6 +431,12 @@ export function App() {
   }, [showSoils]);
 
   useEffect(() => {
+    showLandCoverRef.current = showLandCover;
+    if (mapRef.current?.getLayer("nlcd-raster"))
+      mapRef.current.setLayoutProperty("nlcd-raster", "visibility", showLandCover ? "visible" : "none");
+  }, [showLandCover]);
+
+  useEffect(() => {
     showFarmlandRef.current = showFarmland;
     if (mapRef.current?.getLayer("farmland-fill"))
       mapRef.current.setLayoutProperty("farmland-fill", "visibility", showFarmland ? "visible" : "none");
@@ -486,6 +515,20 @@ export function App() {
               <span className="swatch" style={{ background: BUILDABLE_COLOR }} /> slope 15% or less, outside the 100-year
               floodplain, soils not very limited for septic, in patches of half an acre or more. A screen, not a site
               evaluation.
+            </p>
+          )}
+          <label className="toggle">
+            <input type="checkbox" checked={showLandCover} onChange={(e) => setShowLandCover(e.target.checked)} />
+            Show land cover (2021)
+          </label>
+          {showLandCover && (
+            <p className="hint">
+              <span className="swatch" style={{ background: NLCD_COLORS.pasture }} /> pasture/hay{" "}
+              <span className="swatch" style={{ background: NLCD_COLORS.crops }} /> crops{" "}
+              <span className="swatch" style={{ background: NLCD_COLORS.grassland }} /> grassland{" "}
+              <span className="swatch" style={{ background: NLCD_COLORS.forest }} /> forest{" "}
+              <span className="swatch" style={{ background: NLCD_COLORS.developed }} /> developed. USGS NLCD, 30 m
+              cells from satellite imagery.
             </p>
           )}
           <label className="toggle">
