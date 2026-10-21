@@ -1,6 +1,8 @@
 # Common tasks. Run `make` to list them.
 .DEFAULT_GOAL := help
 AOI ?= sequatchie_tn
+BACKUP_DIR := data/backups
+STAMP := $(shell date +%Y%m%d-%H%M%S)
 
 help:  ## List available commands
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  make %-10s %s\n", $$1, $$2}'
@@ -47,7 +49,22 @@ lint:  ## Check code style
 	uv run ruff check .
 	uv run ruff format --check .
 
+backup:  ## Save the whole database to data/backups/ (includes owner names: keep it private)
+	@mkdir -p $(BACKUP_DIR)
+	@docker compose exec -T db pg_dump -U hhsf -d hhsf --format=custom > $(BACKUP_DIR)/hhsf-$(STAMP).dump.part
+	@# Rename only when complete, so a failed dump is never mistaken for a good one.
+	@mv $(BACKUP_DIR)/hhsf-$(STAMP).dump.part $(BACKUP_DIR)/hhsf-$(STAMP).dump
+	@echo "Saved $(BACKUP_DIR)/hhsf-$(STAMP).dump ($$(du -h $(BACKUP_DIR)/hhsf-$(STAMP).dump | cut -f1 | tr -d ' '))"
+
+restore:  ## Replace the database with a backup: make restore FILE=data/backups/<name>.dump
+	@test -n "$(FILE)" || { echo "Name the backup: make restore FILE=<path>. Backups:"; ls -1t $(BACKUP_DIR)/*.dump 2>/dev/null; exit 1; }
+	@test -f "$(FILE)" || { echo "No file $(FILE)"; exit 1; }
+	docker compose exec -T db pg_restore -U hhsf -d hhsf --clean --if-exists --no-owner --exit-on-error < $(FILE)
+	@# The tile server measures each table when it starts.
+	docker compose restart tiles
+	@echo "Restored $(FILE). Run make up to apply any migrations newer than the backup."
+
 down:  ## Stop services (data is kept)
 	docker compose down
 
-.PHONY: help setup up ingest analyze routing drive-area drive-time score export web test lint down
+.PHONY: help setup up ingest analyze routing drive-area drive-time score export web test lint backup restore down
