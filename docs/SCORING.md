@@ -1,6 +1,6 @@
 # Hydro Scoring and Ranking
 
-How `hhsf score hydro` (or `make score`) turns a finished hydro run into a ranked shortlist, and why it ranks the way it does. The numbers it scores (head, firm flow, firm power) are explained in [ASSUMPTIONS.md](ASSUMPTIONS.md). The judgment calls behind the rules are in [DECISIONS.md](DECISIONS.md) (D-01, D-09, D-11). Every breakpoint and weight lives in the scoring profile, [`config/scoring_profiles/hydro_v3.yaml`](../config/scoring_profiles/hydro_v3.yaml) by default. `hydro_v2` is `hydro_v1` plus the `low_flow` tier (D-09, decided 2026-10-19); `hydro_v3` is `hydro_v2` with the 10 ft net-head minimum applied to every tier (D-11, 2026-10-20). Earlier score runs used the older profiles.
+How `hhsf score hydro` (or `make score`) turns a finished hydro run into a ranked shortlist, and why it ranks the way it does. The numbers it scores (head, firm flow, firm power) are explained in [ASSUMPTIONS.md](ASSUMPTIONS.md). The judgment calls behind the rules are in [DECISIONS.md](DECISIONS.md) (D-01, D-09, D-11). Every breakpoint and weight lives in the scoring profile, [`config/scoring_profiles/hydro_v4.yaml`](../config/scoring_profiles/hydro_v4.yaml) by default. `hydro_v2` is `hydro_v1` plus the `low_flow` tier (D-09, decided 2026-10-19); `hydro_v3` is `hydro_v2` with the 10 ft net-head minimum applied to every tier (D-11, 2026-10-20); `hydro_v4` keeps `hydro_v3`'s hydro rules and adds the [overall score](#the-overall-score-fr-7) that ranks each tier (FR-7, D-15, 2026-10-21). Earlier score runs used the older profiles.
 
 ## The short version
 
@@ -8,7 +8,7 @@ How `hhsf score hydro` (or `make score`) turns a finished hydro run into a ranke
 2. Corridors that make it get a **hydro score from 0 to 100**: 70% from power and 30% from net head (D-11).
 3. Corridors **under 1 kW on a low-confidence flow** stay on the list, last, labeled `LOW FLOW` and ranked by power (D-01, D-09): the flow behind them is too rough to rule them out. Under 1 kW on a medium-confidence StreamStats flow, a corridor is filtered out.
 4. Corridors with **no flow estimate because the basin is too small** (D-09) stay on the list, ranked on head only and labeled `HEAD ONLY`. Since every small basin gets the regional yield, this tier is empty in Sequatchie unless a run uses `--no-regional-yield`.
-5. The list is sorted in **confidence tiers**: medium-confidence, then low-confidence, then head-only, then low-flow. Within a tier, the higher score goes first.
+5. The list is sorted in **confidence tiers**: medium-confidence, then low-confidence, then head-only, then low-flow. Within a tier, the higher **overall score** goes first: the hydro score plus how buildable, farmable and reachable the site is (FR-7, `hydro_v4`). Older profiles sort a tier by hydro score.
 
 ## Where this departs from the original FR-3
 
@@ -65,13 +65,39 @@ Filtered corridors are still saved, with a sentence saying why, so you can alway
 | 3. `head_only` | No flow estimate (D-09) | Nothing to say about power |
 | 4. `low_flow` | Power under 1 kW on a low-confidence flow (D-01, D-09) | Probably can't make 1 kW, but the flow is too rough to say for sure |
 
-Within a tier: higher hydro score first (head sub-score for head-only, firm power for low flow), then more net head, then the lower `corridor_id`, so the order never changes between identical runs.
+Within a tier: higher overall score first (`hydro_v4`; with older profiles, higher hydro score, head sub-score for head-only, firm power for low flow), then more net head, then the lower `corridor_id`, so the order never changes between identical runs.
 
 **Why tiers and not a confidence penalty.** A penalty (say, low-confidence scores × 0.7) would still let a big low-confidence number jump over a modest medium one, and the size of the penalty would be a made-up number. Low-confidence flows here aren't just noisier, they're biased high, so their scores tend to look *better*. Tiers make the rule easy to state and impossible to break by accident. The score itself is untouched, so a low-confidence corridor still shows its full score; it just can't jump the queue.
 
 **What this means for the visit list.** Nothing is dropped for being low confidence. Read the list tier by tier: medium-confidence sites are the most likely to be real; low-confidence sites passed the 1 kW bar on a flow that is probably too high, so they need a dry-season flow check; head-only sites need both; low-flow sites only work if the visit finds much more water than the estimate (a spring).
 
 `rank` numbers the whole list (1 = best); `tier_rank` numbers each tier on its own.
+
+## The overall score (FR-7)
+
+`hydro_v4` adds the overall score the requirements ask for (FR-7): Hydro 40%, Buildability 20%, Agriculture 20%, Privacy 10%, Logistics 10%. It doesn't change who makes the list (the 1 kW and 10 ft rules above) or the tiers; it orders the corridors **within** each tier. Every part is a 0–100 sub-score built like the hydro one: factors, each an absolute curve of `[input, score]` points (straight lines between them, flat beyond the ends), weighted within the part. All of it is in the `overall` section of the profile.
+
+| Part (FR-7 weight) | Factor (weight in the part) | Curve `[input, score]` |
+| --- | --- | --- |
+| Hydro (40%) | The hydro score. Head-only corridors: their head sub-score. Low-flow corridors: the hydro formula with the power curve extended below the target (0 W → 0, 1 kW → 50) | as above |
+| Buildability (20%) | Buildable acres on the turbine parcel (50%) | 0 → 0, ½ acre → 40, 5 acres → 100 |
+| | Turbine end to the nearest buildable ground, ft (25%) | 0 → 100, ¼ mile → 50, 1 mile → 0; none → 0 |
+| | Turbine end to the nearest public road, ft (25%) | 500 → 100, 1 mile → 0 |
+| Agriculture (20%) | Prime farmland and farmland of statewide importance, acres (40%) | 0 → 0, 5 → 70, 20 → 100 |
+| | Cropland (capability class 1–3), acres (30%) | 0 → 0, 10 → 60, 40 → 100 |
+| | Pasture, AUM a year (30%) | 0 → 0, 60 (5 cows) → 50, 240 (20 cows) → 100 |
+| Privacy (10%) | Not built (FR-6) | always left out |
+| Logistics (10%) | Drive from downtown Chattanooga, minutes | 30 → 100, 60 → 70, 120 → 0 |
+
+The site numbers are the flags of PARTs 15–18: buildable ground ([ASSUMPTIONS.md](ASSUMPTIONS.md#buildable-ground)), farmland ([ASSUMPTIONS.md](ASSUMPTIONS.md#farmland)), the nearest public road and the drive time ([ASSUMPTIONS.md](ASSUMPTIONS.md#roads-and-drive-time)). They're read when `make score` runs, so run `make analyze` and `make drive-time` first, and score again after either.
+
+**Missing data is left out, never scored as zero** (D-15). A factor with no data (no turbine parcel, a step not run, no route) is dropped and the part's other weights rescale; a part with nothing left is dropped and the other parts' weights rescale. Privacy has no data at all yet, so the four built parts always count as 44%, 22%, 22% and 11% (owner, D-15). A measured nothing is a zero, though: a parcel with no buildable ground or no farmland scores 0 on that factor. So a corridor with no turbine parcel (it ends outside the loaded counties) is scored on hydro, road access and drive time alone, and can look better than one whose parcel was checked and found wanting. 140 ranked corridors are in that position.
+
+**Overall scores only compare within a tier.** A low-flow corridor's hydro part is small (its power is under the target), so its overall score is mostly land and access, and can be higher than a medium-confidence corridor's; it still ranks below it. The explanation's `overall` entry lists each part's sub-score, rescaled weight, contribution and factors, and what was left out; the summary ends with the formula, e.g. `Overall 54.8 = hydro 55.4 x 0.44 + buildability 61.4 x 0.22 + agriculture 48.5 x 0.22 + logistics 52.1 x 0.11 (privacy left out: no data).`
+
+### What it did (five counties, profile hydro_v4, 2026-10-21)
+
+The three Grundy streams change order: Big Creek (hydro 40, overall 58: 917 buildable acres and 923 acres of prime farmland on its parcel) goes from #3 to #1, ahead of Negro Den Creek (hydro 64, overall 57) and the Elk River (52). In Marion, Bethel Creek (overall 55) passes the unnamed stream (hydro 66, overall 43: no buildable ground or farmland on its 44-acre parcel). Rogers Branch, Sequatchie's only medium-confidence site, stays #1 at 47 (hydro 71; buildability 25, agriculture 7). The 4,913 low-flow corridors are almost all reordered: their order now follows the land more than their tiny power estimates. Across ranked corridors the median buildability is 71, agriculture 70 and logistics 55; 140 have no agriculture part (no turbine parcel) and 34 no logistics part (no drive time).
 
 ## The explanation
 
@@ -286,5 +312,7 @@ Six sites across 8,315 reaches. Rogers Branch and Marion's unnamed stream are st
 
 ## Not built yet
 
+- **Privacy (FR-6)**, the fifth part of the overall score: nearby structures, road visibility, development density. Until it's built the overall score leaves it out (D-15).
+- **The map colors stretches by hydro score**, not overall score; the popup shows both.
 - **FR-3 fallback profile.** §3 of the plan keeps the original weight table (head 40, watershed area 30, length 15, rainfall 15) as a labeled screening profile. It needs its own breakpoints for watershed area and length, and rainfall data (D-10).
 - **Sensitivity check.** DECISIONS.md asks how much the top 20 changes under 70/30 vs 50/50 vs 100/0 weights. Each alternative is just a new profile file and a re-score.

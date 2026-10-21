@@ -36,8 +36,8 @@ TIER_TITLES = {
 }
 STATUS_TITLES = {
     scoring.SCORED: "Scored (firm power at or above the target)",
-    scoring.HEAD_ONLY: "Head only (no flow estimate, ranked on head)",
-    scoring.LOW_FLOW: "Low flow (below the target on a low-confidence flow, ranked on power)",
+    scoring.HEAD_ONLY: "Head only (no flow estimate)",
+    scoring.LOW_FLOW: "Low flow (below the target on a low-confidence flow)",
     scoring.BELOW_POWER_TARGET: "Filtered: firm power below the target",
     scoring.BELOW_MIN_HEAD: "Filtered: head only or low flow, but too little head",
     scoring.NOT_SCORABLE: "Filtered: head or flow missing",
@@ -47,6 +47,10 @@ SHORTLIST_COLUMNS = [
     "rank",
     "tier",
     "tier_rank",
+    "overall_score",
+    "buildability_subscore",
+    "agriculture_subscore",
+    "logistics_subscore",
     "hydro_score",
     "power_subscore",
     "head_subscore",
@@ -294,6 +298,10 @@ class ExportRow:
     buildable_flags: tuple[str, ...] = ()
     turbine_farmland: Farmland | None = None  # None: no turbine parcel, or not computed
     farmland_flags: tuple[str, ...] = ()
+    overall_score: float | None = None  # FR-7; only for profiles with an overall section
+    buildability_subscore: float | None = None  # None: no data, left out
+    agriculture_subscore: float | None = None
+    logistics_subscore: float | None = None
 
     @property
     def ranked(self) -> bool:
@@ -450,6 +458,10 @@ def record(r: ExportRow) -> dict:
         "rank": r.rank,
         "tier": r.tier,
         "tier_rank": r.tier_rank,
+        "overall_score": _round(r.overall_score, 1),
+        "buildability_subscore": _round(r.buildability_subscore, 1),
+        "agriculture_subscore": _round(r.agriculture_subscore, 1),
+        "logistics_subscore": _round(r.logistics_subscore, 1),
         "hydro_score": _round(r.hydro_score, 1),
         "power_subscore": _round(r.power_subscore, 1),
         "head_subscore": _round(r.head_subscore, 1),
@@ -620,6 +632,15 @@ def assumptions(info: RunInfo) -> list[tuple[str, str]]:
         )
     if "rank_tiers" in p:
         items.append(("Ranking tiers, in order", " > ".join(p["rank_tiers"])))
+    if o := p.get("overall"):
+        w = o.get("weights", {})
+        items.append(
+            (
+                "Overall score weights (FR-7, D-15; parts with no data left out, rest rescaled)",
+                ", ".join(f"{k} {v:g}" for k, v in w.items()),
+            )
+        )
+        items.append(("Within a tier, ranked by", "overall score"))
     return [(label, _text(v)) for label, v in items]
 
 
@@ -666,12 +687,12 @@ def caveats(info: RunInfo) -> list[str]:
         "extrapolation, so it is low confidence; it misses springs, which a visit can find.",
         "**Low-flow corridors are below the target, but not ruled out.** Their power is under "
         f"the {_target(info)} target on a low-confidence flow, so they stay on the list, "
-        "last, ranked by power (D-01). Most are small basins on the regional yield; a "
+        "last (D-01). Most are small basins on the regional yield; a "
         "spring-fed one could still work.",
         "**Head-only corridors have no flow estimate.** Their basins are too small for the "
         "low-flow equations and had no regional yield to borrow, so they haven't been checked "
-        f"against the {_target(info)} target at all. They are ranked on head alone and need a "
-        "flow check (springs, dry-season visit).",
+        f"against the {_target(info)} target at all. Their hydro part is head alone, and they "
+        "need a flow check (springs, dry-season visit).",
         "StreamStats Q90 itself is a regression estimate (roughly ±60%), and nothing here "
         "covers permits.",
         _parcel_caveat(info),
@@ -680,6 +701,7 @@ def caveats(info: RunInfo) -> list[str]:
         _drive_caveat(info),
         _buildable_caveat(info),
         _farmland_caveat(info),
+        *_overall_caveat(info),
     ]
 
 
@@ -822,6 +844,25 @@ def _farmland_caveat(info: RunInfo) -> str:
     )
 
 
+def _overall_caveat(info: RunInfo) -> list[str]:
+    o = info.score_params.get("scoring_profile", {}).get("overall")
+    if not o:
+        return []
+    return [
+        "**The overall score ranks each tier** (FR-7, D-15): the hydro part plus "
+        "buildability (buildable ground on the turbine parcel, how far it is, and the nearest "
+        "public road), agriculture (prime farmland, cropland and pasture on the turbine "
+        "parcel) and logistics (drive time), weighted "
+        + ", ".join(f"{k} {v:g}" for k, v in o.get("weights", {}).items())
+        + ". Privacy (FR-6) isn't built, so it's left out and the other weights are rescaled, "
+        "as is any part with no data for a corridor (no turbine parcel, no drive time): "
+        "missing data is never scored as zero. Tiers still come first, so a low-confidence "
+        "or low-flow corridor never outranks a medium one, and overall scores only compare "
+        "within a tier. The sub-score columns show each part; the site data is read when "
+        "`make score` runs, so score again after `make analyze` or `make drive-time`."
+    ]
+
+
 def _target(info: RunInfo) -> str:
     w = info.score_params.get("scoring_profile", {}).get("power_target_w")
     return "power" if w is None else f"{w / 1000:g} kW"
@@ -891,6 +932,7 @@ def tier_table(rows: list[ExportRow], tier: str) -> list[str]:
             "#",
             "Rank",
             "Stream",
+            "Overall",
             "Head score",
             "Net head (ft)",
             "Drainage (sq mi)",
@@ -909,6 +951,7 @@ def tier_table(rows: list[ExportRow], tier: str) -> list[str]:
                 str(r.tier_rank),
                 str(r.rank),
                 _name(r),
+                _fmt(r.overall_score, ".1f"),
                 _fmt(r.head_subscore, ".1f"),
                 _fmt(r.net_head_ft),
                 _fmt(record(r)["drainage_area_sqmi"], ".2f"),
@@ -929,7 +972,8 @@ def tier_table(rows: list[ExportRow], tier: str) -> list[str]:
             "#",
             "Rank",
             "Stream",
-            "Score",
+            "Overall",
+            "Hydro score",
             "Net head (ft)",
             "Firm power (W)",
             "Firm flow (cfs)",
@@ -949,6 +993,7 @@ def tier_table(rows: list[ExportRow], tier: str) -> list[str]:
                 str(r.tier_rank),
                 str(r.rank),
                 _name(r),
+                _fmt(r.overall_score, ".1f"),
                 _fmt(r.hydro_score, ".1f"),
                 _fmt(r.net_head_ft),
                 _fmt(r.firm_power_w),

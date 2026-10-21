@@ -350,7 +350,7 @@ On the five counties' latest runs, 369 of 5,233 ranked corridors touch the 100-y
 
 ## Roads and drive time
 
-PART 16 adds, for every corridor, the nearest road to its turbine end and the drive from downtown Chattanooga, and builds the 1-hour drive area that D-02 makes the search region. They're flags for planning visits, not filters (D-02): the requirements put drive time in the Logistics part of the overall score (FR-7, 10%) and road access in Buildability (FR-4), and neither score exists yet. Nothing is filtered or re-ranked on them until then.
+PART 16 adds, for every corridor, the nearest road to its turbine end and the drive from downtown Chattanooga, and builds the 1-hour drive area that D-02 makes the search region. They're not filters (D-02): drive time is the Logistics part of the overall score (FR-7, 10%) and road access part of its Buildability, which rank corridors within each confidence tier ([SCORING.md](SCORING.md#the-overall-score-fr-7), D-15). Nothing is filtered on them.
 
 ### Roads (Census TIGER/Line)
 
@@ -390,7 +390,7 @@ The 1-hour area covers about 5,970 sq km and touches 20 counties. By share of th
 
 ## Buildable ground
 
-PART 17 is the first step of FR-4 (buildability): for every corridor's turbine parcel, how much ground could take a house and a septic field, and how far the nearest of it is from the turbine end. FR-4 names four tests: slope, flood risk, septic suitability and road access. This step combines the first three into one area; road access is the road columns of PART 16. It's a flag, not a filter: buildability is meant to be a sub-score (20%) of the overall score (FR-7), which doesn't exist yet, so nothing is filtered or re-ranked on it (D-02, D-12, D-13).
+PART 17 is the first step of FR-4 (buildability): for every corridor's turbine parcel, how much ground could take a house and a septic field, and how far the nearest of it is from the turbine end. FR-4 names four tests: slope, flood risk, septic suitability and road access. This step combines the first three into one area; road access is the road columns of PART 16. It's not a filter: nothing is dropped for it, but it's most of the Buildability part (20%) of the overall score that ranks corridors within each confidence tier (FR-7, [SCORING.md](SCORING.md#the-overall-score-fr-7), D-13, D-15).
 
 ### Soils (USDA SSURGO)
 
@@ -442,7 +442,7 @@ Rogers Branch's and the Marion stream's parcels are almost all steep: the stretc
 
 ## Farmland
 
-PART 18 is FR-5 (agriculture): for every corridor's turbine parcel, how much of it the soil survey calls prime farmland or good cropland, how much is wet, and how much pasture its soils could grow. FR-5 names four things: prime farmland, soil capability, drainage and pasture suitability. It's a flag, not a filter: agriculture is meant to be a sub-score (20%) of the overall score (FR-7), which doesn't exist yet, so nothing is filtered or re-ranked on it (D-02, D-12, D-14).
+PART 18 is FR-5 (agriculture): for every corridor's turbine parcel, how much of it the soil survey calls prime farmland or good cropland, how much is wet, and how much pasture its soils could grow. FR-5 names four things: prime farmland, soil capability, drainage and pasture suitability. It's not a filter: nothing is dropped for it, but it's the Agriculture part (20%) of the overall score that ranks corridors within each confidence tier (FR-7, [SCORING.md](SCORING.md#the-overall-score-fr-7), D-14, D-15).
 
 ### What the soil survey says (USDA SSURGO)
 

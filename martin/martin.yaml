@@ -149,7 +149,9 @@ postgres:
     # nearest_buildable_m how far the nearest buildable ground is from the turbine end
     # (0013). turbine_prime_acres, turbine_statewide_acres, turbine_capable_acres (capability
     # class 1 to turbine_max_capability_class) and turbine_pasture_aum are the turbine
-    # parcel's farmland (0014). `factors` is JSON text: each
+    # parcel's farmland (0014). overall_score is the FR-7 overall score that ranks each tier,
+    # with its buildability, agriculture and logistics sub-scores (0015, profile hydro_v4).
+    # `factors` is JSON text: each
     # factor's value, sub-score, weight and contribution, for the click popup.
     latest_hydro_scores:
       schema: public
@@ -208,3 +210,7 @@ postgres:
         turbine_capable_acres: float8
         turbine_max_capability_class: int2
         turbine_pasture_aum: float8
+        overall_score: float8
+        buildability_subscore: float8
+        agriculture_subscore: float8
+        logistics_subscore: float8

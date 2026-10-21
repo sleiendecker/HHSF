@@ -273,6 +273,8 @@ def load_rows(
             SELECT s.corridor_id, c.nhdplusid, st.stream_name, s.status, s.tier, s.rank,
                    s.tier_rank, s.hydro_score, s.head_subscore, s.power_subscore,
                    s.net_head_ft, c.firm_power_w, c.firm_flow_cfs, c.flow_method,
+                   s.overall_score, s.buildability_subscore, s.agriculture_subscore,
+                   s.logistics_subscore,
                    c.flow_confidence, c.flow_flags, c.drainage_area_sqkm, c.length_m,
                    ST_X(o.pt) AS outlet_lon, ST_Y(o.pt) AS outlet_lat, s.explanation,
                    ST_AsGeoJSON(c.geom, 6) AS geometry, st.length_m AS reach_length_m,

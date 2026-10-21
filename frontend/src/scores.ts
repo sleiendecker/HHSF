@@ -276,13 +276,35 @@ function rankedIn(p: Record<string, unknown>): string {
   return `ranked #${p.rank} ${p.aoi_name ? `in ${esc(p.aoi_name)}` : "overall"}`;
 }
 
+// The FR-7 overall score's parts (migration 0015, profile hydro_v4): a part with no data is left out
+// and the others rescaled. Privacy isn't built yet, so it's always left out.
+function overallParts(p: Record<string, unknown>): string {
+  if (typeof p.overall_score !== "number") return "";
+  const hydro = p.tier === "head_only" ? "head" : p.tier === "low_flow" ? "hydro (under target)" : "hydro";
+  const hydroValue = typeof p.hydro_score === "number" ? fmt(p.hydro_score) : "";
+  const parts = [
+    hydroValue ? `${hydro} ${hydroValue}` : "",
+    `buildability ${fmt(p.buildability_subscore)}`,
+    `agriculture ${fmt(p.agriculture_subscore)}`,
+    `logistics ${fmt(p.logistics_subscore)}`,
+  ].filter(Boolean);
+  return `<p class="overall-parts">Overall score from ${parts.join(" · ")} (a dash: no data; privacy isn't built yet).</p>`;
+}
+
 function headline(p: Record<string, unknown>): string {
+  const overall =
+    typeof p.overall_score === "number" ? `; overall ${fmt(p.overall_score)}` : "";
   if (p.tier === "head_only")
-    return `<div class="score-line"><span class="badge head-only">Head only</span> ${rankedIn(p)}</div>`;
+    return `<div class="score-line"><span class="badge head-only">Head only</span> ${rankedIn(p)}${overall}</div>`;
   if (p.tier === "low_flow")
     return (
       `<div class="score-line"><span class="badge low-flow">Low flow</span> ${rankedIn(p)};` +
-      ` under the 1 kW target</div>`
+      ` under the 1 kW target${overall}</div>`
+    );
+  if (p.tier && typeof p.overall_score === "number")
+    return (
+      `<div class="score-line"><span class="score">${fmt(p.overall_score)}</span><span class="out-of">/ 100 overall</span>` +
+      ` <span>${rankedIn(p)}; #${p.tier_rank} of the ${esc(p.tier)}-confidence group</span></div>`
     );
   if (p.tier)
     return (
@@ -399,6 +421,8 @@ export function scorePopupHtml(f: MapGeoJSONFeature): string {
     <div class="popup">
       <strong>${esc(p.stream_name ?? "Unnamed stream")}</strong>
       ${headline(p)}
+      ${overallParts(p)}
+      ${factors.length && typeof p.overall_score === "number" && typeof p.hydro_score === "number" ? `<p>Hydro score ${fmt(p.hydro_score)}:</p>` : ""}
       ${factors.length ? `<ul class="factors">${factors.map(factorLine).join("")}</ul>` : ""}
       <p>${stretchText(p)}</p>
       <dl>

@@ -8,7 +8,7 @@ import pytest
 from shapely.geometry import MultiPolygon, box
 from sqlalchemy import text
 
-from hhsf.analysis import buildable, export_run, farmland, scoring_run
+from hhsf.analysis import buildable, export_run, farmland, scoring, scoring_run
 from hhsf.ingest import parcels, soils
 from tests.integration.test_buildable_db import soil_unit
 from tests.integration.test_flood_db import outlet
@@ -139,3 +139,49 @@ def test_map_view_and_export_have_farmland(engine, site, tmp_path):  # noqa: F81
     report = (out_dir / "report.md").read_text()
     assert "Farmland on the turbine parcel (ranked" in report
     assert "not what the land is now" in report
+
+
+def test_overall_score_reads_farmland_and_drive_time(engine, site, tmp_path):  # noqa: F811
+    corridor, _ = site
+    run(engine)
+    v4 = scoring.load_profile("hydro_v4")
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO corridor_drive_times (corridor_id, origin_key, minutes)"
+                " SELECT corridor_id, 'test', 60 FROM hydro_corridors"
+            )
+        )
+    run_id, _, summary = scoring_run.score_hydro(engine, AREA, v4)
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT corridor_id, rank, overall_score, agriculture_subscore,"
+                " logistics_subscore, buildability_subscore, explanation"
+                " FROM hydro_scores WHERE run_id = :r AND rank IS NOT NULL"
+            ),
+            {"r": run_id},
+        ).all()
+        view = conn.execute(
+            text(
+                "SELECT corridor_id, overall_score FROM latest_hydro_scores WHERE rank IS NOT NULL"
+            )
+        ).all()
+    assert rows, "the sample has a ranked corridor"
+    for r in rows:
+        assert r.logistics_subscore == pytest.approx(70)  # 60 minutes
+        assert r.overall_score is not None and "overall" in r.explanation
+    on_site = [r for r in rows if r.corridor_id == corridor]
+    assert on_site
+    for r in on_site:
+        assert r.agriculture_subscore > 0
+        # No buildable ground computed, no roads loaded: buildability is left out.
+        assert r.buildability_subscore is None
+        assert "buildability" in r.explanation["overall"]["left_out"]
+    assert {(v.corridor_id, v.overall_score) for v in view} == {
+        (r.corridor_id, r.overall_score) for r in rows
+    }
+    assert "overall_parts_left_out" in summary
+    _, out_dir, _ = export_run.export_hydro(engine, AREA, out_root=tmp_path)
+    with (out_dir / "shortlist.csv").open() as f:
+        assert all(r["overall_score"] for r in csv.DictReader(f))

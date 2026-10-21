@@ -263,12 +263,12 @@ def test_report_lists_top_n_per_tier_in_order():
     assert "None in this run." in md  # the low tier
     medium = md.split("## Top 3 of 5")[1].split("## Top")[0]
     assert (
-        "| 1 | 1 | C1 | 67.5 | 105 | 2,000 | 0.2 | streamstats_q90 | 35.39000, -85.39000 |"
+        "| 1 | 1 | C1 | – | 67.5 | 105 | 2,000 | 0.2 | streamstats_q90 | 35.39000, -85.39000 |"
         in medium
     )
     assert "(unnamed)" in medium and "C4" not in medium
     head = md.split("## Top 1 of 1: Head only")[1]
-    assert "| 1 | 6 | A/B | 50.0 | 105 | 1.00 |" in head
+    assert "| 1 | 6 | A/B | – | 50.0 | 105 | 1.00 |" in head
     assert md.index("Medium confidence (StreamStats") < md.index("## Low confidence")
 
 
@@ -692,3 +692,33 @@ def test_report_says_when_farmland_is_missing():
     report = export.render_report(INFO, ROWS)
     assert "Farmland isn't computed" in report
     assert "Farmland on the turbine parcel (ranked" not in report
+
+
+# --- Overall score ------------------------------------------------------------
+
+
+def test_record_and_report_have_the_overall_score():
+    v4 = replace(
+        INFO,
+        score_params={"scoring_profile": scoring.load_profile("hydro_v4").model_dump()},
+    )
+    r = replace(
+        ON_PARCEL,
+        overall_score=54.84,
+        buildability_subscore=61.2,
+        agriculture_subscore=None,
+        logistics_subscore=52.0,
+    )
+    rec = export.record(r)
+    assert rec["overall_score"] == 54.8 and rec["agriculture_subscore"] is None
+    assert export.SHORTLIST_COLUMNS[3:7] == [
+        "overall_score",
+        "buildability_subscore",
+        "agriculture_subscore",
+        "logistics_subscore",
+    ]
+    report = export.render_report(v4, [r])
+    assert "| 1 | 1 | Creek 1 | 54.8 |" in report
+    assert "hydro 0.4, buildability 0.2, agriculture 0.2, privacy 0.1, logistics 0.1" in report
+    assert "The overall score ranks each tier" in report and "never scored as zero" in report
+    assert "The overall score ranks each tier" not in export.render_report(INFO, [r])
