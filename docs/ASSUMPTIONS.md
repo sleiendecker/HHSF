@@ -350,7 +350,7 @@ On the five counties' latest runs, 369 of 5,233 ranked corridors touch the 100-y
 
 ## Roads and drive time
 
-PART 16 adds, for every corridor, the nearest road to its turbine end and the drive from downtown Chattanooga, and builds the 1-hour drive area that D-02 makes the search region. They're flags for planning visits, not filters: nothing is filtered or re-ranked on them until that's decided.
+PART 16 adds, for every corridor, the nearest road to its turbine end and the drive from downtown Chattanooga, and builds the 1-hour drive area that D-02 makes the search region. They're flags for planning visits, not filters (D-02): the requirements put drive time in the Logistics part of the overall score (FR-7, 10%) and road access in Buildability (FR-4), and neither score exists yet. Nothing is filtered or re-ranked on them until then.
 
 ### Roads (Census TIGER/Line)
 
