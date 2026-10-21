@@ -303,6 +303,26 @@ function parcelText(p: Record<string, unknown>): string {
   return `${esc(p.turbine_parcel_id)}: ${fmt(p.turbine_parcel_acres, 1)} acres${deed}${away}`;
 }
 
+// FEMA's zone at the bottom of the stretch (migration 0011), as src/hhsf/analysis/export.py labels it.
+export function floodZoneLabel(zone: string, subtype: unknown): string {
+  if (typeof subtype !== "string" || !subtype) return zone;
+  if (subtype.includes("FLOODWAY")) return `${zone} floodway`;
+  if (subtype.includes("0.2 PCT")) return `${zone} (0.2% annual chance)`;
+  if (subtype.includes("MINIMAL")) return `${zone} (minimal hazard)`;
+  return `${zone} (${subtype.toLowerCase()})`;
+}
+
+function floodText(p: Record<string, unknown>): string {
+  if (typeof p.turbine_flood_zone !== "string") return "Not on a FEMA flood map (or flood zones not loaded)";
+  const label = esc(floodZoneLabel(p.turbine_flood_zone, p.turbine_flood_subtype));
+  return p.turbine_in_sfha === true ? `<b>${label}</b>: in the 100-year floodplain` : label;
+}
+
+function stretchFloodText(p: Record<string, unknown>): string {
+  if (typeof p.stretch_sfha_m !== "number") return "—";
+  return p.stretch_sfha_m > 0 ? `${distance(p.stretch_sfha_m)} in the 100-year floodplain` : "None in the 100-year floodplain";
+}
+
 export function scorePopupHtml(f: MapGeoJSONFeature): string {
   const p = f.properties as Record<string, unknown>;
   let factors: Factor[] = [];
@@ -329,6 +349,8 @@ export function scorePopupHtml(f: MapGeoJSONFeature): string {
         <dt>Firm power</dt><dd>${withUnit(p.firm_power_w, "W")}</dd>
         <dt>Turbine parcel</dt><dd>${parcelText(p)}</dd>
         <dt>Parcels crossed</dt><dd>${fmt(p.parcels_crossed)}</dd>
+        <dt>Turbine flood zone</dt><dd>${floodText(p)}</dd>
+        <dt>Stretch flooding</dt><dd>${stretchFloodText(p)}</dd>
       </dl>
       <p><b>Flow source:</b> ${flowSource(p.flow_method, p.flow_reference_gauge)}.</p>
       ${tier ? `<p><b>${tier.label}:</b> ${tier.detail}</p>` : ""}

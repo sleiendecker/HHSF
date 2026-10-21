@@ -41,6 +41,23 @@ postgres:
         county_name: text
         acres: float8
         deed_acres: float8
+    # FEMA flood zones (migration 0011), stored in pieces that keep FEMA's zone ID
+    # (fld_ar_id). `sfha` marks the 1% annual chance ("100-year") floodplain. The map draws
+    # floodways, SFHAs and 0.2% annual chance areas, not the minimal-hazard zone X.
+    flood_zones:
+      schema: public
+      table: flood_zones
+      srid: 4326
+      geometry_column: geom
+      geometry_type: MULTIPOLYGON
+      id_column: flood_zone_id
+      minzoom: 10
+      properties:
+        fld_ar_id: text
+        zone: text
+        subtype: text
+        sfha: bool
+        floodway: bool
     counties:
       schema: public
       table: counties
@@ -55,7 +72,9 @@ postgres:
     # them by `hydro_score` and styles them by `tier`: medium, low, low_flow, head_only,
     # or empty for corridors that were filtered out. One row per reach across all AOIs;
     # `rank` counts within the AOI named by `aoi_name`. The turbine_parcel_* columns are the
-    # parcel at the bottom of the stretch (migration 0010); no owner fields, ever. `factors` is JSON text: each
+    # parcel at the bottom of the stretch (migration 0010); no owner fields, ever. The
+    # turbine_flood_* columns are the FEMA zone there, and stretch_sfha_m how much of the
+    # stretch is in the 100-year floodplain (0011). `factors` is JSON text: each
     # factor's value, sub-score, weight and contribution, for the click popup.
     latest_hydro_scores:
       schema: public
@@ -95,3 +114,7 @@ postgres:
         turbine_parcel_deed_acres: float8
         turbine_parcel_distance_m: float8
         parcels_crossed: int4
+        turbine_flood_zone: text
+        turbine_flood_subtype: text
+        turbine_in_sfha: bool
+        stretch_sfha_m: float8

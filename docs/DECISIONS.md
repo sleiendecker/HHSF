@@ -65,6 +65,18 @@ Parcels are loaded now (PART 14). Until this is decided, the 10-acre placeholder
 
 ---
 
+### D-12 · Flood zones in the score: **Owner** (open)
+
+FEMA flood zones are loaded (PART 15). Should a turbine end or stretch in a flood zone count against a site?
+
+- **Default for now: flag only.** The exports mark `turbine_in_floodway`, `turbine_in_sfha` and `stretch_in_sfha` (and `flood_zone_not_mapped`); nothing is filtered or re-ranked.
+- Why not penalize yet: a run-of-river intake and turbine nearly always sit beside the creek, so being in its floodplain is normal and mostly means a floodplain permit and flood-proofing the powerhouse. The house is what has to stay out of the floodplain, and that's chosen on the visit. Also, most small creeks were never studied by FEMA (see [ASSUMPTIONS.md](ASSUMPTIONS.md#flood-zones)), so a penalty would mostly hit the bigger, better-mapped streams.
+- Options if you want more: drop corridors whose turbine end is in a **floodway** (the strictest zone); a small score penalty for a turbine end in the 100-year floodplain; or, later, require some buildable ground outside the floodplain on the parcel.
+
+**Decision:** _\_\_\_\__
+
+---
+
 ## Physics and practice defaults
 
 ### D-04 · Definition of "reliable" flow: **Default**
@@ -161,6 +173,7 @@ Decisions that barely move the top 20 keep their default and stop being discusse
 
 | Date | Decision | Change |
 | --- | --- | --- |
+| 2026-10-20 | D-12 | New, open: FEMA flood zones loaded (PART 15) and flagged in the exports; nothing filtered or re-ranked until decided |
 | 2026-10-20 | D-03 | Owner: parcels loaded (PART 14); minimum acreage only flags, filters nothing until D-03 is decided. Owner names stay out of map tiles and the repo, in a separate table read only by the local exports |
 | 2026-10-18 | All | Initial defaults |
 | 2026-10-18 | D-01 | Power target set to 1.0 kW continuous (provisional, pending owner) |

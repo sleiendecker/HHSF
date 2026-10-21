@@ -14,7 +14,7 @@ up:  ## Start the database, apply migrations, start the tile server
 	uv run hhsf db upgrade
 	docker compose up -d tiles
 
-ingest:  ## Download and load boundary, streams, elevations and parcels for an AOI (default: sequatchie_tn)
+ingest:  ## Download and load boundary, streams, elevations, parcels and flood zones for an AOI (default: sequatchie_tn)
 	uv run hhsf ingest all --aoi $(AOI)
 	@# The tile server measures each table's extent when it starts; the map opens on the counties' extent.
 	docker compose restart tiles

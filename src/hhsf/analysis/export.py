@@ -76,6 +76,12 @@ SHORTLIST_COLUMNS = [
     "turbine_parcel_owner2",
     "turbine_parcel_address",
     "stretch_parcel_owners",
+    "turbine_flood_zone",
+    "turbine_flood_subtype",
+    "turbine_in_sfha",
+    "stretch_sfha_ft",
+    "stretch_flood_zones",
+    "flood_flags",
     "explanation",
 ]
 ALL_CORRIDORS_COLUMNS = ["status", *SHORTLIST_COLUMNS]
@@ -93,6 +99,12 @@ NO_PARCEL = "no_parcel_found"  # no parcel within 100 m of the turbine point
 OUTSIDE_PARCEL = "turbine_outside_parcel"  # in a gap (road, river bed); nearest parcel shown
 UNDER_MIN_ACRES = "parcel_under_min_acres"  # D-03 placeholder; flagged, not filtered
 
+# flood_flags values. Flags only: nothing is filtered or re-ranked on flood zones.
+FLOOD_NOT_MAPPED = "flood_zone_not_mapped"  # no FEMA zone at the turbine end
+TURBINE_IN_FLOODWAY = "turbine_in_floodway"
+TURBINE_IN_SFHA = "turbine_in_sfha"  # the 1% annual chance ("100-year") floodplain
+STRETCH_IN_SFHA = "stretch_in_sfha"  # some of the stretch is in it
+
 
 @dataclass(frozen=True)
 class Parcel:
@@ -106,6 +118,21 @@ class Parcel:
     owner: str | None = None
     owner2: str | None = None
     property_address: str | None = None
+
+
+@dataclass(frozen=True)
+class FloodZone:
+    """A FEMA flood zone (National Flood Hazard Layer)."""
+
+    zone: str  # A, AE, X, ...
+    subtype: str | None  # FLOODWAY, 0.2 PCT ANNUAL CHANCE FLOOD HAZARD, ...
+    sfha: bool  # Special Flood Hazard Area: the 1% annual chance floodplain
+    floodway: bool = False
+
+    @property
+    def label(self) -> str:
+        """'AE floodway', 'X (0.2% annual chance)', 'X (minimal hazard)', 'A'."""
+        return flood_zone_label(self.zone, self.subtype)
 
 
 @dataclass(frozen=True)
@@ -140,6 +167,10 @@ class ExportRow:
     stretch_parcel_ids: tuple[str, ...] = ()  # every parcel the stretch crosses, most first
     stretch_parcel_owners: tuple[str, ...] = ()
     parcel_flags: tuple[str, ...] = ()
+    turbine_flood_zone: FloodZone | None = None  # the zone at the bottom of the stretch
+    stretch_flood_zones: tuple[str, ...] = ()  # zone labels along the stretch, longest first
+    stretch_sfha_m: float | None = None  # None where no zone is mapped along the stretch
+    flood_flags: tuple[str, ...] = ()
 
     @property
     def ranked(self) -> bool:
@@ -163,6 +194,7 @@ class RunInfo:
     aoi_name: str | None = None
     exported_with: str | None = None  # code version of the exporter
     parcels_version: str | None = None  # tn_parcels version and download date; None: not loaded
+    flood_version: str | None = None  # fema_nfhl version and download date; None: not loaded
 
 
 # --- Rows ---------------------------------------------------------------------
@@ -186,11 +218,40 @@ def parcel_flags(
     return tuple(flags)
 
 
+def flood_zone_label(zone: str, subtype: str | None) -> str:
+    """A zone as people read it on the map and in the report."""
+    if subtype is None:
+        return zone
+    if "FLOODWAY" in subtype:
+        return f"{zone} floodway"
+    if "0.2 PCT" in subtype:
+        return f"{zone} (0.2% annual chance)"
+    if "MINIMAL" in subtype:
+        return f"{zone} (minimal hazard)"
+    return f"{zone} ({subtype.lower()})"
+
+
+def flood_flags(turbine: FloodZone | None, stretch_sfha_m: float | None) -> tuple[str, ...]:
+    """What to check about flooding (only when flood zones are loaded)."""
+    flags = []
+    if turbine is None:
+        flags.append(FLOOD_NOT_MAPPED)
+    elif turbine.floodway:
+        flags.append(TURBINE_IN_FLOODWAY)
+    if turbine is not None and turbine.sfha:
+        flags.append(TURBINE_IN_SFHA)
+    if stretch_sfha_m:
+        flags.append(STRETCH_IN_SFHA)
+    return tuple(flags)
+
+
 def record(r: ExportRow) -> dict:
     """One corridor as readable, rounded values (None where there's no estimate)."""
     flow = r.firm_flow_cfs
     t = r.turbine_parcel
     distance = r.turbine_parcel_distance_m
+    fz = r.turbine_flood_zone
+    sfha_m = r.stretch_sfha_m
     return {
         "status": r.status,
         "rank": r.rank,
@@ -230,6 +291,12 @@ def record(r: ExportRow) -> dict:
         "turbine_parcel_owner2": t and t.owner2,
         "turbine_parcel_address": t and t.property_address,
         "stretch_parcel_owners": "; ".join(r.stretch_parcel_owners),
+        "turbine_flood_zone": fz and fz.zone,
+        "turbine_flood_subtype": fz and fz.subtype,
+        "turbine_in_sfha": None if fz is None else fz.sfha,
+        "stretch_sfha_ft": None if sfha_m is None else round(units.m_to_ft(sfha_m)),
+        "stretch_flood_zones": "; ".join(r.stretch_flood_zones),
+        "flood_flags": "; ".join(r.flood_flags),
         "explanation": r.explanation.get("summary", ""),
     }
 
@@ -395,6 +462,7 @@ def caveats(info: RunInfo) -> list[str]:
         "StreamStats Q90 itself is a regression estimate (roughly ±60%), and nothing here "
         "covers permits, access or soils.",
         _parcel_caveat(info),
+        _flood_caveat(info),
     ]
 
 
@@ -412,6 +480,28 @@ def _parcel_caveat(info: RunInfo) -> str:
         "creek may matter as much (see `stretch_parcel_owners`). Owner names are personal "
         "information: keep these files to yourselves. `parcel_under_min_acres` uses the "
         "D-03 placeholder and removes nothing."
+    )
+
+
+def _flood_caveat(info: RunInfo) -> str:
+    if info.flood_version is None:
+        return (
+            "**No flood zones are loaded**, so the flood columns are empty. Run `make ingest` "
+            "(or `uv run hhsf ingest flood`) and export again."
+        )
+    return (
+        "**Flood zones come from FEMA's National Flood Hazard Layer** "
+        f"({info.flood_version}), the effective flood maps. They are flagged only: nothing is "
+        "filtered or re-ranked on them. `turbine_in_sfha` means the bottom of the stretch is "
+        'in the 1% annual chance ("100-year") floodplain, zone A or AE, where building needs '
+        "a floodplain permit; a floodway (`turbine_in_floodway`) is the strictest part. "
+        "**Where the data runs out:** FEMA generally studies streams draining about a square "
+        "mile or more, so zone X (minimal hazard) on a small creek usually means the creek "
+        "was never studied, not that it can't flood. Zone A is drawn approximately, without "
+        "flood heights. Grundy County's map has very few studied streams. "
+        "`flood_zone_not_mapped` marks turbine ends with no FEMA zone at all: outside the "
+        "loaded counties, a few meters inside a county line (where FEMA's county outline "
+        "differs from the Census one), or a county without a digital flood map."
     )
 
 
@@ -450,6 +540,12 @@ def _owner(r: ExportRow) -> str:
     return (t.owner + (f" & {t.owner2}" if t.owner2 else "")).replace("|", "/")
 
 
+def _flood(r: ExportRow) -> str:
+    if r.turbine_flood_zone is None:
+        return "not mapped" if r.flood_flags else "–"
+    return r.turbine_flood_zone.label
+
+
 def tier_table(rows: list[ExportRow], tier: str) -> list[str]:
     if tier == scoring.HEAD_ONLY:
         header = [
@@ -462,6 +558,7 @@ def tier_table(rows: list[ExportRow], tier: str) -> list[str]:
             "Outlet (lat, lon)",
             "Turbine parcel (acres)",
             "Owner",
+            "Turbine flood zone",
             "NHDPlus ID",
         ]
         lines = [
@@ -475,6 +572,7 @@ def tier_table(rows: list[ExportRow], tier: str) -> list[str]:
                 _place(r),
                 _parcel(r),
                 _owner(r),
+                _flood(r),
                 str(r.nhdplusid),
             ]
             for r in rows
@@ -492,6 +590,7 @@ def tier_table(rows: list[ExportRow], tier: str) -> list[str]:
             "Outlet (lat, lon)",
             "Turbine parcel (acres)",
             "Owner",
+            "Turbine flood zone",
             "NHDPlus ID",
         ]
         lines = [
@@ -507,11 +606,30 @@ def tier_table(rows: list[ExportRow], tier: str) -> list[str]:
                 _place(r),
                 _parcel(r),
                 _owner(r),
+                _flood(r),
                 str(r.nhdplusid),
             ]
             for r in rows
         ]
     return _table(header, lines)
+
+
+def _flood_counts(info: RunInfo, ranked: list[ExportRow]) -> list[str]:
+    if info.flood_version is None:
+        return []
+    n = Counter(f for r in ranked for f in r.flood_flags)
+    return [
+        *_table(
+            ["FEMA flood zones (ranked corridors, flagged only)", "Corridors"],
+            [
+                ["Turbine end in a floodway", str(n[TURBINE_IN_FLOODWAY])],
+                ["Turbine end in the 100-year floodplain (SFHA)", str(n[TURBINE_IN_SFHA])],
+                ["Some of the stretch in the 100-year floodplain", str(n[STRETCH_IN_SFHA])],
+                ["Turbine end not on any FEMA map", str(n[FLOOD_NOT_MAPPED])],
+            ],
+        ),
+        "",
+    ]
 
 
 def render_report(info: RunInfo, rows: list[ExportRow], top_n: int = 20) -> str:
@@ -551,7 +669,8 @@ def render_report(info: RunInfo, rows: list[ExportRow], top_n: int = 20) -> str:
         *_table(
             ["Source", "Version"],
             [[k, str(v)] for k, v in sorted(info.data_source_versions.items())]
-            + ([["tn_parcels (at export)", info.parcels_version]] if info.parcels_version else []),
+            + ([["tn_parcels (at export)", info.parcels_version]] if info.parcels_version else [])
+            + ([["fema_nfhl (at export)", info.flood_version]] if info.flood_version else []),
         ),
         "",
         "## Key assumptions",
@@ -574,6 +693,7 @@ def render_report(info: RunInfo, rows: list[ExportRow], top_n: int = 20) -> str:
             [[TIER_TITLES.get(t, t), str(tiers[t])] for t in order],
         ),
         "",
+        *_flood_counts(info, ranked),
         "## Caveats",
         "",
         *[f"- {c}" for c in caveats(info)],
@@ -597,7 +717,9 @@ def render_report(info: RunInfo, rows: list[ExportRow], top_n: int = 20) -> str:
         "The outlet is the downstream end of the reach, where a powerhouse would sit. "
         "Unnamed streams can be found by NHDPlus ID or by the outlet point. The CSVs and this "
         "report name property owners: personal information, so don't post or share them. "
-        "`turbine_parcel_tpad_url` opens the parcel's full record on the Comptroller's site.",
+        "`turbine_parcel_tpad_url` opens the parcel's full record on the Comptroller's site. "
+        "`turbine_flood_zone` is FEMA's zone at the bottom of the stretch and "
+        "`stretch_sfha_ft` how much of the stretch is in the 100-year floodplain.",
         "",
     ]
     return "\n".join(out)

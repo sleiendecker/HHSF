@@ -312,3 +312,38 @@ Computed by two database views (migration 0010), so they always match the latest
 - **Minimum acreage (D-03, still open):** turbine parcels under the 10-acre placeholder (`config/parcels.yaml`) are flagged `parcel_under_min_acres`. Nothing is filtered or re-ranked on it yet.
 
 On the five counties' latest runs, 4,779 of 4,919 ranked corridors have a turbine parcel; the 140 without all end outside the five counties (streams within 500 m of a county line are analyzed for both counties). Of the six streams that reach 1 kW, Negro Den Creek and the Elk River headwater share one 1,901-acre Grundy parcel, Big Creek sits on a 10,481-acre one and Bethel Creek on a 1,355-acre one. Parcels that large are often timber company, conservation or public land, which changes who to contact. Rogers Branch's turbine parcel is 76 acres (the stretch crosses 3 parcels) and the unnamed Marion stream's is 44 acres.
+
+## Flood zones
+
+PART 15 shows, for every corridor, whether its turbine end and its stretch sit in a FEMA flood hazard area. It's a flag for planning visits, not a filter (D-12 is open).
+
+- **Source:** FEMA's National Flood Hazard Layer (NFHL), the "Flood Hazard Zones" layer of its public ArcGIS service (`config/data_sources.yaml`, `fema_nfhl`). It holds the *effective* flood maps (FIRMs) as polygons; preliminary and pending maps are a separate service and aren't used.
+- **Terms:** a US Government work, generally public domain; FEMA's service page states no license. It's a planning screen, not a flood determination: for a real property, the FIRM panel itself (or a Letter of Map Amendment) is what counts.
+- **Coverage:** all five counties have a countywide digital flood map: Rhea (2008), Marion (2009), Grundy (2009), Sequatchie (2010) and Bledsoe (2010), with some panels revised as late as November 2025. Their zones cover 99.7–99.9% of each county, so there are no unmapped gaps inside them.
+- **What's loaded:** `hhsf ingest flood --aoi <key>` (part of `make ingest`) asks for every zone on the county's map (its ID is the county FIPS code plus "C", e.g. `47153C`), 100 per page, cached in `data/raw/fema_nfhl/<aoi>/`. FEMA's server drops connections under load and refuses requests without a User-Agent; the tool retries each page.
+
+| County | Zones | In the 100-year floodplain | Share of the county in it |
+| --- | --- | --- | --- |
+| Sequatchie | 227 | 106 | 4.0% |
+| Marion | 420 | 251 | 9.7% |
+| Bledsoe | 104 | 62 | 2.6% |
+| Grundy | 7 | 5 | 2.9% |
+| Rhea | 780 | 223 | 10.8% |
+
+### What the zones mean
+
+- **Special Flood Hazard Area (SFHA, `sfha`):** the 1% annual chance ("100-year") floodplain. Here that's zone **A** (drawn approximately, no flood heights) and zone **AE** (studied in detail, with flood heights). Building in it needs a local floodplain permit, and flood insurance is required for a federally backed mortgage.
+- **Floodway (`floodway`):** the part of an AE zone that has to stay open for the 100-year flood to pass. The strictest part: anything built in it must show it won't raise flood levels.
+- **Zone X, 0.2% annual chance:** the "500-year" floodplain. Moderate hazard, no requirements.
+- **Zone X, minimal hazard:** everything else on the map. **On a small creek this usually means FEMA never studied the creek**, not that it can't flood. FEMA generally studies streams draining about a square mile or more, and most of the ranked stretches are on smaller ones. Grundy's map in particular shows only a handful of studied streams.
+
+### Which zones a corridor is in
+
+Computed by two database views (migration 0011), like the parcel links, so they always match the latest flood ingest.
+
+- **Turbine zone** (`corridor_turbine_flood_zones`): the zone under the bottom of the stretch. Where zones meet, the more hazardous one wins: floodway, then SFHA, then the rest. No zone there means "not mapped" (`flood_zone_not_mapped`).
+- **Stretch zones** (`corridor_flood_zones`): every zone the stretch runs through and how much of it is in each; `stretch_sfha_ft` in the exports is the part in the 100-year floodplain.
+- Zones are stored in pieces of at most 256 corners (the minimal-hazard zone can be one polygon the size of a county), which keeps these lookups fast. The pieces keep FEMA's zone ID (`fld_ar_id`).
+- **Flags, not filters:** `turbine_in_floodway`, `turbine_in_sfha` and `stretch_in_sfha`. Nothing is filtered or re-ranked (D-12). A run-of-river intake and turbine normally sit right by the creek, so being in its floodplain mostly means a permit and flood-proofing the powerhouse; the house site is what needs to stay out, and that's chosen on the visit.
+
+On the five counties' latest runs, 369 of 5,233 ranked corridors touch the 100-year floodplain. 331 have their turbine end in it (240 in zone A, 91 in AE), 13 of those in a floodway; 4,735 end in minimal-hazard zone X. 161 are "not mapped": 158 end outside the five counties, and 3 sit within 8 m of a county line, where FEMA's county outline and the Census one differ by a few meters. None of the six 1 kW streams has its turbine end in a flood hazard area: all six end in zone X, minimal hazard. Only Bethel Creek's stretch crosses the 100-year floodplain, for about 240 ft (72 m).

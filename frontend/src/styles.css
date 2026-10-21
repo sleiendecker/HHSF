@@ -246,3 +246,12 @@ body,
   color: #666;
   font-size: 12px;
 }
+
+.panel .swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 2px;
+  opacity: 0.6;
+  vertical-align: middle;
+}

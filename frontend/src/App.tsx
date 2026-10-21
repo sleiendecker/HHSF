@@ -57,6 +57,11 @@ function popupHtml(f: MapGeoJSONFeature): string {
 
 // Martin serves parcels from zoom 12 (martin/martin.yaml): the five counties hold ~80,000.
 const PARCELS_MIN_ZOOM = 12;
+// And FEMA flood zones from zoom 10.
+const FLOOD_MIN_ZOOM = 10;
+// Floodway, the rest of the 100-year floodplain (SFHA), the 0.2% annual chance area. Zone X
+// "minimal hazard" covers everything else and isn't drawn.
+const FLOOD_COLORS = { floodway: "#1d4ed8", sfha: "#3b82f6", moderate: "#93c5fd" };
 
 // Scores and plain streams are the same lines, so only one set shows at a time.
 function setScoresVisible(map: maplibregl.Map, visible: boolean) {
@@ -72,6 +77,8 @@ export function App() {
   const showScoresRef = useRef(showScores);
   const [showParcels, setShowParcels] = useState(false);
   const showParcelsRef = useRef(showParcels);
+  const [showFlood, setShowFlood] = useState(false);
+  const showFloodRef = useRef(showFlood);
   const [zoom, setZoom] = useState(10);
 
   useEffect(() => {
@@ -101,6 +108,12 @@ export function App() {
         minzoom: PARCELS_MIN_ZOOM,
         attribution: "Parcels: Tennessee Comptroller of the Treasury",
       });
+      map.addSource("flood", {
+        type: "vector",
+        tiles: [`${TILES}/flood_zones/{z}/{x}/{y}`],
+        minzoom: FLOOD_MIN_ZOOM,
+        attribution: "Flood zones: FEMA National Flood Hazard Layer",
+      });
       map.addSource("scores", {
         type: "vector",
         tiles: [`${TILES}/latest_hydro_scores/{z}/{x}/{y}`],
@@ -112,6 +125,29 @@ export function App() {
         source: "counties",
         "source-layer": "counties",
         paint: { "line-color": "#555", "line-width": 1.5, "line-dasharray": [3, 2] },
+      });
+
+      // Flood zones under everything else. Stored in pieces (migration 0011), so fill only: outlines would show the seams.
+      map.addLayer({
+        id: "flood-fill",
+        type: "fill",
+        source: "flood",
+        "source-layer": "flood_zones",
+        minzoom: FLOOD_MIN_ZOOM,
+        filter: ["any", ["==", ["get", "sfha"], true], ["in", "0.2 PCT", ["coalesce", ["get", "subtype"], ""]]],
+        layout: { visibility: showFloodRef.current ? "visible" : "none" },
+        paint: {
+          "fill-color": [
+            "case",
+            ["==", ["get", "floodway"], true],
+            FLOOD_COLORS.floodway,
+            ["==", ["get", "sfha"], true],
+            FLOOD_COLORS.sfha,
+            FLOOD_COLORS.moderate,
+          ],
+          "fill-opacity": 0.35,
+          "fill-antialias": false,
+        },
       });
 
       // Property lines under the streams; showBasemap() sets the color. No owner data in these tiles.
@@ -190,6 +226,12 @@ export function App() {
   }, [showParcels]);
 
   useEffect(() => {
+    showFloodRef.current = showFlood;
+    if (mapRef.current?.getLayer("flood-fill"))
+      mapRef.current.setLayoutProperty("flood-fill", "visibility", showFlood ? "visible" : "none");
+  }, [showFlood]);
+
+  useEffect(() => {
     showScoresRef.current = showScores;
     if (mapRef.current?.getLayer("scores-hit")) setScoresVisible(mapRef.current, showScores);
   }, [showScores]);
@@ -213,6 +255,18 @@ export function App() {
           Show property lines
         </label>
         {showParcels && zoom < PARCELS_MIN_ZOOM && <p className="hint">Zoom in to see property lines.</p>}
+        <label className="toggle">
+          <input type="checkbox" checked={showFlood} onChange={(e) => setShowFlood(e.target.checked)} />
+          Show FEMA flood zones
+        </label>
+        {showFlood && (
+          <p className="hint">
+            {zoom < FLOOD_MIN_ZOOM && "Zoom in to see flood zones. "}
+            <span className="swatch" style={{ background: FLOOD_COLORS.floodway }} /> floodway{" "}
+            <span className="swatch" style={{ background: FLOOD_COLORS.sfha }} /> 100-year{" "}
+            <span className="swatch" style={{ background: FLOOD_COLORS.moderate }} /> 500-year. Small creeks are mostly unmapped.
+          </p>
+        )}
       </div>
       {showScores && <Legend />}
     </>
