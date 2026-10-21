@@ -4,8 +4,9 @@ Loads one finished score run (default: the AOI's latest) with its hydro numbers 
 hands the rows to export.py, which does all the formatting. Files go to
 data/outputs/<aoi>/run_<score run id>/, so each run's exports sit side by side.
 
-Parcels are linked when the export runs (views corridor_parcels and
-corridor_turbine_parcels, migration 0010), so they match the latest parcel ingest.
+Parcels and flood zones are linked when the export runs (views corridor_parcels and
+corridor_turbine_parcels, migration 0010; corridor_flood_zones and
+corridor_turbine_flood_zones, 0011), so they match the latest ingest.
 """
 
 import json
@@ -17,6 +18,7 @@ from sqlalchemy import Connection, Engine, text
 from hhsf.analysis import export
 from hhsf.analysis.run import code_version
 from hhsf.core.config import AOI, DATA_DIR, min_homestead_acres
+from hhsf.ingest.flood import SOURCE_KEY as FLOOD_SOURCE
 from hhsf.ingest.parcels import SOURCE_KEY as PARCELS_SOURCE
 
 OUTPUTS_DIR = DATA_DIR / "outputs"
@@ -70,16 +72,26 @@ def load_run_info(conn: Connection, aoi: AOI, score_run_id: int) -> export.RunIn
     )
 
 
-def parcels_version(conn: Connection) -> str | None:
-    """The parcel layer's version and download date, or None if no parcels are loaded."""
+def _loaded_version(conn: Connection, source_key: str, table: str) -> str | None:
+    """A source's version and download date, or None if its table is empty."""
     row = conn.execute(
         text(
             "SELECT version, to_char(retrieved_at, 'YYYY-MM-DD') AS retrieved"
-            " FROM data_sources WHERE source_key = :k AND EXISTS (SELECT 1 FROM parcels)"
+            f" FROM data_sources WHERE source_key = :k AND EXISTS (SELECT 1 FROM {table})"
         ),
-        {"k": PARCELS_SOURCE},
+        {"k": source_key},
     ).one_or_none()
     return None if row is None else f"{row.version}, downloaded {row.retrieved}"
+
+
+def parcels_version(conn: Connection) -> str | None:
+    """The parcel layer's version and download date, or None if no parcels are loaded."""
+    return _loaded_version(conn, PARCELS_SOURCE, "parcels")
+
+
+def flood_version(conn: Connection) -> str | None:
+    """FEMA's flood layer version and download date, or None if no zones are loaded."""
+    return _loaded_version(conn, FLOOD_SOURCE, "flood_zones")
 
 
 def _parcel(r: dict) -> export.Parcel | None:
@@ -97,10 +109,31 @@ def _parcel(r: dict) -> export.Parcel | None:
     )
 
 
+def _zone_labels(zones: list[str] | None) -> tuple[str, ...]:
+    """'AE|FLOODWAY' etc. (longest share first) as distinct labels, in that order."""
+    labels = []
+    for z in zones or ():
+        zone, _, subtype = z.partition("|")
+        labels.append(export.flood_zone_label(zone, subtype or None))
+    return tuple(dict.fromkeys(labels))
+
+
+def _flood_zone(r: dict) -> export.FloodZone | None:
+    if r["tf_zone"] is None:
+        return None
+    return export.FloodZone(
+        zone=r["tf_zone"], subtype=r["tf_subtype"], sfha=r["tf_sfha"], floodway=r["tf_floodway"]
+    )
+
+
 def load_rows(
-    conn: Connection, score_run_id: int, flag_parcels: bool = True
+    conn: Connection, score_run_id: int, flag_parcels: bool = True, flag_flood: bool = True
 ) -> list[export.ExportRow]:
-    """The run's corridors with their parcels. `flag_parcels`: false when none are loaded."""
+    """The run's corridors with their parcels and flood zones.
+
+    `flag_parcels` and `flag_flood`: false when that layer isn't loaded, so a missing
+    layer isn't reported as "nothing found".
+    """
     min_acres = min_homestead_acres()
     rows = conn.execute(
         text(
@@ -116,7 +149,10 @@ def load_rows(
                    p.tpad_url AS tp_tpad_url, tp.distance_m AS tp_distance_m,
                    po.owner AS tp_owner, po.owner2 AS tp_owner2,
                    po.property_address AS tp_address,
-                   sp.ids AS stretch_parcel_ids, sp.owners AS stretch_parcel_owners
+                   sp.ids AS stretch_parcel_ids, sp.owners AS stretch_parcel_owners,
+                   tf.zone AS tf_zone, tf.subtype AS tf_subtype, tf.sfha AS tf_sfha,
+                   tf.floodway AS tf_floodway, sf.zones AS stretch_flood_zones,
+                   sf.sfha_m AS stretch_sfha_m
             FROM hydro_scores s
             JOIN hydro_corridors c USING (corridor_id)
             JOIN streams st USING (stream_id)
@@ -135,6 +171,15 @@ def load_rows(
                 LEFT JOIN parcel_owners o2 ON o2.gislink = cp.gislink
                 WHERE cp.corridor_id = s.corridor_id
             ) sp
+            LEFT JOIN corridor_turbine_flood_zones tf USING (corridor_id)
+            CROSS JOIN LATERAL (
+                SELECT array_agg(f.zone || coalesce('|' || f.subtype, '')
+                                 ORDER BY f.length_m DESC) AS zones,
+                       CASE WHEN count(*) > 0
+                            THEN coalesce(sum(f.length_m) FILTER (WHERE f.sfha), 0) END AS sfha_m
+                FROM corridor_flood_zones f
+                WHERE f.corridor_id = s.corridor_id
+            ) sf
             WHERE s.run_id = :r
             ORDER BY s.corridor_id
             """
@@ -145,12 +190,14 @@ def load_rows(
     for r in rows:
         turbine = _parcel(r)
         distance = r["tp_distance_m"]
+        flood_zone = _flood_zone(r)
         out.append(
             export.ExportRow(
                 **{
                     k: v
                     for k, v in r.items()
-                    if k not in ("flow_flags", "geometry") and not k.startswith(("tp_", "stretch_"))
+                    if k not in ("flow_flags", "geometry", "stretch_sfha_m")
+                    and not k.startswith(("tp_", "tf_", "stretch_"))
                 },
                 flow_flags=tuple(r["flow_flags"] or ()),
                 geometry=json.loads(r["geometry"]),
@@ -160,6 +207,12 @@ def load_rows(
                 stretch_parcel_owners=tuple(r["stretch_parcel_owners"] or ()),
                 parcel_flags=(
                     export.parcel_flags(turbine, distance, min_acres) if flag_parcels else ()
+                ),
+                turbine_flood_zone=flood_zone,
+                stretch_flood_zones=_zone_labels(r["stretch_flood_zones"]),
+                stretch_sfha_m=r["stretch_sfha_m"],
+                flood_flags=(
+                    export.flood_flags(flood_zone, r["stretch_sfha_m"]) if flag_flood else ()
                 ),
             )
         )
@@ -178,7 +231,10 @@ def export_hydro(
             score_run_id = latest_score_run(conn, aoi.key)
         info = load_run_info(conn, aoi, score_run_id)
         parcels = parcels_version(conn)
-        rows = load_rows(conn, score_run_id, flag_parcels=parcels is not None)
-    info = replace(info, exported_with=code_version(), parcels_version=parcels)
+        flood = flood_version(conn)
+        rows = load_rows(
+            conn, score_run_id, flag_parcels=parcels is not None, flag_flood=flood is not None
+        )
+    info = replace(info, exported_with=code_version(), parcels_version=parcels, flood_version=flood)
     out_dir = out_root / aoi.key / f"run_{score_run_id}"
     return info, out_dir, export.write_exports(out_dir, info, rows)

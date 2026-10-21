@@ -65,6 +65,19 @@ Parcels are loaded now (PART 14). Until this is decided, the 10-acre placeholder
 
 ---
 
+### D-12 · Flood zones in the score: **Decided**
+
+FEMA flood zones are loaded (PART 15). Should a turbine end or stretch in a flood zone count against a site?
+
+- **Flag only.** The exports mark `turbine_in_floodway`, `turbine_in_sfha` and `stretch_in_sfha` (and `flood_zone_not_mapped`); nothing is filtered or re-ranked.
+- Why not filter or penalize: a run-of-river intake and turbine nearly always sit beside the creek, so being in its floodplain is normal and mostly means a floodplain permit and flood-proofing the powerhouse. The house is what has to stay out of the floodplain, and that's chosen on the visit. Also, most small creeks were never studied by FEMA (see [ASSUMPTIONS.md](ASSUMPTIONS.md#flood-zones)), so a penalty would mostly hit the bigger, better-mapped streams.
+- It also changes little where it matters: none of the six 1 kW streams has its turbine end in a flood zone, and dropping turbine ends in a floodway would remove 13 of 5,233 ranked stretches.
+- Considered and not chosen: dropping corridors whose turbine end is in a **floodway**, or a small score penalty for one in the 100-year floodplain.
+
+**Decision (2026-10-20):** flag only. Flood zones neither filter nor re-rank corridors. Revisit them for the **house site** instead, when a later step looks at buildable land (slope, soils, flood): does the parcel have enough ground outside the floodplain to build on?
+
+---
+
 ## Physics and practice defaults
 
 ### D-04 · Definition of "reliable" flow: **Default**
@@ -161,6 +174,7 @@ Decisions that barely move the top 20 keep their default and stop being discusse
 
 | Date | Decision | Change |
 | --- | --- | --- |
+| 2026-10-20 | D-12 | Decided by the owner: FEMA flood zones (PART 15) are flagged only, never filtered or re-ranked; revisit for the house site with the buildable-land step |
 | 2026-10-20 | D-03 | Owner: parcels loaded (PART 14); minimum acreage only flags, filters nothing until D-03 is decided. Owner names stay out of map tiles and the repo, in a separate table read only by the local exports |
 | 2026-10-18 | All | Initial defaults |
 | 2026-10-18 | D-01 | Power target set to 1.0 kW continuous (provisional, pending owner) |

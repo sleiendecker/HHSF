@@ -91,6 +91,31 @@ usgs_3dep_13:
   license: Public domain (US Government work)
   version: 3DEP 1/3 arc-second, current tiles  # the ingest adds each tile's last-modified date
 
+fema_nfhl:
+  description: >-
+    FEMA National Flood Hazard Layer (NFHL), "Flood Hazard Zones" (layer 28, the S_FLD_HAZ_AR
+    table): the effective flood maps (FIRMs) as polygons, each with its zone (A, AE, X, ...),
+    subtype (floodway, 0.2% annual chance, minimal hazard) and whether it's a Special Flood
+    Hazard Area (SFHA, the 1% annual chance or "100-year" floodplain). Effective maps only;
+    preliminary and pending ones are a separate service and aren't used.
+  url: https://hazards.fema.gov/arcgis/rest/services/public/NFHL/MapServer/28/query
+  service: https://hazards.fema.gov/arcgis/rest/services/public/NFHL/MapServer
+  license: >-
+    US Government work (FEMA), generally public domain; FEMA's service page states no license
+    or terms of use. FEMA cautions that maps shown with other data for official purposes need
+    base data meeting its accuracy standards: here they're a planning screen, not a flood
+    determination (that takes the FIRM panel itself, or a Letter of Map Amendment).
+  attribution: FEMA National Flood Hazard Layer
+  # Coverage checked 2026-10-20 (FIRM Panels, layer 3): all five counties have a countywide
+  # digital flood map, Rhea 2008, Marion 2009, Grundy 2009, Sequatchie 2010 and Bledsoe 2010,
+  # with some panels revised as late as 2025-11-27; zones cover 99.7-99.9% of each county.
+  # Grundy's map has few studied streams (7 zone polygons). Small creeks are mostly left
+  # unstudied, inside zone X. See docs/ASSUMPTIONS.md, "Flood zones".
+  version: NFHL effective, ArcGIS MapServer 11.1 (checked 2026-10-20)
+  # Pages are kept small: the server drops connections on large responses and under load
+  # (the client retries). It also answers 403 to requests with no User-Agent.
+  page_size: 100
+
 # Map basemaps. The map app can't read this file: the URLs are copied in frontend/src/basemaps.ts,
 # so change both together.
 openfreemap_positron:

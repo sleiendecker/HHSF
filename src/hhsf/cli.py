@@ -17,7 +17,7 @@ from hhsf.analysis import (
 )
 from hhsf.core.config import REPO_ROOT, hydrography_source, load_aoi
 from hhsf.core.db import engine, record_source
-from hhsf.ingest import boundary, hydrography, nhdplus_bulk, parcels, terrain
+from hhsf.ingest import boundary, flood, hydrography, nhdplus_bulk, parcels, terrain
 
 app = typer.Typer(help="Hydro Homestead Site Finder", no_args_is_help=True)
 db_app = typer.Typer(help="Database schema", no_args_is_help=True)
@@ -117,13 +117,34 @@ def ingest_parcels(
     typer.echo(f"Loaded {n:,} parcels (owner names kept apart, for local exports only).")
 
 
+@ingest_app.command("flood")
+def ingest_flood(
+    aoi: str = AOI_OPTION,
+    refresh: bool = typer.Option(
+        False, help="Download again instead of using data/raw/ (after a flood map revision)."
+    ),
+) -> None:
+    """Load the AOI county's FEMA flood zones (National Flood Hazard Layer)."""
+    area = load_aoi(aoi)
+    typer.echo(f"Fetching FEMA flood zones for {area.name} (the FEMA server can be slow)...")
+    records = flood.fetch_flood_zones(area, refresh, echo=typer.echo)
+    with engine().begin() as conn:
+        n = flood.load_flood_zones(conn, area, records)
+    if n == 0:
+        typer.echo(f"FEMA has no flood map for {area.name}: every corridor will show 'not mapped'.")
+    else:
+        sfha = sum(r.sfha for r in records)
+        typer.echo(f"Loaded {n:,} flood zones ({sfha:,} in the 100-year floodplain).")
+
+
 @ingest_app.command("all")
 def ingest_all(aoi: str = AOI_OPTION, source: str | None = SOURCE_OPTION) -> None:
-    """Boundary, then hydrography, terrain and parcels."""
+    """Boundary, then hydrography, terrain, parcels and flood zones."""
     ingest_boundary(aoi)
     ingest_hydrography(aoi, source)
     ingest_terrain(aoi)
     ingest_parcels(aoi)
+    ingest_flood(aoi)
 
 
 @analyze_app.command("hydro")

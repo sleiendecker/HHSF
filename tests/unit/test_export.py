@@ -375,3 +375,85 @@ def test_report_lists_the_turbine_parcel_and_owner():
 
 def test_report_says_when_parcels_are_not_loaded():
     assert "No parcels are loaded" in export.render_report(INFO, ROWS)
+
+
+# --- Flood zones --------------------------------------------------------------
+
+FLOODWAY = export.FloodZone(zone="AE", subtype="FLOODWAY", sfha=True, floodway=True)
+ZONE_X = export.FloodZone(zone="X", subtype="AREA OF MINIMAL FLOOD HAZARD", sfha=False)
+IN_FLOODWAY = row(
+    turbine_flood_zone=FLOODWAY,
+    stretch_flood_zones=("AE floodway", "X (minimal hazard)"),
+    stretch_sfha_m=30.48,
+    flood_flags=export.flood_flags(FLOODWAY, 30.48),
+)
+
+
+@pytest.mark.parametrize(
+    ("zone", "subtype", "label"),
+    [
+        ("A", None, "A"),
+        ("AE", "FLOODWAY", "AE floodway"),
+        ("X", "0.2 PCT ANNUAL CHANCE FLOOD HAZARD", "X (0.2% annual chance)"),
+        ("X", "AREA OF MINIMAL FLOOD HAZARD", "X (minimal hazard)"),
+        (
+            "X",
+            "AREA WITH REDUCED FLOOD RISK DUE TO LEVEE",
+            "X (area with reduced flood risk due to levee)",
+        ),
+    ],
+)
+def test_flood_zone_labels(zone, subtype, label):
+    assert export.flood_zone_label(zone, subtype) == label
+
+
+def test_flood_flags():
+    assert export.flood_flags(FLOODWAY, 30.0) == (
+        export.TURBINE_IN_FLOODWAY,
+        export.TURBINE_IN_SFHA,
+        export.STRETCH_IN_SFHA,
+    )
+    assert export.flood_flags(ZONE_X, 0.0) == ()
+    assert export.flood_flags(ZONE_X, 12.0) == (export.STRETCH_IN_SFHA,)
+    assert export.flood_flags(None, None) == (export.FLOOD_NOT_MAPPED,)
+
+
+def test_record_has_flood_zones():
+    r = export.record(IN_FLOODWAY)
+    assert r["turbine_flood_zone"] == "AE"
+    assert r["turbine_flood_subtype"] == "FLOODWAY"
+    assert r["turbine_in_sfha"] is True
+    assert r["stretch_sfha_ft"] == 100
+    assert r["stretch_flood_zones"] == "AE floodway; X (minimal hazard)"
+    assert r["flood_flags"] == "turbine_in_floodway; turbine_in_sfha; stretch_in_sfha"
+
+
+def test_record_without_flood_zones_is_blank():
+    r = export.record(row())
+    assert r["turbine_flood_zone"] is None
+    assert r["turbine_in_sfha"] is None
+    assert r["stretch_sfha_ft"] is None
+    assert r["flood_flags"] == ""
+
+
+def test_flood_columns_are_in_the_geojson():
+    props = export.to_geojson([IN_FLOODWAY], INFO)["features"][0]["properties"]
+    assert props["turbine_flood_zone"] == "AE"
+    assert props["flood_flags"].startswith("turbine_in_floodway")
+
+
+def test_report_counts_flood_flags_and_says_where_data_is_missing():
+    loaded = replace(INFO, flood_version="NFHL effective, downloaded 2026-10-20")
+    unmapped = row(2, rank=2, tier_rank=2, flood_flags=(export.FLOOD_NOT_MAPPED,))
+    report = export.render_report(loaded, [IN_FLOODWAY, unmapped])
+    assert "| fema_nfhl (at export) | NFHL effective, downloaded 2026-10-20 |" in report
+    assert "| Turbine end in a floodway | 1 |" in report
+    assert "| Turbine end not on any FEMA map | 1 |" in report
+    assert "| AE floodway |" in report and "| not mapped |" in report
+    assert "never studied" in report and "flagged only" in report
+
+
+def test_report_says_when_flood_zones_are_not_loaded():
+    report = export.render_report(INFO, ROWS)
+    assert "No flood zones are loaded" in report
+    assert "FEMA flood zones (ranked corridors" not in report
