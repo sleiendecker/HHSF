@@ -19,6 +19,7 @@ from hhsf.analysis import (
     gauges,
     hydro,
     landcover,
+    privacy,
     run,
     scoring,
     scoring_run,
@@ -29,6 +30,7 @@ from hhsf.core.config import REPO_ROOT, data_source_settings, hydrography_source
 from hhsf.core.db import engine, record_source, refresh_map
 from hhsf.ingest import (
     boundary,
+    buildings,
     flood,
     hydrography,
     nhdplus_bulk,
@@ -224,10 +226,35 @@ def ingest_soils(
     )
 
 
+@ingest_app.command("buildings")
+def ingest_buildings(
+    aoi: str = AOI_OPTION,
+    refresh: bool = typer.Option(
+        False, help="Download again instead of using data/raw/ (after a new Microsoft release)."
+    ),
+) -> None:
+    """Load building footprints around the AOI's county from Microsoft's Global ML
+    Building Footprints (needs the boundary)."""
+    area = load_aoi(aoi)
+    with engine().connect() as conn:
+        keep = buildings.keep_area(conn, hydrography.county_area(conn, area))
+    typer.echo(f"Fetching Microsoft building footprints around {area.name}...")
+    tiles, source = buildings.fetch_buildings(keep, refresh, echo=typer.echo)
+    total = 0
+    for key, found in tiles:
+        with engine().begin() as conn:
+            record_source(conn, source)
+            total += buildings.load_tile(conn, key, found)
+            # Their neighbors may have changed: `make analyze` computes privacy again.
+            conn.execute(text("DELETE FROM corridor_privacy WHERE aoi_key = :a"), {"a": area.key})
+        typer.echo(f"  tile {key}: {len(found):,} buildings")
+    typer.echo(f"Loaded {total:,} buildings ({source.version}).")
+
+
 @ingest_app.command("all")
 @refreshes_map
 def ingest_all(aoi: str = AOI_OPTION, source: str | None = SOURCE_OPTION) -> None:
-    """Boundary, then hydrography, terrain, parcels, flood zones, roads and soils."""
+    """Boundary, then hydrography, terrain, parcels, flood zones, roads, soils and buildings."""
     global _batch
     _batch = True
     try:
@@ -238,6 +265,7 @@ def ingest_all(aoi: str = AOI_OPTION, source: str | None = SOURCE_OPTION) -> Non
         ingest_flood(aoi)
         ingest_roads(aoi)
         ingest_soils(aoi)
+        ingest_buildings(aoi)
     finally:
         _batch = False
 
@@ -470,6 +498,44 @@ def analyze_landcover(
     )
 
 
+@analyze_app.command("privacy")
+@refreshes_map
+def analyze_privacy(aoi: str = AOI_OPTION) -> None:
+    """Privacy around each corridor's home site: neighbors' buildings, development
+    density, and the woods between it and the nearest public road (needs make ingest,
+    analyze hydro and analyze buildable)."""
+    area = load_aoi(aoi)
+    settings = privacy.load_settings()
+    with engine().connect() as conn:
+        hydro_run = buildable.latest_hydro_run(conn, area.key)
+        if hydro_run is None:
+            raise typer.BadParameter(f"No hydro run for {area.name}. Run `make analyze` first.")
+        sites = privacy.load_sites(conn, hydro_run)
+        loaded = conn.execute(text("SELECT EXISTS (SELECT 1 FROM buildings)")).scalar_one()
+    if not sites:
+        typer.echo(f"No corridors in hydro run {hydro_run}.")
+        return
+    if not loaded:
+        raise typer.BadParameter("No buildings loaded. Run `uv run hhsf ingest buildings` first.")
+    # Tree canopy under every sightline: the home sites and the sightline beyond them.
+    needed = privacy.needed_bounds(sites, settings.sightline_max_m)
+    rasters, source = nlcd.fetch_landcover(area.key, needed, echo=typer.echo)
+    typer.echo(
+        f"Privacy around the home sites of {len(sites):,} corridors of hydro run {hydro_run}..."
+    )
+    with engine().begin() as conn:
+        record_source(conn, source)
+        results = privacy.run_privacy(
+            conn, area, sites, rasters["tree_canopy"], settings, typer.echo
+        )
+    alone = sum(r.buildings_quarter_mile == 0 for r in results)
+    on_ground = sum(r.home_site_basis == privacy.BUILDABLE for r in results)
+    typer.echo(
+        f"Saved {len(results):,} corridors ({on_ground:,} home sites on buildable ground, the "
+        f"rest at the turbine end): {alone:,} have no other building within 1/4 mile."
+    )
+
+
 @analyze_app.command("drive-time")
 @refreshes_map
 def analyze_drive_time(
@@ -504,7 +570,7 @@ def analyze_drive_time(
 @refreshes_map
 def score_hydro(
     aoi: str = AOI_OPTION,
-    profile: str = typer.Option("hydro_v5", help="Scoring profile from config/scoring_profiles/"),
+    profile: str = typer.Option("hydro_v6", help="Scoring profile from config/scoring_profiles/"),
     run_id: int | None = typer.Option(
         None, help="Hydro run to score. Default: the AOI's latest finished one."
     ),
@@ -537,7 +603,8 @@ def score_hydro(
     )
     if (left_out := summary.get("overall_parts_left_out")) is not None:
         missing = ", ".join(f"{n:,} {part}" for part, n in sorted(left_out.items())) or "none"
-        typer.echo(f"  overall score: parts left out for lack of data: {missing} (and privacy)")
+        no_privacy = " (and privacy)" if p.overall and p.overall.privacy is None else ""
+        typer.echo(f"  overall score: parts left out for lack of data: {missing}{no_privacy}")
     if show <= 0:
         return
     with eng.connect() as conn:

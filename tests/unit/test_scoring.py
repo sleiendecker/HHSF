@@ -437,3 +437,53 @@ def test_v5_counts_open_cropland_and_v4_ignores_it():
         "open_cropland_acres"
         in next(p for p in s.overall["parts"] if p["part"] == "agriculture")["missing"]
     )
+
+
+V6 = scoring.load_profile("hydro_v6")
+SECLUDED = dict(
+    buildings_quarter_mile=0,
+    nearest_building_ft=None,  # none within the search radius
+    buildings_per_sqmi=0,
+    road_woods_ft=600,
+    home_road_ft=2000,
+)
+
+
+def test_v6_is_v5_plus_privacy():
+    assert V6.model_dump(exclude={"version", "overall"}) == V5.model_dump(
+        exclude={"version", "overall"}
+    )
+    assert V6.overall.model_dump(exclude={"privacy"}) == V5.overall.model_dump(exclude={"privacy"})
+    assert V5.overall.privacy is None and set(V6.overall.privacy) == set(
+        scoring.SITE_FACTORS["privacy"]
+    )
+
+
+def test_v6_scores_privacy_and_no_part_is_left_out():
+    site = replace(GOOD_SITE, open_cropland_acres=20, **SECLUDED)
+    [s] = scoring.score_all([corridor(head_ft=200, watts=3000, site=site)], V6)
+    assert s.privacy_subscore == pytest.approx(100)  # no building within 2 miles: far end
+    assert s.overall["left_out"] == [] and "left out" not in s.summary
+    privacy = next(p for p in s.overall["parts"] if p["part"] == "privacy")
+    assert privacy["weight"] == pytest.approx(0.1)
+    near = next(f for f in privacy["factors"] if f["factor"] == "nearest_building_ft")
+    assert "no other building within the search radius" in near["reason"]
+
+
+def test_v6_crowded_site_scores_low_and_missing_privacy_is_left_out():
+    crowded = replace(
+        GOOD_SITE,
+        buildings_quarter_mile=15,
+        nearest_building_ft=150,
+        buildings_per_sqmi=120,
+        road_woods_ft=0,
+        home_road_ft=80,
+    )
+    [s] = scoring.score_all([corridor(head_ft=200, watts=3000, site=crowded)], V6)
+    assert s.privacy_subscore == 0
+    # Privacy not computed: left out and the rest rescaled, as in v5.
+    [s] = scoring.score_all([corridor(head_ft=200, watts=3000, site=GOOD_SITE)], V6)
+    assert s.privacy_subscore is None and "privacy" in s.overall["left_out"]
+    # v5 never scores privacy, even with the data.
+    [s] = scoring.score_all([corridor(head_ft=200, watts=3000, site=crowded)], V5)
+    assert s.privacy_subscore is None and s.overall["left_out"][0] == "privacy"

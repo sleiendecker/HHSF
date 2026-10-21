@@ -17,10 +17,11 @@ A corridor ends up in exactly one status:
 - not_scorable: head or flow missing for some other reason; filtered out.
 
 With an `overall` section (hydro_v4 on, FR-7, D-15) every ranked corridor also gets
-an overall score: the hydro part plus buildability, agriculture and logistics
-sub-scores of its turbine parcel and turbine end, each made of factors with their own
-curves. Parts and factors with no data are left out and the rest rescale (privacy
-always, until FR-6 is built). Within each tier, corridors are then ranked by it.
+an overall score: the hydro part plus buildability, agriculture, privacy (hydro_v6 on,
+D-17) and logistics sub-scores of its turbine parcel, home site and turbine end, each
+made of factors with their own curves. Parts and factors with no data are left out and
+the rest rescale (privacy always, in profiles before hydro_v6). Within each tier,
+corridors are then ranked by it.
 """
 
 from dataclasses import dataclass, field
@@ -80,6 +81,13 @@ PARTS = ("hydro", "buildability", "agriculture", "privacy", "logistics")
 SITE_FACTORS = {
     "buildability": ("buildable_acres", "nearest_buildable_ft", "public_road_ft"),
     "agriculture": ("farmland_acres", "cropland_acres", "pasture_aum", "open_cropland_acres"),
+    "privacy": (
+        "buildings_quarter_mile",
+        "nearest_building_ft",
+        "buildings_per_sqmi",
+        "road_woods_ft",
+        "home_road_ft",
+    ),
     "logistics": ("drive_minutes",),
 }
 
@@ -94,6 +102,8 @@ class Overall(BaseModel):
     buildability: dict[str, SiteFactor]
     agriculture: dict[str, SiteFactor]
     logistics: dict[str, SiteFactor]
+    # hydro_v6 on (D-17). None: privacy is left out, as before FR-6 was built.
+    privacy: dict[str, SiteFactor] | None = None
 
     @model_validator(mode="after")
     def _check(self) -> "Overall":
@@ -101,6 +111,8 @@ class Overall(BaseModel):
             raise ValueError(f"overall weights must name {', '.join(PARTS)} and add up to 1")
         for part, allowed in SITE_FACTORS.items():
             factors = getattr(self, part)
+            if part == "privacy" and factors is None:
+                continue
             if not factors or not set(factors) <= set(allowed):
                 raise ValueError(f"overall.{part} factors must be some of {', '.join(allowed)}")
             if not _adds_to_one([f.weight for f in factors.values()]):
@@ -259,6 +271,14 @@ class SiteInputs:
     cropland_acres: float | None = None  # capability class 1-3
     pasture_aum: float | None = None
     open_cropland_acres: float | None = None  # open land (NLCD) on class 1-3 soils
+    # Privacy around the home site (hhsf.analysis.privacy): other buildings within 1/4 mile,
+    # the nearest (None with a count: none within the search radius), buildings per square
+    # mile within 1 mile, feet of woods toward the nearest public road and its distance.
+    buildings_quarter_mile: float | None = None
+    nearest_building_ft: float | None = None
+    buildings_per_sqmi: float | None = None
+    road_woods_ft: float | None = None
+    home_road_ft: float | None = None
     drive_minutes: float | None = None
 
 
@@ -279,6 +299,7 @@ class Score:
     overall_score: float | None = None  # FR-7; only with a profile's overall section
     buildability_subscore: float | None = None
     agriculture_subscore: float | None = None
+    privacy_subscore: float | None = None
     logistics_subscore: float | None = None
     overall: dict | None = None  # how the overall score was reached
 
@@ -438,6 +459,11 @@ SITE_FACTOR_TEXT = {
         "{:,.1f} acres of class 1-3 cropland already open",
         "no land cover computed",
     ),
+    "buildings_quarter_mile": ("{:,.0f} other buildings within 1/4 mile", "no buildings loaded"),
+    "nearest_building_ft": ("nearest other building {:,.0f} ft away", "no buildings loaded"),
+    "buildings_per_sqmi": ("{:,.0f} buildings per sq mi within 1 mile", "no buildings loaded"),
+    "road_woods_ft": ("{:,.0f} ft of woods toward the nearest public road", "no tree canopy"),
+    "home_road_ft": ("nearest public road {:,.0f} ft from the home site", "no roads loaded"),
     "drive_minutes": ("{:,.0f} min drive", "no drive time"),
 }
 
@@ -462,7 +488,7 @@ def _rescaled(items: list[tuple[Factor, float]]) -> list[Factor]:
 
 
 def site_part(name: str, spec: dict[str, SiteFactor], site: SiteInputs) -> Part:
-    """A buildability, agriculture or logistics sub-score from the site inputs."""
+    """A buildability, agriculture, privacy or logistics sub-score from the site inputs."""
     items, missing = [], []
     for factor, curve in spec.items():
         value = getattr(site, factor)
@@ -473,6 +499,9 @@ def site_part(name: str, spec: dict[str, SiteFactor], site: SiteInputs) -> Part:
         elif factor == "nearest_buildable_ft" and site.buildable_acres == 0:
             score = curve.breakpoints[-1][1]  # none at all scores as the far end
             reason = f"no buildable ground on the turbine parcel -> {score:g}"
+        elif factor == "nearest_building_ft" and site.buildings_quarter_mile is not None:
+            score = curve.breakpoints[-1][1]  # none within the search radius: the far end
+            reason = f"no other building within the search radius -> {score:g}"
         else:
             missing.append(factor)
             continue
@@ -513,18 +542,21 @@ def add_overall(s: Score, site: SiteInputs | None, p: ScoringProfile) -> None:
     o = p.overall
     assert o is not None
     site = site or SiteInputs()
-    parts = [hydro_part(s, p)] + [
-        site_part(name, getattr(o, name), site)
-        for name in ("buildability", "agriculture", "logistics")
-    ]
+    names = ["buildability", "agriculture", "logistics"]
+    if o.privacy is not None:
+        names.insert(2, "privacy")
+    parts = [hydro_part(s, p)] + [site_part(name, getattr(o, name), site) for name in names]
     used = [(part, o.weights[part.name]) for part in parts if part.subscore is not None]
     total = sum(w for _, w in used)
     s.overall_score = sum(part.subscore * w for part, w in used) / total
     by_name = {part.name: part.subscore for part in parts}
     s.buildability_subscore = by_name["buildability"]
     s.agriculture_subscore = by_name["agriculture"]
+    s.privacy_subscore = by_name.get("privacy")
     s.logistics_subscore = by_name["logistics"]
-    left_out = ["privacy"] + [part.name for part in parts if part.subscore is None]
+    left_out = [part.name for part in parts if part.subscore is None]
+    if o.privacy is None:
+        left_out.insert(0, "privacy")
     s.overall = {
         "score": round(s.overall_score, 2),
         "parts": [
@@ -541,8 +573,8 @@ def add_overall(s: Score, site: SiteInputs | None, p: ScoringProfile) -> None:
         "left_out": left_out,
     }
     terms = " + ".join(f"{part.name} {part.subscore:.1f} x {w / total:.2f}" for part, w in used)
-    s.summary += (
-        f" Overall {s.overall_score:.1f} = {terms} ({', '.join(left_out)} left out: no data)."
+    s.summary += f" Overall {s.overall_score:.1f} = {terms}" + (
+        f" ({', '.join(left_out)} left out: no data)." if left_out else "."
     )
 
 

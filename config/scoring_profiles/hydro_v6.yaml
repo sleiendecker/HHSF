@@ -1,0 +1,119 @@
+# Overall scoring profile (site-selection.md FR-7, docs/DECISIONS.md D-15).
+# Explained in docs/SCORING.md. Every scoring run copies this whole file into
+# analysis_runs.params and records `version` in analysis_runs.scoring_profile_version,
+# so a ranking can always be rebuilt. Never edit a profile that has already been
+# used: copy it to a new version.
+#
+# v6 (2026-10-21, PART 21): privacy (FR-6) gets its 10%: neighbors' buildings around the
+# home site, development density, and how hidden it is from the nearest public road
+# (D-17). Otherwise the same as hydro_v5.
+# v5 (2026-10-21, PART 20): agriculture also counts the cropland that's already open
+# (USGS NLCD 2021 land cover on class 1-3 soils), so forested good soil counts for less
+# (D-16). Otherwise the same as hydro_v4.
+# v4 (2026-10-21, PART 19): the FR-7 overall score. The hydro gate and the hydro
+# score are hydro_v3's, unchanged; within each confidence tier corridors are now
+# ranked by the overall score, which adds buildability, agriculture and logistics
+# (privacy has no data yet and is left out, the other weights rescaled: owner, D-15).
+
+version: hydro_v6
+
+# D-01: corridors whose firm power is below this get no hydro score. They are
+# filtered out, unless their flow is low confidence (see low_flow below).
+power_target_w: 1000
+
+# D-11: hydro score = power x 0.7 + head x 0.3. Weights must add up to 1.
+weights:
+  power: 0.7
+  head: 0.3
+
+# Sub-scores are absolute: straight lines between these [input, score] points,
+# flat beyond the first and last. A corridor's score never depends on other corridors.
+head_subscore:          # input: net head (gross x 0.85, D-07), feet
+  breakpoints: [[10, 0], [200, 100]]
+power_subscore:         # input: firm power, watts
+  breakpoints: [[1000, 50], [3000, 100]]
+
+# D-09: corridors with no flow estimate because the basin is below the
+# regression's minimum drainage area stay on the list, ranked on head only.
+# Ones below this net head can't run a practical small turbine, so they drop.
+# The same minimum applies to the low_flow tier.
+head_only:
+  min_net_head_ft: 10
+
+# Corridors of 1 kW or more below this net head drop too: below 10 ft a practical
+# small turbine needs a dam-scale flow (a river, not a homestead stream).
+min_net_head_ft: 10
+
+# Ranking order (docs/SCORING.md): every corridor in an earlier tier ranks above
+# every corridor in a later one, whatever their scores. Within a tier, higher
+# overall score first (see `overall` below). Tiers: medium = power from StreamStats Q90 inside the regression's
+# limits; low = power from any other flow estimate; head_only = no flow (D-09);
+# low_flow = below the power target, but on a low-confidence flow, so kept on the
+# list instead of filtered (D-01: corridors whose flow can't be estimated reliably
+# stay listed). Leave low_flow out of this list to filter them (as hydro_v1 does).
+rank_tiers: [medium, low, head_only, low_flow]
+
+# FR-7: the overall score, 0-100, ranks corridors within each tier. Each part is a
+# 0-100 sub-score made of factors, each an absolute curve of [input, score] points
+# like the hydro ones. A factor with no data (layer not loaded, step not run, no
+# turbine parcel) is left out and its part's other weights rescale; a part with no
+# factors at all is left out and the other parts' weights rescale. A measured zero
+# (no buildable ground, no farmland) is a zero, not missing.
+overall:
+  weights:                # FR-7. Must add up to 1.
+    hydro: 0.40
+    buildability: 0.20
+    agriculture: 0.20
+    privacy: 0.10         # FR-6 (D-17); left out where no privacy was computed
+    logistics: 0.10
+  # The hydro part is the hydro score for scored corridors, the head sub-score for
+  # head-only ones, and for low-flow ones the hydro formula with the power curve
+  # extended below the target: 0 W -> 0, the target -> 50.
+  low_flow_power_subscore:
+    breakpoints: [[0, 0], [1000, 50]]
+  buildability:           # FR-4 on the turbine parcel (D-13), plus road access (D-02)
+    buildable_acres:      # buildable ground on the turbine parcel, acres
+      weight: 0.5
+      breakpoints: [[0, 0], [0.5, 40], [5, 100]]
+    nearest_buildable_ft: # turbine end to the nearest buildable ground; none: 0
+      weight: 0.25
+      breakpoints: [[0, 100], [1320, 50], [5280, 0]]
+    public_road_ft:       # turbine end to the nearest public road, straight line
+      weight: 0.25
+      breakpoints: [[500, 100], [5280, 0]]
+  agriculture:            # FR-5 on the turbine parcel (D-14, D-16)
+    farmland_acres:       # prime farmland + farmland of statewide importance
+      weight: 0.3
+      breakpoints: [[0, 0], [5, 70], [20, 100]]
+    cropland_acres:       # land capability class 1-3
+      weight: 0.2
+      breakpoints: [[0, 0], [10, 60], [40, 100]]
+    pasture_aum:          # animal-unit months a year (12 feed one cow a year)
+      weight: 0.2
+      breakpoints: [[0, 0], [60, 50], [240, 100]]
+    open_cropland_acres:  # class 1-3 cropland that's open now (NLCD 2021), not forest
+      weight: 0.3
+      breakpoints: [[0, 0], [5, 60], [20, 100]]
+  privacy:                # FR-6 around the home site (D-17, config/privacy.yaml). The home
+                          # site is the turbine parcel's buildable ground nearest the turbine
+                          # end, or the turbine end where there's none. Buildings: Microsoft
+                          # footprints of 400 sq ft or more, not on the turbine parcel.
+    buildings_quarter_mile:  # other buildings within 1/4 mile (a farmstead can count 2-3)
+      weight: 0.35
+      breakpoints: [[0, 100], [2, 70], [5, 40], [15, 0]]
+    nearest_building_ft:  # the nearest other building; none within 2 miles: 100
+      weight: 0.15
+      breakpoints: [[200, 0], [660, 50], [1320, 80], [2640, 100]]
+    buildings_per_sqmi:   # development density: buildings within 1 mile, per square mile
+      weight: 0.2
+      breakpoints: [[5, 100], [25, 60], [100, 0]]
+    road_woods_ft:        # woods (tree canopy 50%+) on the line to the nearest public road,
+      weight: 0.2         # over its first 1,320 ft: what hides the house from the road
+      breakpoints: [[0, 0], [200, 70], [500, 100]]
+    home_road_ft:         # the nearest public road, from the home site
+      weight: 0.1
+      breakpoints: [[100, 0], [500, 50], [1320, 100]]
+  logistics:              # FR-7 logistics (D-02)
+    drive_minutes:        # from downtown Chattanooga, no traffic
+      weight: 1.0
+      breakpoints: [[30, 100], [60, 70], [120, 0]]

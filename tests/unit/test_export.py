@@ -711,16 +711,18 @@ def test_record_and_report_have_the_overall_score():
     )
     rec = export.record(r)
     assert rec["overall_score"] == 54.8 and rec["agriculture_subscore"] is None
-    assert export.SHORTLIST_COLUMNS[3:7] == [
+    assert export.SHORTLIST_COLUMNS[3:8] == [
         "overall_score",
         "buildability_subscore",
         "agriculture_subscore",
+        "privacy_subscore",
         "logistics_subscore",
     ]
     report = export.render_report(v4, [r])
     assert "| 1 | 1 | Creek 1 | 54.8 |" in report
     assert "hydro 0.4, buildability 0.2, agriculture 0.2, privacy 0.1, logistics 0.1" in report
     assert "The overall score ranks each tier" in report and "never scored as zero" in report
+    assert "Privacy (FR-6) isn't in this profile" in report
     assert "The overall score ranks each tier" not in export.render_report(INFO, [r])
 
 
@@ -753,3 +755,49 @@ def test_report_counts_land_cover():
     assert "| No open land (all forest, shrub, water or built up) | 1 |" in report
     assert "Land cover is from USGS NLCD 2021" in report
     assert "Land cover isn't computed" in export.render_report(INFO, ROWS)
+
+
+# --- Privacy ------------------------------------------------------------------
+
+PRIVATE = export.Privacy(
+    home_site="buildable", lat=35.4, lon=-85.4, buildings_quarter_mile=0, buildings_half_mile=2,
+    buildings_per_sqmi=3.18, nearest_building_m=900.0, parcel_buildings=0, public_road_m=400.0,
+    road_woods_m=250.0,
+)  # fmt: skip
+PRIVACY_INFO = export.PrivacyInfo(
+    min_footprint_sqft=400, woods_canopy_pct=50, buildings_version="Global ML 2026-02-03",
+    computed="2026-10-21",
+)  # fmt: skip
+
+
+def test_privacy_flags_and_record():
+    assert export.privacy_flags(PRIVATE) == ()
+    exposed = replace(
+        PRIVATE, nearest_building_m=150.0, public_road_m=100.0, road_woods_m=0.0, parcel_buildings=2
+    )
+    assert export.privacy_flags(exposed) == (
+        export.NEIGHBOR_CLOSE,
+        export.OPEN_TO_ROAD,
+        export.BUILDINGS_ON_PARCEL,
+    )
+    # A road over 500 ft away isn't flagged, woods or not.
+    assert export.OPEN_TO_ROAD not in export.privacy_flags(replace(exposed, public_road_m=200.0))
+    assert export.privacy_flags(None) == (export.PRIVACY_NOT_COMPUTED,)
+    r = export.record(replace(ON_PARCEL, privacy=PRIVATE, privacy_subscore=88.26))
+    assert r["privacy_subscore"] == 88.3 and r["home_site"] == "buildable"
+    assert r["nearest_building_ft"] == 2953 and r["road_woods_ft"] == 820
+    assert r["buildings_per_sqmi"] == 3.2
+
+
+def test_report_counts_privacy_and_shows_neighbors():
+    loaded = replace(INFO, privacy=PRIVACY_INFO)
+    rows = [
+        replace(ON_PARCEL, privacy=PRIVATE),
+        row(2, rank=2, tier_rank=2, privacy_flags=(export.PRIVACY_NOT_COMPUTED,)),
+    ]
+    report = export.render_report(loaded, rows)
+    assert "| No other building within 1/4 mile | 1 |" in report
+    assert "| Not computed | 1 |" in report
+    assert "Privacy (FR-6) is measured at a home site" in report and "400 sq ft" in report
+    assert "0 (nearest 2,953 ft)" in report
+    assert "Privacy isn't computed" in export.render_report(INFO, ROWS)

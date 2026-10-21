@@ -1,0 +1,28 @@
+# Privacy around each corridor's home site (PART 21, FR-6: nearby structures, road
+# visibility and development density). See docs/ASSUMPTIONS.md, "Privacy", and D-17 in
+# docs/DECISIONS.md. How these turn into a score is in the scoring profile (hydro_v6 on).
+#
+# The home site is where a house would most likely go: the turbine parcel's buildable
+# ground nearest the turbine end (PART 17), or the turbine end itself where the parcel has
+# none. Buildings are counted within 1/4, 1/2 and 1 mile of it (fixed: they name the
+# columns), leaving out buildings on the turbine parcel itself: they'd be yours.
+
+# Smallest footprint that counts as a building, in square feet. Microsoft's outlines
+# include sheds, carports and the odd misread shadow; under 400 sq ft is too small for a
+# home (a single-wide trailer is about 900). Barns and garages over it still count: the
+# footprints say nothing about use, so a farmstead with a house and two barns counts 3.
+min_footprint_sqft: 400
+
+# A 30 m cell of USFS tree canopy cover (NLCD 2021) at or above this percent counts as
+# woods that screen a view. 50% is a closed-enough stand that you can't see a house
+# through 100 ft of it in summer; in winter, leaf-off hardwoods screen far less.
+woods_canopy_pct: 50
+
+# How far along the straight line from the home site toward the nearest public road the
+# woods are counted, in feet. Past 1/4 mile a house is a speck from the road whatever
+# stands between.
+sightline_max_ft: 1320
+
+# How far to look for the nearest building, in miles. None within it: as private as it
+# gets, scored as the curve's far end.
+search_miles: 2
