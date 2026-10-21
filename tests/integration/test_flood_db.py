@@ -69,7 +69,7 @@ def test_every_corridor_gets_its_flood_zone(engine, hydro_run, loaded):  # noqa:
         rows = conn.execute(
             text(
                 "SELECT turbine_flood_zone, turbine_in_sfha, stretch_sfha_m,"
-                " corridor_length_m FROM latest_hydro_scores"
+                " corridor_length_m FROM latest_hydro_scores_live"
             )
         ).all()
     assert len(rows) == 2

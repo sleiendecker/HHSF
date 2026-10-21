@@ -308,6 +308,7 @@ Run `make` to list all commands.
 | `uv run hhsf score hydro --profile <version> --run-id <N>` | Score a specific hydro run with another scoring profile from `config/scoring_profiles/` |
 | `make export` | Write the latest scores to `data/outputs/` as CSV, GeoJSON and a summary report (after `make score`) |
 | `uv run hhsf export hydro --run-id <N>` | Export a specific score run |
+| `uv run hhsf db refresh-map` | Rebuild the map's saved scores layer (about 10 seconds). Every ingest, analyze, drive-time and score step already does this at its end |
 | `make web` | Run the map at <http://localhost:5173> |
 | `make serve` | On a server: build the map and serve it with the tiles at <http://127.0.0.1:8080> (see [Running it on a private server](#running-it-on-a-private-server)) |
 | `make test` | Run all tests (Docker must be running) |
@@ -473,6 +474,7 @@ uv run pytest --cov=hhsf.analysis --cov-report=term-missing
 | **Show property lines** draws nothing | Zoom in past zoom 12 (about 1:150,000), and check <http://localhost:3100/catalog> lists `parcels`; if not, run `make up`. |
 | The map shows no streams | Check `make ingest` finished, and that <http://localhost:3100/catalog> lists `streams`. |
 | Popups say "ranked #N overall" instead of naming the county | The county was loaded before the map knew which AOI it belongs to. Run `uv run hhsf ingest boundary --aoi <key>` for each county, then refresh. |
+| The map or a popup shows numbers from before the last step | The map's scores layer is saved and rebuilt at the end of each step; if a step was interrupted, run `uv run hhsf db refresh-map`, then refresh the page. |
 | Every stream is grey, or none are colored | Run `make score`, then refresh the page. The colors come from the latest score run. |
 | Popups have no score breakdown or flags, or don't say which stretch of the stream it is | Run `make up` again: it applies the newest database migration and restarts the tile server. |
 | Tests fail to start a container | Docker must be running for integration tests. Run `uv run pytest tests/unit` to skip them. |

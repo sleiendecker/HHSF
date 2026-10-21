@@ -79,9 +79,26 @@ def test_latest_scores_view_follows_newest_run(engine, hydro_run):  # noqa: F811
     newest, _, _ = scoring_run.score_hydro(engine, AREA, PROFILE)
     with engine.connect() as conn:
         runs = conn.execute(
-            text("SELECT DISTINCT score_run_id, aoi_key FROM latest_hydro_scores")
+            text("SELECT DISTINCT score_run_id, aoi_key FROM latest_hydro_scores_live")
         ).all()
     assert [tuple(r) for r in runs] == [(newest, "fixture")]
+
+
+def test_saved_map_layer_is_the_live_view_after_a_refresh(engine, hydro_run):  # noqa: F811
+    from hhsf.core.db import refresh_map
+
+    def rows(conn, table):
+        return conn.execute(
+            text(f"SELECT corridor_id, score_run_id, rank FROM {table} ORDER BY corridor_id")
+        ).all()
+
+    run_id, _, _ = scoring_run.score_hydro(engine, AREA, PROFILE)
+    with engine.begin() as conn:
+        live = rows(conn, "latest_hydro_scores_live")
+        assert all(r.score_run_id == run_id for r in live)
+        assert rows(conn, "latest_hydro_scores") != live  # saved: stale until refreshed
+        refresh_map(conn)
+        assert rows(conn, "latest_hydro_scores") == live
 
 
 def test_latest_scores_view_carries_popup_columns(engine, hydro_run):  # noqa: F811
@@ -91,7 +108,7 @@ def test_latest_scores_view_carries_popup_columns(engine, hydro_run):  # noqa: F
             text(
                 "SELECT status, flow_flags, flow_reference_gauge, factors, head_method,"
                 " corridor_length_m, reach_length_m, reach_drop_m"
-                " FROM latest_hydro_scores ORDER BY corridor_id"
+                " FROM latest_hydro_scores_live ORDER BY corridor_id"
             )
         ).all()
     # Flags are one comma-separated string, since vector tiles can't carry arrays.
@@ -137,7 +154,8 @@ def test_latest_scores_view_keeps_one_row_per_reach_across_aois(engine, hydro_ru
         with engine.connect() as conn:
             return conn.execute(
                 text(
-                    "SELECT nhdplusid, score_run_id, aoi_key, aoi_name FROM latest_hydro_scores"
+                    "SELECT nhdplusid, score_run_id, aoi_key, aoi_name"
+                    " FROM latest_hydro_scores_live"
                     " ORDER BY nhdplusid"
                 )
             ).all()

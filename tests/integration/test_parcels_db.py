@@ -47,7 +47,7 @@ def test_every_corridor_gets_its_turbine_parcel(engine, hydro_run, loaded):  # n
         rows = conn.execute(
             text(
                 "SELECT turbine_parcel_id, turbine_parcel_acres, turbine_parcel_distance_m,"
-                " parcels_crossed FROM latest_hydro_scores"
+                " parcels_crossed FROM latest_hydro_scores_live"
             )
         ).all()
         crossed = conn.execute(text("SELECT count(*) FROM corridor_parcels")).scalar_one()
