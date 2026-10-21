@@ -41,8 +41,11 @@ score:  ## Score and rank the latest hydro run against the 1 kW target (needs ma
 export:  ## Write the latest scores to data/outputs/ as CSV, GeoJSON and a report (needs make score)
 	uv run hhsf export hydro --aoi $(AOI)
 
-web:  ## Run the map at http://localhost:5173
+web:  ## Run the map at http://localhost:5173 (development)
 	cd frontend && npm run dev
+
+serve:  ## On a server: build the map and serve it with the tiles at http://127.0.0.1:8080 (needs make up)
+	docker compose --profile serve up -d --build web
 
 test:  ## Run tests (integration tests need Docker running)
 	uv run pytest
@@ -67,6 +70,6 @@ restore:  ## Replace the database with a backup: make restore FILE=data/backups/
 	@echo "Restored $(FILE). Run make up to apply any migrations newer than the backup."
 
 down:  ## Stop services (data is kept)
-	docker compose down
+	docker compose --profile serve down
 
-.PHONY: help setup up ingest analyze routing drive-area drive-time score export web test lint backup restore down
+.PHONY: help setup up ingest analyze routing drive-area drive-time score export web serve test lint backup restore down

@@ -247,6 +247,28 @@ make restore FILE=data/backups/hhsf-20261020-234756.dump
 
 This **replaces everything in the database** with the backup's contents, then restarts the tile server. Run `make restore` with no `FILE` to list the backups. If the backup is older than your code, run `make up` afterwards to apply the newer migrations. `make down` doesn't delete data, so a backup is only needed for mistakes, a new computer, or before something risky.
 
+### Running it on a private server
+
+To keep the map running on another machine (a home server, a Proxmox container or VM), so you don't need a laptop open to look at it. **Keep it private:** the database holds property owner names, so reach it only over a private network such as [Tailscale](https://tailscale.com/), never a public address. Every port in `docker-compose.yml` is published on `127.0.0.1` only for the same reason.
+
+The server needs Docker with Compose, uv and make (Node isn't needed: the map is built inside Docker). About 4 CPUs, 8 GB of RAM (the drive-time road graph is the peak) and 30–40 GB of disk.
+
+1. **Copy the database instead of rebuilding it.** On the computer that has the data, run `make backup`. Copy the `.dump` file to the server privately (`scp` or over Tailscale).
+2. **On the server**, clone the repo and start the database:
+
+   ```bash
+   git clone <repo-url> hydro-homestead && cd hydro-homestead
+   uv sync
+   make up
+   make restore FILE=data/backups/<name>.dump
+   make up        # applies any migrations newer than the backup
+   ```
+
+3. **Start the map:** `make serve`. It builds the map and serves it, with the map tiles, on <http://127.0.0.1:8080> (set `HHSF_WEB_ADDR` to change the address). It restarts with Docker.
+4. **Reach it privately.** With Tailscale on the server, `tailscale serve --bg 8080` serves it over HTTPS on your tailnet only.
+
+To re-run steps on the server too (ingest, analysis, drive times), also copy `data/raw/` (downloaded source files, ~1.4 GB), `data/cache/` (StreamStats answers, which took about 11 hours to collect) and `data/valhalla/` (the drive-time road graph, ~3.3 GB, 5–30 minutes to rebuild). After pulling new code: `make up` for migrations, then `make serve` to rebuild the map.
+
 ## Usage
 
 Run `make` to list all commands.
@@ -282,6 +304,7 @@ Run `make` to list all commands.
 | `make export` | Write the latest scores to `data/outputs/` as CSV, GeoJSON and a summary report (after `make score`) |
 | `uv run hhsf export hydro --run-id <N>` | Export a specific score run |
 | `make web` | Run the map at <http://localhost:5173> |
+| `make serve` | On a server: build the map and serve it with the tiles at <http://127.0.0.1:8080> (see [Running it on a private server](#running-it-on-a-private-server)) |
 | `make test` | Run all tests (Docker must be running) |
 | `make lint` | Check code style |
 | `make backup` | Save the whole database to `data/backups/` (includes owner names: keep it private) |

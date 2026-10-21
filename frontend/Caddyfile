@@ -1,0 +1,18 @@
+# Serves the built map and forwards /tiles/ to Martin, as Vite's dev server does
+# (vite.config.ts). Plain HTTP on port 80 inside the container: put Tailscale Serve or
+# another private HTTPS proxy in front of it, never the open internet (the tiles carry
+# no owner names, but the database behind them does).
+:80 {
+	encode gzip
+
+	# /tiles/streams/10/270/400 -> tiles:3000/streams/10/270/400
+	handle_path /tiles/* {
+		reverse_proxy tiles:3000
+	}
+
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}

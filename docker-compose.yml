@@ -1,6 +1,10 @@
 # Local services. Start with `make up` (it runs migrations before the tile server).
 # The fixed project name makes every checkout of the repo (including git worktrees)
 # share one database and tile server instead of starting a second set on the same ports.
+# Every port is published on 127.0.0.1 only: the database holds property owner names
+# (and a fixed password), so nothing here is reachable from the rest of the network.
+# On a server, `make serve` starts the map on 127.0.0.1:8080; put Tailscale Serve (or
+# another private proxy) in front of it. See README.md, "Running it on a private server".
 name: hydro-homestead
 services:
   db:
@@ -11,7 +15,7 @@ services:
       POSTGRES_PASSWORD: hhsf
       POSTGRES_DB: hhsf
     ports:
-      - "5433:5432"   # 5433 on the host so it won't clash with a local Postgres
+      - "127.0.0.1:5433:5432"   # 5433 on the host so it won't clash with a local Postgres
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -27,7 +31,7 @@ services:
     environment:
       DATABASE_URL: postgresql://hhsf:hhsf@db:5432/hhsf
     ports:
-      - "3100:3000"
+      - "127.0.0.1:3100:3000"
     volumes:
       - ./martin:/config:ro
     depends_on:
@@ -53,7 +57,7 @@ services:
       build_transit: "False"
       server_threads: "4"
     ports:
-      - "8002:8002"
+      - "127.0.0.1:8002:8002"
     volumes:
       - ./data/valhalla:/custom_files
     healthcheck:
@@ -62,6 +66,18 @@ services:
       timeout: 5s
       retries: 6
       start_period: 1h
+
+  web:
+    # The built map and a proxy to the tile server, for running on a server (`make serve`).
+    # Not started by `make up`; `make web` is the development version. Rebuild after
+    # pulling frontend changes: `make serve` does.
+    profiles: [serve]
+    build: ./frontend
+    ports:
+      - "${HHSF_WEB_ADDR:-127.0.0.1:8080}:80"
+    depends_on:
+      - tiles
+    restart: unless-stopped
 
 volumes:
   pgdata:
