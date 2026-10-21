@@ -11,10 +11,51 @@ body,
   inset: 0;
 }
 
-.panel {
+/* The controls on top and the legend at the bottom share the left edge: they shrink and scroll rather than overlap. */
+.sidebar {
   position: absolute;
   top: 12px;
+  bottom: 32px;
   left: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.panel,
+.legend {
+  pointer-events: auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.collapse-header {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.collapse-header .chevron {
+  color: #666;
+  font-size: 14px;
+}
+
+.collapsed .collapse-header h1,
+.collapsed .collapse-header h2 {
+  margin: 0;
+}
+
+.panel {
   max-width: 280px;
   padding: 12px 14px;
   background: rgba(255, 255, 255, 0.95);
@@ -61,9 +102,7 @@ body,
 }
 
 .legend {
-  position: absolute;
-  bottom: 32px;
-  left: 12px;
+  margin-top: auto;
   width: 250px;
   padding: 10px 12px;
   background: rgba(255, 255, 255, 0.95);

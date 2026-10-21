@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import maplibregl, { type ExpressionSpecification, type MapGeoJSONFeature } from "maplibre-gl";
 import { BasemapControl } from "./BasemapControl";
 import { LIGHT_STYLE, addBasemapLayers, saveBasemap, savedBasemap, showBasemap } from "./basemaps";
+import { Collapsible } from "./Collapsible";
 import { Legend } from "./Legend";
 import { CFS_TO_GPM, SCORE_LAYERS, scorePopupHtml } from "./scores";
 
@@ -306,56 +307,57 @@ export function App() {
   return (
     <>
       <div ref={container} className="map" />
-      <div className="panel">
-        <h1>Hydro Homestead Site Finder</h1>
-        <p>
-          {showScores
-            ? "The steepest stretch (up to 1,000 ft) of each year-round stream in the analyzed counties (dashed outlines), colored by how well it could power a homestead. Click one to see why it scored what it did."
-            : "Perennial streams in the analyzed counties (dashed outlines). Click a stream for its numbers."}
-        </p>
-        <label className="toggle">
-          <input type="checkbox" checked={showScores} onChange={(e) => setShowScores(e.target.checked)} />
-          Show hydro scores
-        </label>
-        <label className="toggle">
-          <input type="checkbox" checked={showParcels} onChange={(e) => setShowParcels(e.target.checked)} />
-          Show property lines
-        </label>
-        {showParcels && zoom < PARCELS_MIN_ZOOM && <p className="hint">Zoom in to see property lines.</p>}
-        <label className="toggle">
-          <input type="checkbox" checked={showFlood} onChange={(e) => setShowFlood(e.target.checked)} />
-          Show FEMA flood zones
-        </label>
-        {showFlood && (
-          <p className="hint">
-            {zoom < FLOOD_MIN_ZOOM && "Zoom in to see flood zones. "}
-            <span className="swatch" style={{ background: FLOOD_COLORS.floodway }} /> floodway{" "}
-            <span className="swatch" style={{ background: FLOOD_COLORS.sfha }} /> 100-year{" "}
-            <span className="swatch" style={{ background: FLOOD_COLORS.moderate }} /> 500-year. Small creeks are mostly unmapped.
+      <div className="sidebar">
+        <Collapsible id="panel" className="panel" title={<h1>Hydro Homestead Site Finder</h1>}>
+          <p>
+            {showScores
+              ? "The steepest stretch (up to 1,000 ft) of each year-round stream in the analyzed counties (dashed outlines), colored by how well it could power a homestead. Click one to see why it scored what it did."
+              : "Perennial streams in the analyzed counties (dashed outlines). Click a stream for its numbers."}
           </p>
-        )}
-        <label className="toggle">
-          <input type="checkbox" checked={showRoads} onChange={(e) => setShowRoads(e.target.checked)} />
-          Show Census roads
-        </label>
-        {showRoads && (
-          <p className="hint">
-            {zoom < ROADS_MIN_ZOOM && "Zoom in to see roads. "}
-            <span className="swatch" style={{ background: ROAD_COLORS.public }} /> public{" "}
-            <span className="swatch" style={{ background: ROAD_COLORS.other }} /> 4WD trail or private (dashed). Most driveways and logging roads are missing.
-          </p>
-        )}
-        <label className="toggle">
-          <input type="checkbox" checked={showDriveArea} onChange={(e) => setShowDriveArea(e.target.checked)} />
-          Show 1-hour drive from downtown Chattanooga
-        </label>
-        {showDriveArea && (
-          <p className="hint">
-            <span className="swatch" style={{ background: DRIVE_AREA_COLOR }} /> by car, no traffic (the search region, D-02).
-          </p>
-        )}
+          <label className="toggle">
+            <input type="checkbox" checked={showScores} onChange={(e) => setShowScores(e.target.checked)} />
+            Show hydro scores
+          </label>
+          <label className="toggle">
+            <input type="checkbox" checked={showParcels} onChange={(e) => setShowParcels(e.target.checked)} />
+            Show property lines
+          </label>
+          {showParcels && zoom < PARCELS_MIN_ZOOM && <p className="hint">Zoom in to see property lines.</p>}
+          <label className="toggle">
+            <input type="checkbox" checked={showFlood} onChange={(e) => setShowFlood(e.target.checked)} />
+            Show FEMA flood zones
+          </label>
+          {showFlood && (
+            <p className="hint">
+              {zoom < FLOOD_MIN_ZOOM && "Zoom in to see flood zones. "}
+              <span className="swatch" style={{ background: FLOOD_COLORS.floodway }} /> floodway{" "}
+              <span className="swatch" style={{ background: FLOOD_COLORS.sfha }} /> 100-year{" "}
+              <span className="swatch" style={{ background: FLOOD_COLORS.moderate }} /> 500-year. Small creeks are mostly unmapped.
+            </p>
+          )}
+          <label className="toggle">
+            <input type="checkbox" checked={showRoads} onChange={(e) => setShowRoads(e.target.checked)} />
+            Show Census roads
+          </label>
+          {showRoads && (
+            <p className="hint">
+              {zoom < ROADS_MIN_ZOOM && "Zoom in to see roads. "}
+              <span className="swatch" style={{ background: ROAD_COLORS.public }} /> public{" "}
+              <span className="swatch" style={{ background: ROAD_COLORS.other }} /> 4WD trail or private (dashed). Most driveways and logging roads are missing.
+            </p>
+          )}
+          <label className="toggle">
+            <input type="checkbox" checked={showDriveArea} onChange={(e) => setShowDriveArea(e.target.checked)} />
+            Show 1-hour drive from downtown Chattanooga
+          </label>
+          {showDriveArea && (
+            <p className="hint">
+              <span className="swatch" style={{ background: DRIVE_AREA_COLOR }} /> by car, no traffic (the search region, D-02).
+            </p>
+          )}
+        </Collapsible>
+        {showScores && <Legend />}
       </div>
-      {showScores && <Legend />}
     </>
   );
 }

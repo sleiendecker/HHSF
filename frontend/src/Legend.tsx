@@ -1,3 +1,4 @@
+import { Collapsible } from "./Collapsible";
 import { FILTERED_COLOR, HEAD_ONLY_COLOR, LOW_FLOW_COLOR, SCORE_STOPS } from "./scores";
 
 const ramp = `linear-gradient(to right, ${SCORE_STOPS.map(([, c]) => c).join(", ")})`;
@@ -30,9 +31,10 @@ interface Swatch {
   opacity?: number;
 }
 
+// Starts folded on short screens, where it would crowd the controls above it.
 export function Legend() {
   return (
-    <div className="legend">
+    <Collapsible id="legend" className="legend" title={<h2>Legend</h2>} startCollapsed={window.innerHeight < 900}>
       <h2>Hydro score</h2>
       <div className="ramp" style={{ background: ramp }} />
       <div className="ramp-labels">
@@ -75,6 +77,6 @@ export function Legend() {
       <p className="hint">
         Each county is ranked on its own. Every medium stream ranks above every low one. Zoom in for rank numbers.
       </p>
-    </div>
+    </Collapsible>
   );
 }
