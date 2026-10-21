@@ -1,5 +1,9 @@
 """Command line entry point: `uv run hhsf --help`."""
 
+import functools
+import time
+from collections.abc import Callable
+
 import shapely
 import typer
 from alembic import command
@@ -22,7 +26,7 @@ from hhsf.analysis import (
 )
 from hhsf.core import crs
 from hhsf.core.config import REPO_ROOT, data_source_settings, hydrography_source, load_aoi
-from hhsf.core.db import engine, record_source
+from hhsf.core.db import engine, record_source, refresh_map
 from hhsf.ingest import (
     boundary,
     flood,
@@ -61,7 +65,32 @@ def db_upgrade() -> None:
     command.upgrade(Config(str(REPO_ROOT / "alembic.ini")), "head")
 
 
+@db_app.command("refresh-map")
+def db_refresh_map() -> None:
+    """Rebuild the map's saved scores layer (every step that changes it does this itself)."""
+    start = time.monotonic()
+    with engine().begin() as conn:
+        refresh_map(conn)
+    typer.echo(f"Map layer refreshed ({time.monotonic() - start:.0f} s).")
+
+
+_batch = False  # set while `ingest all` runs its steps, so the map is refreshed once
+
+
+def refreshes_map(command: Callable) -> Callable:
+    """Rebuild the map's saved layer after `command`, which changes what it shows."""
+
+    @functools.wraps(command)
+    def run(*args, **kwargs):
+        command(*args, **kwargs)
+        if not _batch:
+            db_refresh_map()
+
+    return run
+
+
 @ingest_app.command("boundary")
+@refreshes_map
 def ingest_boundary(aoi: str = AOI_OPTION) -> None:
     """Load the AOI's county boundary from Census TIGERweb."""
     area = load_aoi(aoi)
@@ -73,6 +102,7 @@ def ingest_boundary(aoi: str = AOI_OPTION) -> None:
 
 
 @ingest_app.command("hydrography")
+@refreshes_map
 def ingest_hydrography(aoi: str = AOI_OPTION, source: str | None = SOURCE_OPTION) -> None:
     """Load perennial streams for the AOI from NHDPlus HR."""
     area = load_aoi(aoi)
@@ -118,6 +148,7 @@ def ingest_terrain(aoi: str = AOI_OPTION) -> None:
 
 
 @ingest_app.command("parcels")
+@refreshes_map
 def ingest_parcels(
     aoi: str = AOI_OPTION,
     refresh: bool = typer.Option(
@@ -134,6 +165,7 @@ def ingest_parcels(
 
 
 @ingest_app.command("flood")
+@refreshes_map
 def ingest_flood(
     aoi: str = AOI_OPTION,
     refresh: bool = typer.Option(
@@ -154,6 +186,7 @@ def ingest_flood(
 
 
 @ingest_app.command("roads")
+@refreshes_map
 def ingest_roads(
     aoi: str = AOI_OPTION,
     refresh: bool = typer.Option(
@@ -192,15 +225,21 @@ def ingest_soils(
 
 
 @ingest_app.command("all")
+@refreshes_map
 def ingest_all(aoi: str = AOI_OPTION, source: str | None = SOURCE_OPTION) -> None:
     """Boundary, then hydrography, terrain, parcels, flood zones, roads and soils."""
-    ingest_boundary(aoi)
-    ingest_hydrography(aoi, source)
-    ingest_terrain(aoi)
-    ingest_parcels(aoi)
-    ingest_flood(aoi)
-    ingest_roads(aoi)
-    ingest_soils(aoi)
+    global _batch
+    _batch = True
+    try:
+        ingest_boundary(aoi)
+        ingest_hydrography(aoi, source)
+        ingest_terrain(aoi)
+        ingest_parcels(aoi)
+        ingest_flood(aoi)
+        ingest_roads(aoi)
+        ingest_soils(aoi)
+    finally:
+        _batch = False
 
 
 @analyze_app.command("hydro")
@@ -310,6 +349,7 @@ def _fail(message: str) -> int:
 
 
 @analyze_app.command("drive-area")
+@refreshes_map
 def analyze_drive_area() -> None:
     """Build the area within the D-02 drive of the origin, and list the counties it touches.
 
@@ -336,6 +376,7 @@ def analyze_drive_area() -> None:
 
 
 @analyze_app.command("buildable")
+@refreshes_map
 def analyze_buildable(aoi: str = AOI_OPTION) -> None:
     """Buildable ground on each corridor's turbine parcel: gentle slope, out of the
     100-year floodplain, septic-suitable soils (needs make ingest and analyze hydro)."""
@@ -370,6 +411,7 @@ def analyze_buildable(aoi: str = AOI_OPTION) -> None:
 
 
 @analyze_app.command("farmland")
+@refreshes_map
 def analyze_farmland(aoi: str = AOI_OPTION) -> None:
     """Farmland on each corridor's turbine parcel: prime farmland, capability class,
     wet ground and pasture, from SSURGO soils (needs make ingest and analyze hydro)."""
@@ -393,6 +435,7 @@ def analyze_farmland(aoi: str = AOI_OPTION) -> None:
 
 
 @analyze_app.command("landcover")
+@refreshes_map
 def analyze_landcover(
     aoi: str = AOI_OPTION,
     refresh: bool = typer.Option(False, help="Download the land cover again, ignoring the cache"),
@@ -428,6 +471,7 @@ def analyze_landcover(
 
 
 @analyze_app.command("drive-time")
+@refreshes_map
 def analyze_drive_time(
     aoi: str = AOI_OPTION,
     run_id: int | None = typer.Option(
@@ -457,6 +501,7 @@ def analyze_drive_time(
 
 
 @score_app.command("hydro")
+@refreshes_map
 def score_hydro(
     aoi: str = AOI_OPTION,
     profile: str = typer.Option("hydro_v5", help="Scoring profile from config/scoring_profiles/"),

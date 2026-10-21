@@ -80,7 +80,7 @@ def test_map_view_has_road_drive_time_and_area(engine, turbine):  # noqa: F811
     corridor, x, y = turbine
     scoring_run.score_hydro(engine, AREA, PROFILE)
     with engine.connect() as conn:
-        before = conn.execute(text("SELECT in_drive_area FROM latest_hydro_scores")).scalars()
+        before = conn.execute(text("SELECT in_drive_area FROM latest_hydro_scores_live")).scalars()
         assert set(before) == {None}  # no area built yet
     # The area covers the first corridor's turbine end only.
     near = box(x - 0.0001, y - 0.0001, x + 0.0001, y + 0.0001)
@@ -89,7 +89,7 @@ def test_map_view_has_road_drive_time_and_area(engine, turbine):  # noqa: F811
         rows = conn.execute(
             text(
                 "SELECT corridor_id, turbine_road_class, turbine_public_road_m, drive_minutes,"
-                " drive_km, in_drive_area FROM latest_hydro_scores"
+                " drive_km, in_drive_area FROM latest_hydro_scores_live"
             )
         ).all()
     assert len(rows) == 2

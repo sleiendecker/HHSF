@@ -129,7 +129,7 @@ def test_map_view_and_export_have_farmland(engine, site, tmp_path):  # noqa: F81
         rows = conn.execute(
             text(
                 "SELECT corridor_id, turbine_prime_acres, turbine_capable_acres,"
-                " turbine_max_capability_class, turbine_pasture_aum FROM latest_hydro_scores"
+                " turbine_max_capability_class, turbine_pasture_aum FROM latest_hydro_scores_live"
             )
         ).all()
     on_site = {r.corridor_id: r for r in rows}[corridor]
@@ -170,7 +170,8 @@ def test_overall_score_reads_farmland_and_drive_time(engine, site, tmp_path):  #
         ).all()
         view = conn.execute(
             text(
-                "SELECT corridor_id, overall_score FROM latest_hydro_scores WHERE rank IS NOT NULL"
+                "SELECT corridor_id, overall_score FROM latest_hydro_scores_live"
+                " WHERE rank IS NOT NULL"
             )
         ).all()
     assert rows, "the sample has a ranked corridor"
@@ -258,7 +259,7 @@ def test_land_cover_counts_open_good_soil_and_feeds_the_score(engine, site, tmp_
         ).scalar_one()
         view = conn.execute(
             text(
-                "SELECT turbine_open_acres, turbine_canopy_pct FROM latest_hydro_scores"
+                "SELECT turbine_open_acres, turbine_canopy_pct FROM latest_hydro_scores_live"
                 " WHERE corridor_id = :c"
             ),
             {"c": corridor},

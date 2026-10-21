@@ -1,4 +1,4 @@
-"""Database engine and the data_sources provenance record."""
+"""Database engine, the data_sources provenance record, and the saved map layer."""
 
 from sqlalchemy import Connection, Engine, create_engine, text
 
@@ -26,3 +26,9 @@ def record_source(conn: Connection, source: DataSource) -> None:
         ),
         source.model_dump(),
     )
+
+
+def refresh_map(conn: Connection) -> None:
+    """Rebuild the map's saved scores layer (latest_hydro_scores, migration 0017) from
+    the live view. CONCURRENTLY: the map keeps serving the old rows while it runs."""
+    conn.execute(text("REFRESH MATERIALIZED VIEW CONCURRENTLY latest_hydro_scores"))

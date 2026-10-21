@@ -166,7 +166,7 @@ def test_map_view_and_export_have_buildable_ground(engine, site, tmp_path):  # n
         rows = conn.execute(
             text(
                 "SELECT corridor_id, turbine_buildable_acres, turbine_gentle_acres,"
-                " nearest_buildable_m FROM latest_hydro_scores ORDER BY corridor_id"
+                " nearest_buildable_m FROM latest_hydro_scores_live ORDER BY corridor_id"
             )
         ).all()
     assert len(rows) == 2
