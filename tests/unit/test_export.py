@@ -621,3 +621,74 @@ def test_report_says_when_buildable_ground_is_missing():
     report = export.render_report(INFO, ROWS)
     assert "Buildable ground isn't computed" in report
     assert "Buildable ground on the turbine parcel (ranked" not in report
+
+
+# --- Farmland -----------------------------------------------------------------
+
+FARM_INFO = export.FarmlandInfo(
+    max_capability_class=3, wet_drainage=("Poorly drained",), computed="2026-10-21"
+)
+SOME_FARMLAND = export.Farmland(
+    parcel_acres=76.3,
+    soil_acres=76.3,
+    prime_acres=12.34,
+    prime_if_acres=1.0,
+    statewide_acres=0.0,
+    cropland_acres=30.06,
+    wet_acres=2.0,
+    pasture_aum=410.4,
+)
+NO_FARMLAND = replace(SOME_FARMLAND, prime_acres=0.0, prime_if_acres=0.0, cropland_acres=0.0)
+
+
+def test_farmland_flags():
+    assert export.farmland_flags(PARCEL, SOME_FARMLAND) == ()
+    assert export.farmland_flags(PARCEL, NO_FARMLAND) == (export.NO_FARMLAND,)
+    # Prime only if drained doesn't count as farmland; statewide importance does.
+    assert export.farmland_flags(PARCEL, replace(NO_FARMLAND, prime_if_acres=5)) == (
+        export.NO_FARMLAND,
+    )
+    assert export.farmland_flags(PARCEL, replace(NO_FARMLAND, statewide_acres=5)) == ()
+    assert export.farmland_flags(PARCEL, None) == (export.FARMLAND_NOT_COMPUTED,)
+    assert export.farmland_flags(None, None) == ()
+    partly = replace(SOME_FARMLAND, soil_acres=70.0)
+    assert export.farmland_flags(PARCEL, partly) == (export.SOILS_NOT_LOADED,)
+    assert export.farmland_flags(PARCEL, replace(SOME_FARMLAND, soil_acres=75.8)) == ()
+
+
+def test_record_has_farmland():
+    r = export.record(replace(ON_PARCEL, turbine_farmland=SOME_FARMLAND))
+    assert r["turbine_parcel_prime_acres"] == 12.3
+    assert r["turbine_parcel_cropland_acres"] == 30.1
+    assert r["turbine_parcel_pasture_aum"] == 410
+    blank = export.record(ROWS[0])
+    assert blank["turbine_parcel_prime_acres"] is None and blank["farmland_flags"] == ""
+    props = export.to_geojson([replace(ON_PARCEL, turbine_farmland=SOME_FARMLAND)], INFO)
+    assert props["features"][0]["properties"]["turbine_parcel_prime_acres"] == 12.3
+
+
+def test_report_counts_farmland_and_says_it_is_the_soils():
+    loaded = replace(INFO, farmland=FARM_INFO, soils_version="TN153 version 20, downloaded")
+    rows = [
+        replace(ON_PARCEL, turbine_farmland=SOME_FARMLAND),
+        row(
+            2,
+            rank=2,
+            tier_rank=2,
+            turbine_parcel=PARCEL,
+            turbine_farmland=NO_FARMLAND,
+            farmland_flags=(export.NO_FARMLAND,),
+        ),
+    ]
+    report = export.render_report(loaded, rows)
+    assert "| Some prime farmland or farmland of statewide importance | 1 |" in report
+    assert "| Some cropland (capability class 1–3) | 1 |" in report
+    assert "| Neither | 1 |" in report
+    assert "not what the land is now" in report and "class 1–3" in report
+    assert "| 12 / 30 |" in report  # the tier table's prime / cropland column
+
+
+def test_report_says_when_farmland_is_missing():
+    report = export.render_report(INFO, ROWS)
+    assert "Farmland isn't computed" in report
+    assert "Farmland on the turbine parcel (ranked" not in report

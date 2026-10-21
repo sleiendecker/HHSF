@@ -118,6 +118,20 @@ What it does on the five counties (2026-10-21): soils are the main limit. Of 654
 
 Flagged only, like flood zones (D-12) and drive time (D-02): the counts and `no_buildable_ground` remove nothing. Buildability becomes a sub-score (20%) of the overall score (FR-7) when that's built, along with road access. Details: [ASSUMPTIONS.md](ASSUMPTIONS.md#buildable-ground).
 
+### D-14 · What counts as farmland: **Default**
+
+PART 18 (FR-5, agriculture) needs thresholds the requirements don't give. Starting values, in `config/farmland.yaml`:
+
+- **Farmland: NRCS prime farmland, plus farmland of statewide importance.** Tennessee designates no statewide farmland in these five counties, so here it's prime only. Soils that are prime only if drained or protected from flooding are counted apart and not as farmland.
+- **Cropland: land capability class 1–3** (non-irrigated). Ground that can be tilled year after year with at most moderate care (contour rows, cover crops, some drainage), enough for a big garden, an orchard or a few acres of row crops. Class 4 can be cropped only occasionally and is hay and pasture in practice; counting it (`max_capability_class: 4`) adds 69,000 acres to the 236,000 on the turbine parcels.
+- **Pasture: the main soil's best grazing yield**, in animal-unit months per acre a year, times its acres. SSURGO has no pasture suitability rating; its yields are the closest thing, and they cover steep and stony ground that isn't cropland.
+- **Wet ground: somewhat poorly drained or wetter.**
+- **No slope or floodplain test:** capability classes already reflect slope and flooding, and floodplain bottomland is often the best farmland. Every acre of the turbine parcel counts.
+
+What it does on the five counties (2026-10-21): 13% of the turbine parcels' 654,000 acres is prime farmland and 36% is class 1–3. 311 of the 4,919 ranked stretches have neither on their turbine parcel. Of the six 1 kW streams, Rogers Branch and Marion's unnamed stream have none; Bethel Creek's and the Negro Den Creek / Elk River parcels have about 28 acres of class 3 ground each (2 acres prime on the latter); Big Creek's parcel has 923 acres prime and 4,705 class 1–3.
+
+Flagged only, like buildable ground (D-13): the acres and `no_farmland` remove nothing. Agriculture becomes a sub-score (20%) of the overall score (FR-7) when that's built. Details: [ASSUMPTIONS.md](ASSUMPTIONS.md#farmland).
+
 ---
 
 ## To be measured on real data
@@ -194,6 +208,7 @@ Decisions that barely move the top 20 keep their default and stop being discusse
 
 | Date | Decision | Change |
 | --- | --- | --- |
+| 2026-10-21 | D-14 | New default (PART 18): farmland is NRCS prime farmland (plus statewide importance, none here) and cropland is capability class 1–3; pasture from SSURGO grazing yields. Whole turbine parcel, no slope or floodplain test. Flagged only, never filtered or re-ranked |
 | 2026-10-21 | D-13 | New default (PART 17): buildable ground is slope 15% or less, outside the 100-year floodplain, on soils not Very limited for septic (Tennessee rating), in half-acre patches. Flagged only, never filtered or re-ranked |
 | 2026-10-20 | D-02 | Built the 1-hour drive area (PART 16): touches 20 counties. Owner deferred to the requirements: drive time and road distance are flagged only until the overall score (FR-7) gives them its Logistics (10%) and Buildability (20%) parts |
 | 2026-10-20 | D-12 | Decided by the owner: FEMA flood zones (PART 15) are flagged only, never filtered or re-ranked; revisit for the house site with the buildable-land step |

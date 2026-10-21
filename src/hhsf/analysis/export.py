@@ -96,6 +96,13 @@ SHORTLIST_COLUMNS = [
     "turbine_parcel_buildable_acres",
     "nearest_buildable_ft",
     "buildable_flags",
+    "turbine_parcel_prime_acres",
+    "turbine_parcel_prime_if_acres",
+    "turbine_parcel_statewide_acres",
+    "turbine_parcel_cropland_acres",
+    "turbine_parcel_wet_acres",
+    "turbine_parcel_pasture_aum",
+    "farmland_flags",
     "explanation",
 ]
 ALL_CORRIDORS_COLUMNS = ["status", *SHORTLIST_COLUMNS]
@@ -132,6 +139,15 @@ BUILDABLE_NOT_COMPUTED = "buildable_not_computed"  # the turbine parcel wasn't a
 # surveys, usually into a county that hasn't been ingested): buildable acres may be
 # understated.
 SOILS_NOT_LOADED = "soils_not_loaded"
+
+# farmland_flags values. Flags only: nothing is filtered or re-ranked on farmland.
+# No prime farmland, farmland of statewide importance or cropland (capability class 1 to
+# the configured maximum) on the turbine parcel.
+NO_FARMLAND = "no_farmland"
+FARMLAND_NOT_COMPUTED = "farmland_not_computed"  # the turbine parcel wasn't analyzed
+# The parcel has at least this many acres with no soils loaded (soils_not_loaded, as for
+# buildable ground): its farmland may be understated.
+FARMLAND_UNSURVEYED_ACRES = 1.0
 
 
 @dataclass(frozen=True)
@@ -209,6 +225,29 @@ class BuildableInfo:
 
 
 @dataclass(frozen=True)
+class Farmland:
+    """Farmland on the turbine parcel (hhsf.analysis.farmland), in acres."""
+
+    parcel_acres: float
+    soil_acres: float  # of it, with soils loaded
+    prime_acres: float  # 'All areas are prime farmland'
+    prime_if_acres: float  # prime only if drained, protected from flooding, ...
+    statewide_acres: float  # farmland of statewide importance
+    cropland_acres: float  # capability class 1 to the maximum
+    wet_acres: float  # somewhat poorly drained or wetter
+    pasture_aum: float  # animal-unit months a year the soils could carry as pasture
+
+
+@dataclass(frozen=True)
+class FarmlandInfo:
+    """The settings farmland was computed with (config/farmland.yaml)."""
+
+    max_capability_class: int
+    wet_drainage: tuple[str, ...]
+    computed: str  # date of the latest computation
+
+
+@dataclass(frozen=True)
 class ExportRow:
     """One corridor of a score run, joined to its hydro numbers (storage units)."""
 
@@ -253,6 +292,8 @@ class ExportRow:
     access_flags: tuple[str, ...] = ()
     turbine_buildable: Buildable | None = None  # None: no turbine parcel, or not computed
     buildable_flags: tuple[str, ...] = ()
+    turbine_farmland: Farmland | None = None  # None: no turbine parcel, or not computed
+    farmland_flags: tuple[str, ...] = ()
 
     @property
     def ranked(self) -> bool:
@@ -281,6 +322,7 @@ class RunInfo:
     drive_area: DriveArea | None = None  # None: no drive-time area built
     soils_version: str | None = None  # usda_ssurgo version and download date; None: not loaded
     buildable: BuildableInfo | None = None  # None: buildable ground never computed
+    farmland: FarmlandInfo | None = None  # None: farmland never computed
 
 
 # --- Rows ---------------------------------------------------------------------
@@ -375,6 +417,20 @@ def buildable_flags(
     return tuple(flags)
 
 
+def farmland_flags(turbine: Parcel | None, f: Farmland | None) -> tuple[str, ...]:
+    """What to check about farming the turbine parcel (only when farmland is computed)."""
+    if turbine is None:
+        return ()
+    if f is None:
+        return (FARMLAND_NOT_COMPUTED,)
+    flags = []
+    if f.prime_acres + f.statewide_acres + f.cropland_acres == 0:
+        flags.append(NO_FARMLAND)
+    if f.parcel_acres - f.soil_acres >= FARMLAND_UNSURVEYED_ACRES:
+        flags.append(SOILS_NOT_LOADED)
+    return tuple(flags)
+
+
 def _ft(m: float | None) -> int | None:
     return None if m is None else round(units.m_to_ft(m))
 
@@ -388,6 +444,7 @@ def record(r: ExportRow) -> dict:
     sfha_m = r.stretch_sfha_m
     road = r.turbine_road
     b = r.turbine_buildable
+    f = r.turbine_farmland
     return {
         "status": r.status,
         "rank": r.rank,
@@ -446,6 +503,13 @@ def record(r: ExportRow) -> dict:
         "turbine_parcel_buildable_acres": b and round(b.buildable_acres, 1),
         "nearest_buildable_ft": b and _ft(b.nearest_m),
         "buildable_flags": "; ".join(r.buildable_flags),
+        "turbine_parcel_prime_acres": f and round(f.prime_acres, 1),
+        "turbine_parcel_prime_if_acres": f and round(f.prime_if_acres, 1),
+        "turbine_parcel_statewide_acres": f and round(f.statewide_acres, 1),
+        "turbine_parcel_cropland_acres": f and round(f.cropland_acres, 1),
+        "turbine_parcel_wet_acres": f and round(f.wet_acres, 1),
+        "turbine_parcel_pasture_aum": f and round(f.pasture_aum),
+        "farmland_flags": "; ".join(r.farmland_flags),
         "explanation": r.explanation.get("summary", ""),
     }
 
@@ -615,6 +679,7 @@ def caveats(info: RunInfo) -> list[str]:
         _roads_caveat(info),
         _drive_caveat(info),
         _buildable_caveat(info),
+        _farmland_caveat(info),
     ]
 
 
@@ -729,6 +794,34 @@ def _buildable_caveat(info: RunInfo) -> str:
     )
 
 
+def _farmland_caveat(info: RunInfo) -> str:
+    f = info.farmland
+    if f is None:
+        return (
+            "**Farmland isn't computed**, so its columns are empty. Run `make ingest` (for "
+            "soils) and `make analyze` (or `uv run hhsf analyze farmland`), then export again."
+        )
+    soils = f" ({info.soils_version})" if info.soils_version else ""
+    return (
+        "**Farmland is what the soils could do, not what the land is now** (FR-5, D-14; "
+        f"computed {f.computed}), from USDA SSURGO{soils}, over the whole turbine parcel. "
+        "`turbine_parcel_prime_acres` is NRCS prime farmland; `turbine_parcel_prime_if_acres` "
+        "is prime only if drained or protected from flooding, which it usually isn't yet; "
+        "`turbine_parcel_statewide_acres` is farmland of statewide importance. "
+        "`turbine_parcel_cropland_acres` is land "
+        f"capability class 1–{f.max_capability_class} (non-irrigated): ground that can be "
+        "tilled year after year with at most moderate care. `turbine_parcel_wet_acres` is "
+        "somewhat poorly drained or wetter. `turbine_parcel_pasture_aum` is the grazing the "
+        "soils could grow as improved pasture, in animal-unit months a year (one AUM feeds "
+        "one cow for a month), from each soil's main component. Steep or floodplain ground "
+        "counts too: capability classes already reflect slope and flooding. Flagged only: "
+        "`no_farmland` removes nothing; `soils_not_loaded` means part of the parcel has no "
+        "soil survey loaded. **Where the data runs out:** a forested parcel is scored on "
+        "its soils as if cleared; soil maps are drawn at 1:24,000 and each map unit gets "
+        "its main soil's class, so pockets of better or worse ground hide in it."
+    )
+
+
 def _target(info: RunInfo) -> str:
     w = info.score_params.get("scoring_profile", {}).get("power_target_w")
     return "power" if w is None else f"{w / 1000:g} kW"
@@ -775,6 +868,13 @@ def _buildable(r: ExportRow) -> str:
     return "–" if b is None else f"{b.buildable_acres:,.1f}"
 
 
+def _farmland(r: ExportRow) -> str:
+    f = r.turbine_farmland
+    if f is None:
+        return "–"
+    return f"{f.prime_acres + f.statewide_acres:,.0f} / {f.cropland_acres:,.0f}"
+
+
 def _public_road(r: ExportRow) -> str:
     return _fmt(None if r.turbine_public_road_m is None else units.m_to_ft(r.turbine_public_road_m))
 
@@ -799,6 +899,7 @@ def tier_table(rows: list[ExportRow], tier: str) -> list[str]:
             "Owner",
             "Turbine flood zone",
             "Buildable (ac)",
+            "Prime / cropland (ac)",
             "Public road (ft)",
             "Drive (min)",
             "NHDPlus ID",
@@ -816,6 +917,7 @@ def tier_table(rows: list[ExportRow], tier: str) -> list[str]:
                 _owner(r),
                 _flood(r),
                 _buildable(r),
+                _farmland(r),
                 _public_road(r),
                 _drive(r),
                 str(r.nhdplusid),
@@ -837,6 +939,7 @@ def tier_table(rows: list[ExportRow], tier: str) -> list[str]:
             "Owner",
             "Turbine flood zone",
             "Buildable (ac)",
+            "Prime / cropland (ac)",
             "Public road (ft)",
             "Drive (min)",
             "NHDPlus ID",
@@ -856,6 +959,7 @@ def tier_table(rows: list[ExportRow], tier: str) -> list[str]:
                 _owner(r),
                 _flood(r),
                 _buildable(r),
+                _farmland(r),
                 _public_road(r),
                 _drive(r),
                 str(r.nhdplusid),
@@ -931,6 +1035,32 @@ def _buildable_counts(info: RunInfo, ranked: list[ExportRow]) -> list[str]:
                 ["Within 1/4 mile of the turbine end", str(near)],
                 ["None", str(n[NO_BUILDABLE_GROUND])],
                 ["Not computed (turbine parcel not analyzed)", str(n[BUILDABLE_NOT_COMPUTED])],
+            ],
+        ),
+        "",
+    ]
+
+
+def _farmland_counts(info: RunInfo, ranked: list[ExportRow]) -> list[str]:
+    if info.farmland is None:
+        return []
+    farms = [r.turbine_farmland for r in ranked if r.turbine_farmland]
+    n = Counter(f for r in ranked for f in r.farmland_flags)
+    top = info.farmland.max_capability_class
+    return [
+        *_table(
+            ["Farmland on the turbine parcel (ranked corridors, flagged only)", "Corridors"],
+            [
+                [
+                    "Some prime farmland or farmland of statewide importance",
+                    str(sum(f.prime_acres + f.statewide_acres > 0 for f in farms)),
+                ],
+                [
+                    f"Some cropland (capability class 1–{top})",
+                    str(sum(f.cropland_acres > 0 for f in farms)),
+                ],
+                ["Neither", str(n[NO_FARMLAND])],
+                ["Not computed (turbine parcel not analyzed)", str(n[FARMLAND_NOT_COMPUTED])],
             ],
         ),
         "",
@@ -1016,6 +1146,7 @@ def render_report(info: RunInfo, rows: list[ExportRow], top_n: int = 20) -> str:
         *_flood_counts(info, ranked),
         *_access_counts(info, ranked),
         *_buildable_counts(info, ranked),
+        *_farmland_counts(info, ranked),
         "## Caveats",
         "",
         *[f"- {c}" for c in caveats(info)],
@@ -1045,7 +1176,8 @@ def render_report(info: RunInfo, rows: list[ExportRow], top_n: int = 20) -> str:
         "`turbine_public_road_ft` is the straight-line distance to the nearest public road "
         "and `drive_minutes` the drive from downtown Chattanooga to the road nearest the "
         "turbine end. `turbine_parcel_buildable_acres` is the turbine parcel's gently "
-        "sloped, flood-free, septic-suitable ground.",
+        "sloped, flood-free, septic-suitable ground, and `turbine_parcel_prime_acres` and "
+        '`turbine_parcel_cropland_acres` its farmland (the tables\' "Prime / cropland").',
         "",
     ]
     return "\n".join(out)

@@ -1,0 +1,16 @@
+# Farmland on each corridor's turbine parcel (PART 18, FR-5 agriculture).
+# See docs/ASSUMPTIONS.md, "Farmland", and D-14 in docs/DECISIONS.md.
+# Flagged only: nothing is filtered or re-ranked on it until the FR-7 overall score.
+
+# Land capability classes (USDA SSURGO, non-irrigated, 1 = best, 8 = no farming) that count
+# as cropland. 1-3 is ground that can be tilled year after year with at most moderate care
+# (contour rows, cover crops, drainage); class 4 can be cropped only occasionally with very
+# careful management and is mostly hay and pasture here; 5-8 is pasture, woods or neither.
+max_capability_class: 3
+
+# Drainage classes counted as wet ground (`wet_acres`): too wet for most crops, a garden or
+# a house without drainage, though often fine for hay and summer grazing.
+wet_drainage:
+  - Somewhat poorly drained
+  - Poorly drained
+  - Very poorly drained

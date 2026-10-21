@@ -11,6 +11,7 @@ from hhsf.analysis import (
     buildable,
     drive_time,
     export_run,
+    farmland,
     gauges,
     hydro,
     run,
@@ -180,8 +181,10 @@ def ingest_soils(
     with engine().begin() as conn:
         n = soils.load_soils(conn, area, units, polygons, versions)
     rated = sum(u.ratings["septic_tn"][0] != soils.NOT_RATED for u in units)
+    prime = sum(u.farmland_class == farmland.PRIME for u in units)
     typer.echo(
-        f"Loaded {n:,} soil polygons ({len(units)} map units, {rated} with a septic rating)."
+        f"Loaded {n:,} soil polygons ({len(units)} map units, {rated} with a septic rating, "
+        f"{prime} prime farmland)."
     )
 
 
@@ -360,6 +363,29 @@ def analyze_buildable(aoi: str = AOI_OPTION) -> None:
     typer.echo(
         f"Saved {len(results):,} parcels: {sum(r.buildable_acres for r in results):,.0f} "
         f"buildable acres in all; {none:,} parcels have none."
+    )
+
+
+@analyze_app.command("farmland")
+def analyze_farmland(aoi: str = AOI_OPTION) -> None:
+    """Farmland on each corridor's turbine parcel: prime farmland, capability class,
+    wet ground and pasture, from SSURGO soils (needs make ingest and analyze hydro)."""
+    area = load_aoi(aoi)
+    settings = farmland.load_settings()
+    with engine().begin() as conn:
+        hydro_run = buildable.latest_hydro_run(conn, area.key)
+        if hydro_run is None:
+            raise typer.BadParameter(f"No hydro run for {area.name}. Run `make analyze` first.")
+        results = farmland.run_farmland(conn, area, hydro_run, settings)
+    if not results:
+        typer.echo(f"No turbine parcels for hydro run {hydro_run}: are parcels loaded?")
+        return
+    none = sum(f == 0 and c == 0 for _, f, c in results)
+    typer.echo(
+        f"Saved {len(results):,} turbine parcels of hydro run {hydro_run}: "
+        f"{sum(f for _, f, _ in results):,.0f} acres of prime or statewide farmland, "
+        f"{sum(c for _, _, c in results):,.0f} of capability class 1-"
+        f"{settings.max_capability_class}; {none:,} parcels have neither."
     )
 
 

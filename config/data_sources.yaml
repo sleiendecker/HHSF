@@ -219,7 +219,9 @@ usda_ssurgo:
     unit's components with their septic ratings, and a few map unit summaries (hydric share,
     depth to bedrock and to the water table, flooding frequency, drainage class). Used for
     septic suitability in the buildable-land step (PART 17); see docs/ASSUMPTIONS.md,
-    "Buildable ground".
+    "Buildable ground". Also each map unit's farmland class, non-irrigated land capability
+    class and its main component's pasture yield, for the farmland step (PART 18); see
+    "Farmland".
   url: https://sdmdataaccess.sc.egov.usda.gov/Tabular/post.rest
   service: https://sdmdataaccess.nrcs.usda.gov/
   license: >-

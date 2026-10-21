@@ -78,6 +78,10 @@ const SEPTIC_COLORS = {
   "Not rated": "#9ca3af",
 };
 const BUILDABLE_COLOR = "#16a34a";
+// SSURGO farmland (migration 0014): prime farmland, prime only if drained or protected from flooding,
+// and other cropland (capability class 1-3: keep in step with config/farmland.yaml). Nothing else is drawn.
+const FARMLAND_COLORS = { prime: "#1b7837", primeIf: "#7fbf7b", cropland: "#d9b44a" };
+const MAX_CROPLAND_CLASS = 3;
 
 // Scores and plain streams are the same lines, so only one set shows at a time.
 function setScoresVisible(map: maplibregl.Map, visible: boolean) {
@@ -103,6 +107,8 @@ export function App() {
   const showSoilsRef = useRef(showSoils);
   const [showBuildable, setShowBuildable] = useState(false);
   const showBuildableRef = useRef(showBuildable);
+  const [showFarmland, setShowFarmland] = useState(false);
+  const showFarmlandRef = useRef(showFarmland);
   const [zoom, setZoom] = useState(10);
 
   useEffect(() => {
@@ -213,6 +219,31 @@ export function App() {
             SEPTIC_COLORS["Not rated"],
           ],
           "fill-opacity": 0.3,
+          "fill-antialias": false,
+        },
+      });
+      map.addLayer({
+        id: "farmland-fill",
+        type: "fill",
+        source: "soils",
+        "source-layer": "soils",
+        minzoom: SOILS_MIN_ZOOM,
+        filter: [
+          "any",
+          ["!=", ["coalesce", ["get", "farmland_class"], "Not prime farmland"], "Not prime farmland"],
+          ["<=", ["coalesce", ["get", "capability_class"], 9], MAX_CROPLAND_CLASS],
+        ],
+        layout: { visibility: showFarmlandRef.current ? "visible" : "none" },
+        paint: {
+          "fill-color": [
+            "case",
+            ["==", ["get", "farmland_class"], "All areas are prime farmland"],
+            FARMLAND_COLORS.prime,
+            ["in", "Prime farmland if", ["coalesce", ["get", "farmland_class"], ""]],
+            FARMLAND_COLORS.primeIf,
+            FARMLAND_COLORS.cropland,
+          ],
+          "fill-opacity": 0.35,
           "fill-antialias": false,
         },
       });
@@ -377,6 +408,12 @@ export function App() {
   }, [showSoils]);
 
   useEffect(() => {
+    showFarmlandRef.current = showFarmland;
+    if (mapRef.current?.getLayer("farmland-fill"))
+      mapRef.current.setLayoutProperty("farmland-fill", "visibility", showFarmland ? "visible" : "none");
+  }, [showFarmland]);
+
+  useEffect(() => {
     showBuildableRef.current = showBuildable;
     for (const layer of ["buildable-fill", "buildable-outline"])
       if (mapRef.current?.getLayer(layer))
@@ -449,6 +486,19 @@ export function App() {
               <span className="swatch" style={{ background: BUILDABLE_COLOR }} /> slope 15% or less, outside the 100-year
               floodplain, soils not very limited for septic, in patches of half an acre or more. A screen, not a site
               evaluation.
+            </p>
+          )}
+          <label className="toggle">
+            <input type="checkbox" checked={showFarmland} onChange={(e) => setShowFarmland(e.target.checked)} />
+            Show farmland soils
+          </label>
+          {showFarmland && (
+            <p className="hint">
+              {zoom < SOILS_MIN_ZOOM && "Zoom in to see farmland. "}
+              <span className="swatch" style={{ background: FARMLAND_COLORS.prime }} /> prime farmland{" "}
+              <span className="swatch" style={{ background: FARMLAND_COLORS.primeIf }} /> prime if drained or protected
+              from flooding <span className="swatch" style={{ background: FARMLAND_COLORS.cropland }} /> other cropland
+              (capability class 1–{MAX_CROPLAND_CLASS}). What the soils could grow, not what's there now (USDA SSURGO).
             </p>
           )}
           <label className="toggle">
