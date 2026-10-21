@@ -3,6 +3,10 @@
 Pure functions, no database: export_run.py loads the rows and hands them over, so
 every column and every line of the report can be unit-tested. Values are in units
 people read (ft, W, cfs and gpm, sq mi, mi), rounded to what the estimates can carry.
+
+Owner names are personal information (docs/ASSUMPTIONS.md, "Parcels and owners"):
+they go into the CSVs and the report, which stay on this computer, and never into
+the GeoJSON, which is meant for other tools and is easy to pass around.
 """
 
 import csv
@@ -59,9 +63,49 @@ SHORTLIST_COLUMNS = [
     "nhdplusid",
     "outlet_lat",
     "outlet_lon",
+    "turbine_parcel_id",
+    "turbine_parcel_county",
+    "turbine_parcel_acres",
+    "turbine_parcel_deed_acres",
+    "turbine_parcel_distance_ft",
+    "turbine_parcel_tpad_url",
+    "stretch_parcel_count",
+    "stretch_parcel_ids",
+    "parcel_flags",
+    "turbine_parcel_owner",
+    "turbine_parcel_owner2",
+    "turbine_parcel_address",
+    "stretch_parcel_owners",
     "explanation",
 ]
 ALL_CORRIDORS_COLUMNS = ["status", *SHORTLIST_COLUMNS]
+# Personal information: CSVs and the report only.
+OWNER_COLUMNS = {
+    "turbine_parcel_owner",
+    "turbine_parcel_owner2",
+    "turbine_parcel_address",
+    "stretch_parcel_owners",
+}
+GEOJSON_COLUMNS = [c for c in SHORTLIST_COLUMNS if c not in OWNER_COLUMNS]
+
+# parcel_flags values.
+NO_PARCEL = "no_parcel_found"  # no parcel within 100 m of the turbine point
+OUTSIDE_PARCEL = "turbine_outside_parcel"  # in a gap (road, river bed); nearest parcel shown
+UNDER_MIN_ACRES = "parcel_under_min_acres"  # D-03 placeholder; flagged, not filtered
+
+
+@dataclass(frozen=True)
+class Parcel:
+    """A parcel a corridor sits on, with its owners (personal information)."""
+
+    parcel_id: str
+    county_name: str | None
+    acres: float  # measured from the outline
+    deed_acres: float | None
+    tpad_url: str | None
+    owner: str | None = None
+    owner2: str | None = None
+    property_address: str | None = None
 
 
 @dataclass(frozen=True)
@@ -91,6 +135,11 @@ class ExportRow:
     explanation: dict
     geometry: dict | None = None  # GeoJSON, EPSG:4326
     reach_length_m: float | None = None  # the whole reach; length_m is the corridor (stretch)
+    turbine_parcel: Parcel | None = None  # the parcel at the bottom of the stretch
+    turbine_parcel_distance_m: float | None = None  # 0 when the point is inside it
+    stretch_parcel_ids: tuple[str, ...] = ()  # every parcel the stretch crosses, most first
+    stretch_parcel_owners: tuple[str, ...] = ()
+    parcel_flags: tuple[str, ...] = ()
 
     @property
     def ranked(self) -> bool:
@@ -113,6 +162,7 @@ class RunInfo:
     score_params: dict
     aoi_name: str | None = None
     exported_with: str | None = None  # code version of the exporter
+    parcels_version: str | None = None  # tn_parcels version and download date; None: not loaded
 
 
 # --- Rows ---------------------------------------------------------------------
@@ -122,9 +172,25 @@ def _round(value: float | None, digits: int) -> float | None:
     return None if value is None else round(value, digits)
 
 
+def parcel_flags(
+    turbine: Parcel | None, distance_m: float | None, min_acres: float
+) -> tuple[str, ...]:
+    """What to check about the turbine parcel (only when parcels are loaded)."""
+    if turbine is None:
+        return (NO_PARCEL,)
+    flags = []
+    if distance_m:
+        flags.append(OUTSIDE_PARCEL)
+    if turbine.acres < min_acres:
+        flags.append(UNDER_MIN_ACRES)
+    return tuple(flags)
+
+
 def record(r: ExportRow) -> dict:
     """One corridor as readable, rounded values (None where there's no estimate)."""
     flow = r.firm_flow_cfs
+    t = r.turbine_parcel
+    distance = r.turbine_parcel_distance_m
     return {
         "status": r.status,
         "rank": r.rank,
@@ -151,6 +217,19 @@ def record(r: ExportRow) -> dict:
         "nhdplusid": r.nhdplusid,
         "outlet_lat": _round(r.outlet_lat, 5),
         "outlet_lon": _round(r.outlet_lon, 5),
+        "turbine_parcel_id": t and t.parcel_id,
+        "turbine_parcel_county": t and t.county_name,
+        "turbine_parcel_acres": t and round(t.acres, 1),
+        "turbine_parcel_deed_acres": t and t.deed_acres,
+        "turbine_parcel_distance_ft": None if distance is None else round(units.m_to_ft(distance)),
+        "turbine_parcel_tpad_url": t and t.tpad_url,
+        "stretch_parcel_count": len(r.stretch_parcel_ids) if t or r.stretch_parcel_ids else None,
+        "stretch_parcel_ids": "; ".join(r.stretch_parcel_ids),
+        "parcel_flags": "; ".join(r.parcel_flags),
+        "turbine_parcel_owner": t and t.owner,
+        "turbine_parcel_owner2": t and t.owner2,
+        "turbine_parcel_address": t and t.property_address,
+        "stretch_parcel_owners": "; ".join(r.stretch_parcel_owners),
         "explanation": r.explanation.get("summary", ""),
     }
 
@@ -187,7 +266,7 @@ def to_geojson(rows: list[ExportRow], info: RunInfo) -> dict:
                 "type": "Feature",
                 "id": r.corridor_id,
                 "geometry": r.geometry,
-                "properties": {k: record(r)[k] for k in SHORTLIST_COLUMNS},
+                "properties": {k: record(r)[k] for k in GEOJSON_COLUMNS},
             }
             for r in rows
         ],
@@ -314,8 +393,26 @@ def caveats(info: RunInfo) -> list[str]:
         f"against the {_target(info)} target at all. They are ranked on head alone and need a "
         "flow check (springs, dry-season visit).",
         "StreamStats Q90 itself is a regression estimate (roughly ±60%), and nothing here "
-        "covers permits, access, ownership or soils.",
+        "covers permits, access or soils.",
+        _parcel_caveat(info),
     ]
+
+
+def _parcel_caveat(info: RunInfo) -> str:
+    if info.parcels_version is None:
+        return (
+            "**No parcels are loaded**, so the parcel and owner columns are empty. Run "
+            "`make ingest` (or `uv run hhsf ingest parcels`) and export again."
+        )
+    return (
+        "**Parcels and owners come from the Tennessee Comptroller's public parcel layer** "
+        f"({info.parcels_version}): for reference only, not legal boundaries or proof of "
+        "ownership, and not for commercial use. The turbine parcel is the one under the "
+        "bottom of the stretch; streams often are property lines, so the parcel across the "
+        "creek may matter as much (see `stretch_parcel_owners`). Owner names are personal "
+        "information: keep these files to yourselves. `parcel_under_min_acres` uses the "
+        "D-03 placeholder and removes nothing."
+    )
 
 
 def _target(info: RunInfo) -> str:
@@ -339,6 +436,20 @@ def _place(r: ExportRow) -> str:
     return f"{r.outlet_lat:.5f}, {r.outlet_lon:.5f}"
 
 
+def _parcel(r: ExportRow) -> str:
+    t = r.turbine_parcel
+    if t is None:
+        return "–"
+    return f"{t.parcel_id} ({t.acres:,.0f})".replace("|", "/")
+
+
+def _owner(r: ExportRow) -> str:
+    t = r.turbine_parcel
+    if t is None or not t.owner:
+        return "–"
+    return (t.owner + (f" & {t.owner2}" if t.owner2 else "")).replace("|", "/")
+
+
 def tier_table(rows: list[ExportRow], tier: str) -> list[str]:
     if tier == scoring.HEAD_ONLY:
         header = [
@@ -349,6 +460,8 @@ def tier_table(rows: list[ExportRow], tier: str) -> list[str]:
             "Net head (ft)",
             "Drainage (sq mi)",
             "Outlet (lat, lon)",
+            "Turbine parcel (acres)",
+            "Owner",
             "NHDPlus ID",
         ]
         lines = [
@@ -360,6 +473,8 @@ def tier_table(rows: list[ExportRow], tier: str) -> list[str]:
                 _fmt(r.net_head_ft),
                 _fmt(record(r)["drainage_area_sqmi"], ".2f"),
                 _place(r),
+                _parcel(r),
+                _owner(r),
                 str(r.nhdplusid),
             ]
             for r in rows
@@ -375,6 +490,8 @@ def tier_table(rows: list[ExportRow], tier: str) -> list[str]:
             "Firm flow (cfs)",
             "Flow method",
             "Outlet (lat, lon)",
+            "Turbine parcel (acres)",
+            "Owner",
             "NHDPlus ID",
         ]
         lines = [
@@ -388,6 +505,8 @@ def tier_table(rows: list[ExportRow], tier: str) -> list[str]:
                 _fmt(r.firm_flow_cfs, ".3g"),
                 r.flow_method or "–",
                 _place(r),
+                _parcel(r),
+                _owner(r),
                 str(r.nhdplusid),
             ]
             for r in rows
@@ -431,7 +550,8 @@ def render_report(info: RunInfo, rows: list[ExportRow], top_n: int = 20) -> str:
         "",
         *_table(
             ["Source", "Version"],
-            [[k, str(v)] for k, v in sorted(info.data_source_versions.items())],
+            [[k, str(v)] for k, v in sorted(info.data_source_versions.items())]
+            + ([["tn_parcels (at export)", info.parcels_version]] if info.parcels_version else []),
         ),
         "",
         "## Key assumptions",
@@ -468,14 +588,16 @@ def render_report(info: RunInfo, rows: list[ExportRow], top_n: int = 20) -> str:
     out += [
         "## Files",
         "",
-        f"- `{SHORTLIST_CSV}`: every ranked corridor, in rank order.",
+        f"- `{SHORTLIST_CSV}`: every ranked corridor, in rank order, with its parcels and owners.",
         f"- `{SHORTLIST_GEOJSON}`: the same, with each reach's line (EPSG:4326), for GIS "
-        "or Google Earth.",
+        "or Google Earth. Parcel IDs and acreage, but no owner names.",
         f"- `{ALL_CORRIDORS_CSV}`: every corridor, filtered ones included, with the reason "
         'in `explanation`. Use it to answer "why isn\'t this stream on the list?".',
         "",
         "The outlet is the downstream end of the reach, where a powerhouse would sit. "
-        "Unnamed streams can be found by NHDPlus ID or by the outlet point.",
+        "Unnamed streams can be found by NHDPlus ID or by the outlet point. The CSVs and this "
+        "report name property owners: personal information, so don't post or share them. "
+        "`turbine_parcel_tpad_url` opens the parcel's full record on the Comptroller's site.",
         "",
     ]
     return "\n".join(out)

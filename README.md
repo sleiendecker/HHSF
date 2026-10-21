@@ -4,7 +4,7 @@ A local map-based tool for finding land near Chattanooga, TN that could support 
 
 ## Goal
 
-Produce a **shortlist of land worth visiting in person**: sites with a year-round stream that has enough drop and flow to generate at least 1 kW of continuous power, within about an hour's drive of Chattanooga. Later versions add parcel ownership so landowners can be contacted, **whether or not the land is listed for sale**.
+Produce a **shortlist of land worth visiting in person**: sites with a year-round stream that has enough drop and flow to generate at least 1 kW of continuous power, within about an hour's drive of Chattanooga. Each site lists its property parcel and owner so landowners can be contacted, **whether or not the land is listed for sale**.
 
 This is different from a real estate search. It starts from the terrain and water, finds physically suitable land, and only then asks who owns it.
 
@@ -20,18 +20,19 @@ This is different from a real estate search. It starts from the terrain and wate
 | Works now | Not built yet |
 | --- | --- |
 | Loads the county boundary, every perennial (year-round) stream in the county and a 10 m elevation model into a local database and `data/raw/` | A way to spot spring-fed small streams (the low-flow estimates for small streams are typical-basin numbers) |
-| Records each stream's elevation drop, length, slope, drainage area and estimated mean flow | Parcels, ownership, soils, flood zones, roads |
+| Records each stream's elevation drop, length, slope, drainage area and estimated mean flow | Soils, flood zones, roads |
 | Hydro corridors: the steepest 1,000 ft stretch of each stream (where one penstock would get the most drop), found on the elevation model | |
 | Map viewer: each stream's best stretch colored by its hydro score and styled by confidence, with a legend; click one for its score explained in plain words. Light, satellite or topo map underneath | |
 | Hydro analysis: head over that stretch, reliable low flow (Q90 from USGS StreamStats, or, for streams too small for it, the typical StreamStats low flow per square mile of their river basin; the Whitwell stream gauge where StreamStats is down) and firm power, saved as a numbered run | |
 | Scoring and ranking: streams of 1 kW or more scored 0–100 on power and head with an explanation for each score, ranked by confidence; streams under 1 kW on a rough flow estimate listed last as "low flow" | |
-| Exports: the ranked shortlist as CSV and GeoJSON, every stream with the reason it was or wasn't listed, and a summary report for planning visits | |
+| Exports: the ranked shortlist as CSV and GeoJSON, every stream with the reason it was or wasn't listed, and a summary report for planning visits | Parcels for Hamilton County (Chattanooga) and other counties outside the state's parcel layer |
+| Parcels and owners: each stretch's turbine parcel (ID, acreage, owner) and every parcel it crosses, in the exports; property lines on the map. Owner names stay on this computer, never on the map | A minimum acreage filter (D-03 is open; small parcels are only flagged) |
 
 ## How it works
 
 ```
 Public data services ──▶ hhsf (Python) ──▶ PostGIS database ──▶ Martin tile server ──▶ React map
-(USGS, US Census)        download + load     (Docker)            (Docker)              (browser)
+(USGS, Census, TN)       download + load     (Docker)            (Docker)              (browser)
 ```
 
 1. The **`hhsf` command-line tool** downloads public datasets for an area, converts units and coordinates, and loads them into the database.
@@ -102,9 +103,11 @@ This starts PostGIS and Martin in Docker and creates the database tables. Data i
 make ingest
 ```
 
-This downloads the Sequatchie County boundary from Census, the stream data and the elevation model from USGS, then loads them. The first run downloads about **270 MB** of USGS stream files (one per river basin the county touches) plus about **84 MB** of elevation data, and takes **a couple of minutes** on a typical connection; after that the files are reused from `data/raw/` and a re-run takes about 30 seconds.
+This downloads the Sequatchie County boundary from Census, the stream data and the elevation model from USGS, and the property parcels from the Tennessee Comptroller, then loads them. The first run downloads about **270 MB** of USGS stream files (one per river basin the county touches) plus about **84 MB** of elevation data, and takes **a couple of minutes** on a typical connection; after that the files are reused from `data/raw/` and a re-run takes about 30 seconds.
 
-The elevation model is USGS 3DEP at 1/3 arc-second (about 10 m). USGS publishes it in 1×1 degree tiles (Sequatchie's is 472 MB), but only the part under the county's streams is read, about 84 MB, saved as a 48 MB file in `data/raw/usgs_3dep_13/`. To fetch just that step: `uv run hhsf ingest terrain`. Streams are saved as each file is read, so the map starts filling in before the run finishes. If it fails partway, run it again: nothing is lost or duplicated.
+The elevation model is USGS 3DEP at 1/3 arc-second (about 10 m). USGS publishes it in 1×1 degree tiles (Sequatchie's is 472 MB), but only the part under the county's streams is read, about 84 MB, saved as a 48 MB file in `data/raw/usgs_3dep_13/`. To fetch just that step: `uv run hhsf ingest terrain`.
+
+Parcels take about 10 seconds per county and are cached in `data/raw/tn_parcels/`. The state updates them monthly; `uv run hhsf ingest parcels --refresh` downloads them again. Owner names come with the parcels and are kept in their own table, which the map never reads (see [docs/ASSUMPTIONS.md](docs/ASSUMPTIONS.md#parcels-and-owners)). Streams are saved as each file is read, so the map starts filling in before the run finishes. If it fails partway, run it again: nothing is lost or duplicated.
 
 **Other counties.** Marion, Bledsoe, Grundy and Rhea are set up in `config/aoi/`. Run each step with `AOI=<key>`, one county at a time:
 
@@ -155,10 +158,12 @@ Writes the latest scoring to `data/outputs/sequatchie_tn/run_<N>/` (N is the sco
 
 | File | What's in it |
 | --- | --- |
-| `report.md` | Summary for planning visits: which runs and data it came from, the assumptions used, how many streams made the list, the top 20 of each confidence tier, and the caveats. Start here. |
-| `shortlist.csv` | Every ranked stream, best first: score, net head (ft), firm power (W), firm flow (cfs and gallons per minute), drainage area (sq mi), the stretch's length (ft) and the whole stream's (mi), how the flow was estimated, a lat/lon point at the bottom of the stretch (where a turbine would go), and a one-line explanation. Opens in Excel or Google Sheets. |
-| `shortlist.geojson` | The same stretches as map lines, for QGIS, Google Earth or [geojson.io](https://geojson.io). |
+| `report.md` | Summary for planning visits: which runs and data it came from, the assumptions used, how many streams made the list, the top 20 of each confidence tier with each one's turbine parcel and owner, and the caveats. Start here. |
+| `shortlist.csv` | Every ranked stream, best first: score, net head (ft), firm power (W), firm flow (cfs and gallons per minute), drainage area (sq mi), the stretch's length (ft) and the whole stream's (mi), how the flow was estimated, a lat/lon point at the bottom of the stretch (where a turbine would go), and a one-line explanation. Then the property: the turbine parcel's ID, county, acreage (measured and on the deed), owner(s), street address and a link to its record on the Comptroller's site, plus every parcel the stretch crosses and their owners, and flags such as `parcel_under_min_acres`. Opens in Excel or Google Sheets. |
+| `shortlist.geojson` | The same stretches as map lines, for QGIS, Google Earth or [geojson.io](https://geojson.io). Parcel IDs and acreage, but no owner names. |
 | `all_corridors.csv` | Every stream, including the ones that were dropped, with the reason. Use it to answer "why isn't this stream on the list?". |
+
+**The CSVs and the report name property owners. That's personal information: keep them to yourselves, and don't post them or paste them into issues.** Parcels are matched when you export, so run `make export` again after re-ingesting parcels.
 
 Exporting again overwrites that run's folder; earlier runs' folders are kept. `uv run hhsf export hydro --run-id N` exports an older score run.
 
@@ -195,7 +200,9 @@ Satellite and topo come from the USGS National Map and stop sharpening past abou
 
 ![The same stretch on the satellite map, with the map menu open: the top site sits in forest above a road and farm fields](docs/images/map-satellite.jpg)
 
-Click a stretch to see its score and why: how many points power and head each added, which part of the stream it is (how long the stretch is, and how long the whole stream is and how much it drops), the net head (ft), firm flow (cfs and gallons per minute), firm power (W), where the flow number came from, the confidence group and any warnings. Untick **Show hydro scores** to go back to plain streams (bigger streams darker), where a click shows elevation drop, length, slope, drainage area and estimated mean flow.
+Click a stretch to see its score and why: how many points power and head each added, which part of the stream it is (how long the stretch is, and how long the whole stream is and how much it drops), the net head (ft), firm flow (cfs and gallons per minute), firm power (W), where the flow number came from, the confidence group and any warnings. The popup also shows the **turbine parcel** (the parcel under the bottom of the stretch: its ID and acreage) and how many parcels the stretch crosses. Tick **Show property lines** to draw parcel outlines (pink; pale yellow on satellite) from zoom 12. Owner names are only in the exports.
+
+Untick **Show hydro scores** to go back to plain streams (bigger streams darker), where a click shows elevation drop, length, slope, drainage area and estimated mean flow.
 
 ### Stopping
 
@@ -215,6 +222,7 @@ Run `make` to list all commands.
 | `make ingest AOI=<key>` | Same, for another area defined in `config/aoi/` |
 | `uv run hhsf ingest hydrography --source service` | Reload streams from the USGS web service instead of the file download |
 | `uv run hhsf ingest terrain` | Just the elevation model step (after the streams are loaded) |
+| `uv run hhsf ingest parcels --aoi <key>` | Just the parcels step; add `--refresh` to download the monthly update |
 | `make analyze` | Find each stream's steepest stretch, then compute head, low flow and firm power for it (after `make ingest`) |
 | `uv run hhsf analyze hydro --penstock-ft 2000` | Same, allowing a longer penstock (D-08 sensitivity check) |
 | `uv run hhsf analyze hydro --no-terrain` | Same, but each whole stream is one corridor (the old method; overstates long streams) |
@@ -245,6 +253,7 @@ uv run hhsf --help
 | `config/aoi/*.yaml` | Areas of interest. One file per county: Census ID, a buffer distance, (optionally) the river basins (HU4 codes) it spans, and (optionally) a reference stream gauge for low flows. Add a file to analyze another county; no code changes needed. If you leave out `huc4`, the basins are looked up automatically. |
 | `config/data_sources.yaml` | Where each dataset is downloaded from, plus license and version notes. `hydrography_source` picks the stream source: `bulk` (file download, default) or `service` (web service). The `streamstats` section lists its endpoints and how hard to call it. |
 | `config/hydro.yaml` | Hydro analysis assumptions: the longest penstock a corridor may assume (1,000 ft), efficiency, net-head and diversion allowances, the 1 kW target, which StreamStats statistic to use, and where to ask StreamStats again when it outlines the wrong watershed (`pour_point_retry_shares`, `min_pour_point_area_share`). Values come from [docs/DECISIONS.md](docs/DECISIONS.md); change them here and re-run. |
+| `config/parcels.yaml` | The minimum-acreage placeholder (D-03) that flags small parcels in the exports. |
 | `config/scoring_profiles/*.yaml` | Scoring rules: the 1 kW cutoff, the head and power breakpoints, the 70/30 weights and the confidence tiers. To change one, copy the file to a new version and score again (see [docs/SCORING.md](docs/SCORING.md)). |
 | `.env` (optional) | Override the database connection (`DATABASE_URL`). Copy from `.env.example`. Only needed if you change the database port. |
 
@@ -266,6 +275,7 @@ hydro-homestead/
 │   ├── aoi/                 # Areas of interest
 │   ├── data_sources.yaml    # Dataset endpoints and licenses
 │   ├── hydro.yaml           # Hydro analysis assumptions
+│   ├── parcels.yaml         # Minimum-acreage placeholder (D-03)
 │   └── scoring_profiles/    # Versioned scoring rules
 ├── src/hhsf/                # Python pipeline
 │   ├── cli.py               # `hhsf` command-line tool
@@ -292,10 +302,11 @@ hydro-homestead/
 | Measured stream flow | [USGS NWIS](https://waterdata.usgs.gov/) daily flows at gauge 03571000 (Sequatchie River near Whitwell), and [WBD](https://www.usgs.gov/national-hydrography/watershed-boundary-dataset) basin boundaries (for the gauge's basin and the regional yield) | Public domain |
 | Elevation model (10 m) | [USGS 3DEP](https://www.usgs.gov/3d-elevation-program) 1/3 arc-second DEM, cloud-optimized GeoTIFF tiles from the National Map (only the part under the AOI's streams is downloaded: about 84 MB for Sequatchie) | Public domain |
 | Streams, elevations, drainage area, flow estimates | [USGS NHDPlus High Resolution](https://www.usgs.gov/national-hydrography/nhdplus-high-resolution) (final release; HU4 file geodatabases from the National Map, or its web service) | Public domain |
+| Property parcels and owners | [Tennessee Comptroller of the Treasury](https://comptroller.tn.gov/office-functions/pa/gisredistricting/redistricting-and-land-use-maps/parcel-data.html) statewide parcel layer ("Tennessee Property Boundaries Public Use", on TNMap), 86 counties, updated monthly | Public service, not for commercial use, no warranty. Owner names are personal information: local exports only |
 | Basemap (Light) | [OpenFreeMap](https://openfreemap.org/), © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors | ODbL |
 | Basemap (Satellite, Topo) | [USGS The National Map](https://www.usgs.gov/programs/national-geospatial-program/national-map) tile services USGSImageryOnly (USDA NAIP aerial photos) and USGSTopo | Public domain |
 
-Planned sources (soils, flood zones, parcels, roads, building footprints, rainfall) are listed in [site-selection.md §4](site-selection.md).
+Planned sources (soils, flood zones, roads, building footprints, rainfall) are listed in [site-selection.md §4](site-selection.md).
 
 ## Testing
 
@@ -303,7 +314,7 @@ Planned sources (soils, flood zones, parcels, roads, building footprints, rainfa
 make test
 ```
 
-Unit tests run without Docker. They include reading a tiny synthetic NHDPlus HR file built during the test, so no large files are needed, the steepest-stretch search on made-up elevation profiles and a tiny made-up elevation model, the head, flow and power calculations against a fake StreamStats service (no network), and every scoring and ranking rule. Integration tests start a temporary PostGIS container, run the migrations, load sample streams, check that re-loading doesn't create duplicates, and run the hydro analysis (with and without an elevation model), scoring and exports.
+Unit tests run without Docker. They include reading a tiny synthetic NHDPlus HR file built during the test, so no large files are needed, the steepest-stretch search on made-up elevation profiles and a tiny made-up elevation model, the head, flow and power calculations against a fake StreamStats service (no network), and every scoring and ranking rule. Integration tests start a temporary PostGIS container, run the migrations, load sample streams, check that re-loading doesn't create duplicates, and run the hydro analysis (with and without an elevation model), scoring and exports, including linking corridors to parcels and checking that owner names reach the CSVs but not the GeoJSON. A unit test fails if any map layer in `martin/martin.yaml` gets an owner or address column.
 
 To see test coverage of the calculation code:
 
@@ -327,13 +338,16 @@ uv run pytest --cov=hhsf.analysis --cov-report=term-missing
 - **Most of the ranked list is "low flow".** The 272 "head only" streams that used to fill most of the list now have a power estimate from the regional yield, and no small stream reaches 1 kW on it (best 146 W, median 9 W). Rather than drop them, the list keeps 575 of them last, ordered by power (D-01, D-09): their flow is a typical-basin number, so a spring-fed one with lots of head could still work. They need a dry-season flow check on the visit. A second reference gauge was tried instead and rejected: Collins River near McMinnville runs 10× high like Whitwell, and the Walden Ridge gauges disagree with each other. See [docs/SCORING.md](docs/SCORING.md).
 - **The regional yield differs by county.** Each county's run builds the small-stream yield from its own StreamStats streams, and some differ 3–4× in the same river basin: Bledsoe's part of the Sequatchie River basin gets 0.068 cfs per sq mi against Sequatchie's 0.019, and Marion's Battle Creek side 0.083 against Grundy's 0.022. So a stream within 500 m of a county line, analyzed for both counties, can make 3–4× more power in one county's run than the other's. The map shows each stream once, with the numbers of the county it sits in; the exports list it in both. Pooling the yield across counties would fix it. See [docs/SCORING.md](docs/SCORING.md#five-counties-part-13-profile-hydro_v3-2026-10-20).
 - **Ranks are per county.** Each county has its own #1, so the map shows several. The popup says which county a rank is in.
+- **Parcel lines are for reference, not surveys.** The state's layer is "not intended for commercial use" and comes with no warranty; owner names can lag a sale. Check the deed through the parcel's TPAD link before contacting anyone. Details: [docs/ASSUMPTIONS.md](docs/ASSUMPTIONS.md#parcels-and-owners).
+- **140 ranked stretches have no parcel.** They end outside the five counties (streams within 500 m of a county line are analyzed for both counties), where no parcels are loaded. Streams are often property lines, so a stretch usually crosses the parcels on both banks; the turbine parcel is just the one under its bottom end.
+- **The three biggest 1 kW streams sit on very large parcels** (1,355 to 10,481 acres), likely timber, conservation or public land. Check the owner type before planning a visit.
 - **A long stream can show its rank label twice on the map.** Map tiles cut streams at tile edges and each piece gets a label. Both labels are the same stream; click either for its details.
 
 ### Upcoming (will block later milestones)
 
 - **The 1-hour drive radius needs data we don't have yet.** It needs a road network and a routing tool to calculate drive times (D-02).
-- **Parcel and ownership data have gaps and restrictions.** Hamilton County (Chattanooga itself) isn't in the Tennessee statewide parcel layer and needs its own source. Owner names and addresses are personal information under assessor terms of use, so they should be stored carefully and not shared publicly.
-- **Some decisions are still open.** Minimum acreage, budget and privacy weighting (D-03) are needed once parcels are added.
+- **Hamilton County (Chattanooga itself) isn't in the state parcel layer.** It, and eight other counties, keep their own parcels; the regional run will need Hamilton's source.
+- **Some decisions are still open.** Minimum acreage, budget and privacy weighting (D-03). Parcels are loaded, but small ones are only flagged until it's decided.
 - **Permits are outside the tool.** Putting a turbine on a Tennessee stream needs state (TDEC ARAP) and possibly federal (FERC) approval. The tool won't evaluate this, so every site needs a permitting check before it's a real option.
 
 ## Troubleshooting
@@ -348,6 +362,8 @@ uv run pytest --cov=hhsf.analysis --cov-report=term-missing
 | `--source service` fails with "Query failed after 4 attempts" | The USGS service timed out. Run it again; finished boxes are reused. |
 | `make analyze` says "No elevation model" | Run `uv run hhsf ingest terrain` (or `make ingest`), or pass `--no-terrain` to use whole streams. |
 | `make analyze` says "StreamStats looks unavailable" | The USGS service is down or overloaded. The run still finishes with flagged fallback flows; run it again later to get Q90. |
+| `make export` leaves the parcel columns empty | Parcels aren't loaded: run `uv run hhsf ingest parcels --aoi <key>` (or `make ingest`), then export again. |
+| **Show property lines** draws nothing | Zoom in past zoom 12 (about 1:150,000), and check <http://localhost:3100/catalog> lists `parcels`; if not, run `make up`. |
 | The map shows no streams | Check `make ingest` finished, and that <http://localhost:3100/catalog> lists `streams`. |
 | Popups say "ranked #N overall" instead of naming the county | The county was loaded before the map knew which AOI it belongs to. Run `uv run hhsf ingest boundary --aoi <key>` for each county, then refresh. |
 | Every stream is grey, or none are colored | Run `make score`, then refresh the page. The colors come from the latest score run. |
@@ -362,4 +378,5 @@ From [site-selection.md §7](site-selection.md):
 2. ~~Hydro analysis: head, reliable low flow, firm power, over the steepest usable stretch of each stream~~ Low flow comes from StreamStats for the bigger streams and from a regional yield per river basin for the small ones (D-09). Still to do: a way to spot spring-fed small streams, which the regional yield can't see
 3. ~~Scoring and ranking against the 1 kW minimum, with an explanation for every score~~ Still to do: the original FR-3 weight table as a fallback profile, and the weighting sensitivity check
 4. ~~Exports (CSV, GeoJSON), a summary report, and the scores on the map~~
-5. Then: parcels and ownership, soils, flood zones, roads and drive time, and the full Chattanooga region
+5. ~~Parcels and ownership~~ Still to do: a minimum acreage filter once D-03 is decided, and Hamilton County's own parcel source
+6. Then: soils, flood zones, roads and drive time, and the full Chattanooga region

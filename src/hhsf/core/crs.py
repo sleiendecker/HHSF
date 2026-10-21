@@ -59,3 +59,8 @@ def analysis_xy_to_file(
 def length_m(geom: BaseGeometry) -> float:
     """Length in meters of a storage-CRS line geometry."""
     return to_analysis(geom).length
+
+
+def area_m2(geom: BaseGeometry) -> float:
+    """Area in square meters of a storage-CRS polygon geometry."""
+    return to_analysis(geom).area

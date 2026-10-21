@@ -19,10 +19,11 @@ export interface Basemap {
   // How strongly to outline streams so they stand out from the background (0 = no outline).
   halo: number;
   boundaryColor: string;
+  parcelColor: string;
 }
 
 export const BASEMAPS: Basemap[] = [
-  { id: "light", label: "Light", labels: true, halo: 0, boundaryColor: "#555" },
+  { id: "light", label: "Light", labels: true, halo: 0, boundaryColor: "#555", parcelColor: "#c2549d" },
   {
     id: "satellite",
     label: "Satellite",
@@ -31,6 +32,7 @@ export const BASEMAPS: Basemap[] = [
     labels: true,
     halo: 0.9,
     boundaryColor: "#fff",
+    parcelColor: "#ffd27f",
   },
   {
     id: "topo",
@@ -40,6 +42,7 @@ export const BASEMAPS: Basemap[] = [
     labels: false,
     halo: 0.8,
     boundaryColor: "#555",
+    parcelColor: "#c2549d",
   },
 ];
 
@@ -102,4 +105,5 @@ export function showBasemap(map: maplibregl.Map, id: string) {
   }
   for (const halo of ["streams-halo", "scores-halo"]) map.setPaintProperty(halo, "line-opacity", basemap.halo);
   map.setPaintProperty("county-outline", "line-color", basemap.boundaryColor);
+  map.setPaintProperty("parcel-outline", "line-color", basemap.parcelColor);
 }

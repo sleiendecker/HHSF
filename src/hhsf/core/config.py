@@ -68,3 +68,8 @@ def load_data_source(key: str) -> DataSource:
 def hydrography_source() -> str:
     """Which NHDPlus HR source to ingest from by default: "bulk" or "service"."""
     return _data_sources().get("hydrography_source", "bulk")
+
+
+def min_homestead_acres() -> float:
+    """D-03 placeholder from config/parcels.yaml: smaller parcels are flagged, not filtered."""
+    return float(yaml.safe_load((CONFIG_DIR / "parcels.yaml").read_text())["min_homestead_acres"])

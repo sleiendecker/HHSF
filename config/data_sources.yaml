@@ -129,3 +129,27 @@ usgs_national_map_basemaps:
     USGSShadedReliefOnly:
       use: not used yet; a plain terrain option if topo is too busy (same URL pattern)
       attribution: "USGS The National Map: 3D Elevation Program"
+
+tn_parcels:
+  description: >-
+    Tennessee Comptroller of the Treasury statewide parcel boundaries ("Tennessee Property
+    Boundaries Public Use", ArcGIS Online feature service on TNMap). 86 counties, updated
+    monthly; Chester, Davidson, Hamilton, Hickman, Knox, Montgomery, Rutherford, Shelby and
+    Williamson keep their own parcels and aren't in it. The layer holds the owner names, so
+    `hhsf ingest parcels` saves those to a separate table (parcel_owners) that the map never
+    serves; see docs/ASSUMPTIONS.md, "Parcels and owners".
+  url: https://services1.arcgis.com/YuVBSS7Y1of2Qud1/arcgis/rest/services/Tennessee_Property_Boundaries_Public_Use/FeatureServer/0/query
+  item: https://www.arcgis.com/home/item.html?id=e356f1a241844d6f9025f2fa4e977df3
+  license: >-
+    Public service, "not intended for commercial use" (the Comptroller's per-county shapefile
+    downloads are the commercial route). No warranty; graphical reference only, not legal
+    descriptions or boundary lines. Owner names are personal information: keep them in local
+    exports only, never in map tiles, the repo or anything shared.
+  attribution: Tennessee Comptroller of the Treasury, Division of Property Assessments
+  version: TNMap statewide parcels, monthly update (checked 2026-10-20)
+  # The layer numbers counties alphabetically (Bledsoe 4, Sequatchie 77). That is
+  # (county FIPS + 1) / 2, since Tennessee's county FIPS codes are the odd numbers 1-189.
+  page_size: 2000  # the service's maxRecordCount
+  # Per-county shapefiles with the full assessment table (mailing address, values) come
+  # through a form on this page, by hand only; not used.
+  downloads: https://comptroller.tn.gov/office-functions/pa/gisredistricting/redistricting-and-land-use-maps/parcel-data.html
