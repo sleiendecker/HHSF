@@ -16,6 +16,8 @@ up:  ## Start the database, apply migrations, start the tile server
 
 ingest:  ## Download and load boundary, streams and elevations for an AOI (default: sequatchie_tn)
 	uv run hhsf ingest all --aoi $(AOI)
+	@# The tile server measures each table's extent when it starts; the map opens on the counties' extent.
+	docker compose restart tiles
 
 analyze:  ## Find each stream's steepest stretch; compute head, firm flow and firm power (needs make ingest)
 	uv run hhsf analyze hydro --aoi $(AOI)

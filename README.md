@@ -15,7 +15,7 @@ This is different from a real estate search. It starts from the terrain and wate
 
 ## Status
 
-**v0.1, in progress.** Test area: Sequatchie County, TN.
+**v0.1, in progress.** Analyzed so far: Sequatchie County, TN (the default) and its neighbors Marion, Bledsoe, Grundy and Rhea, part of the 1-hour drive region around Chattanooga (D-02). Six streams across the five counties reach 1 kW; see [docs/SCORING.md](docs/SCORING.md#five-counties-part-13-profile-hydro_v3-2026-10-20).
 
 | Works now | Not built yet |
 | --- | --- |
@@ -106,6 +106,16 @@ This downloads the Sequatchie County boundary from Census, the stream data and t
 
 The elevation model is USGS 3DEP at 1/3 arc-second (about 10 m). USGS publishes it in 1×1 degree tiles (Sequatchie's is 472 MB), but only the part under the county's streams is read, about 84 MB, saved as a 48 MB file in `data/raw/usgs_3dep_13/`. To fetch just that step: `uv run hhsf ingest terrain`. Streams are saved as each file is read, so the map starts filling in before the run finishes. If it fails partway, run it again: nothing is lost or duplicated.
 
+**Other counties.** Marion, Bledsoe, Grundy and Rhea are set up in `config/aoi/`. Run each step with `AOI=<key>`, one county at a time:
+
+```bash
+make ingest AOI=marion_tn
+make analyze AOI=marion_tn
+make score AOI=marion_tn
+```
+
+Keys: `marion_tn`, `bledsoe_tn`, `grundy_tn`, `rhea_tn`. They need two more river-basin files than Sequatchie (Upper Tennessee `0601`: 486 MB, Middle Tennessee-Elk `0603`: 152 MB). A new county's first `make analyze` takes 30 minutes to a couple of hours while StreamStats answers, longer if it keeps dropping out. The map shows every county you've scored, each ranked on its own.
+
 <details>
 <summary>Using the USGS web service instead of the file download</summary>
 
@@ -125,7 +135,7 @@ Each box is saved as it arrives and cached in `data/raw/`, so re-running resumes
 make analyze
 ```
 
-For every stream this finds its **steepest stretch of up to 1,000 ft** on the elevation model (where one penstock would get the most drop), then works out the head over that stretch, a reliable low flow and the continuous power it could supply, and saves them to the `hydro_corridors` table as a new numbered run. A stream shorter than 1,000 ft is used whole. Low flows come from the USGS StreamStats service; if it outlines the wrong watershed for a stream, the tool asks again further up that stream. Streams too small for StreamStats' equations get the median StreamStats low flow per square mile of the bigger streams in their river basin (HUC8), marked low confidence. If the service is down, streams on the Sequatchie River side borrow the low flow measured at the USGS gauge near Whitwell, scaled by drainage area, also low confidence. Answers are cached in `data/cache/`, so a re-run only asks for what's missing. The first full run takes about 30 minutes while StreamStats answers; if it's down, the run finishes in seconds with the fallback estimates, clearly flagged. What each number means and where it comes from: [docs/ASSUMPTIONS.md](docs/ASSUMPTIONS.md).
+For every stream this finds its **steepest stretch of up to 1,000 ft** on the elevation model (where one penstock would get the most drop), then works out the head over that stretch, a reliable low flow and the continuous power it could supply, and saves them to the `hydro_corridors` table as a new numbered run. A stream shorter than 1,000 ft is used whole. Low flows come from the USGS StreamStats service; if it outlines the wrong watershed for a stream, the tool asks again further up that stream. Streams too small for StreamStats' equations get the median StreamStats low flow per square mile of the bigger streams in their river basin (HUC8), marked low confidence. If the service is down, streams on the Sequatchie River side borrow the low flow measured at the USGS gauge near Whitwell, scaled by drainage area, also low confidence. Answers are cached in `data/cache/`, so a re-run only asks for what's missing. The first full run takes about 30 minutes while StreamStats answers. If it's down, the run still finishes with fallback estimates, clearly flagged, and says how many streams were affected ("StreamStats looks unavailable: N reaches…"); run it again later. What each number means and where it comes from: [docs/ASSUMPTIONS.md](docs/ASSUMPTIONS.md).
 
 ### 6. Score and rank
 
@@ -133,7 +143,7 @@ For every stream this finds its **steepest stretch of up to 1,000 ft** on the el
 make score
 ```
 
-Scores the latest hydro run and prints the top 20. Streams of 1 kW or more get a 0–100 hydro score (70% power, 30% head), and every score is saved with an explanation of how it was reached. The list is ranked by confidence first: every stream whose low flow came from StreamStats ranks above every stream whose flow is a rougher estimate, then streams with no flow estimate ("head only"), then streams under 1 kW on a rough flow estimate ("low flow", ordered by power). Streams under 1 kW on a StreamStats flow are dropped. Each scoring is saved as a new numbered run in the `hydro_scores` table. Details: [docs/SCORING.md](docs/SCORING.md).
+Scores the latest hydro run and prints the top 20. Streams of 1 kW or more get a 0–100 hydro score (70% power, 30% head), and every score is saved with an explanation of how it was reached. The list is ranked by confidence first: every stream whose low flow came from StreamStats ranks above every stream whose flow is a rougher estimate, then streams with no flow estimate ("head only"), then streams under 1 kW on a rough flow estimate ("low flow", ordered by power). Streams under 1 kW on a StreamStats flow are dropped, and so is any stream with under 10 ft of net head (too little drop for a small turbine). Each scoring is saved as a new numbered run in the `hydro_scores` table. Details: [docs/SCORING.md](docs/SCORING.md).
 
 ### 7. Export the shortlist
 
@@ -171,7 +181,7 @@ Open <http://localhost:5173>. The map shows the latest `make score` run (refresh
 | **Purple dotted line** | Head only: the basin is too small for any flow estimate, so it's ranked on drop alone. Check the flow on a visit. |
 | **Thin blue line** | Low flow: under 1 kW on a rough flow estimate (mostly small streams). Listed last; worth a look only if a visit finds a spring. |
 | **Faint grey line** | Filtered out: under 1 kW on a StreamStats flow, or too little drop for a turbine. |
-| **#12** labels (zoom in) | The stream's rank on the shortlist. |
+| **#12** labels (zoom in) | The stream's rank on its county's shortlist. |
 
 To change the map underneath, click the layers button (two stacked sheets) under the zoom buttons and pick a thumbnail. The map remembers your choice next time:
 
@@ -211,7 +221,8 @@ Run `make` to list all commands.
 | `uv run hhsf analyze hydro --no-streamstats` | Same, without calling StreamStats (every flow is a low-confidence fallback) |
 | `uv run hhsf analyze hydro --no-gauge` | Same, without the stream gauge fallback |
 | `uv run hhsf analyze hydro --no-regional-yield` | Same, but small streams get the gauge estimate in its basin and no flow elsewhere (ranked head only), the D-09 starting rule |
-| `uv run hhsf score hydro --profile hydro_v1` | Score with the older rules: streams under 1 kW are dropped even on a rough flow estimate |
+| `uv run hhsf score hydro --profile hydro_v2` | Score with the previous rules: a stream of 1 kW or more is scored however little drop it has |
+| `uv run hhsf score hydro --profile hydro_v1` | Score with the oldest rules: also drops streams under 1 kW on a rough flow estimate |
 | `make score` | Score and rank the latest hydro run (after `make analyze`) |
 | `uv run hhsf score hydro --profile <version> --run-id <N>` | Score a specific hydro run with another scoring profile from `config/scoring_profiles/` |
 | `make export` | Write the latest scores to `data/outputs/` as CSV, GeoJSON and a summary report (after `make score`) |
@@ -307,13 +318,15 @@ uv run pytest --cov=hhsf.analysis --cov-report=term-missing
 - **The USGS stream web service is slow and unreliable, so it's no longer the default.** It often takes minutes per request or returns `504 Gateway Timeout`; one county took about 30 minutes. `make ingest` now downloads the NHDPlus HR file for each river basin (HU4 region) instead: about 270 MB for Sequatchie County (Cumberland `0513`: 193 MB, Middle Tennessee-Hiwassee `0602`: 74 MB), cached in `data/raw/nhdplus_hr_bulk/`. Both sources load the same 989 perennial reaches with identical IDs and attributes. The web service path is still there (`--source service`) and now saves each box as it arrives.
 - **Some regions are large downloads.** Basin files range from about 75 MB to over 2 GB (e.g. Lower Ohio `0512`: 2.4 GB). Check the sizes before adding an AOI in a new basin; the ingest prints each file's size as it starts downloading.
 - **Use the "VPU/Current" USGS files, not "Beta".** USGS also publishes older "Beta" files. For the Tennessee River basin (`0602`) they give many streams different IDs from the web service, which would break anything matched on IDs later. `config/data_sources.yaml` points at the current folder.
-- **StreamStats is sometimes down or slow.** Its basin-characteristics service returned 502 errors all day on 2026-10-18 and was back on 2026-10-19. When it's down, larger streams fall back to the gauge estimate (Sequatchie River basin) or the NHDPlus *mean* flow (everywhere else), and small streams get no regional estimate (it's built from StreamStats answers), both marked low confidence; run `make analyze` again later. Finished answers are cached. USGS asks for no more than 4 simultaneous requests, which the tool respects.
+- **StreamStats is sometimes down or slow.** Its basin-characteristics service returned 502 errors all day on 2026-10-18 and was back on 2026-10-19. On 2026-10-20 it dropped out over a dozen times between 11:00 and 20:00, so the four new counties took about 11 hours instead of 2. When it's down, larger streams fall back to the gauge estimate (Sequatchie River basin), the regional yield or the NHDPlus *mean* flow, all marked low confidence, and the run says how many streams that hit; run `make analyze` again later. A run that hit an outage is not a usable result. Finished answers are cached. USGS asks for no more than 4 simultaneous requests, which the tool respects.
 - **The gauge fallback is rough.** It assumes every square mile yields the same low flow as the 402 sq mi Whitwell basin, while the streams here are under 70 sq mi. Where both exist, it gives a median of about **10× StreamStats' low flow**, probably because the gauge's basin includes the spring-fed limestone valley. Treat gauge-based numbers as an upper bound. Since D-09 was decided it's only used for 4 larger streams StreamStats can't outline. Details in [docs/ASSUMPTIONS.md](docs/ASSUMPTIONS.md).
 - **Most streams are too small for the low-flow equations.** Tennessee's equations only apply to basins of 1.3 sq mi or more; 635 of Sequatchie's 989 perennial reaches are smaller. They all get a **regional yield**, the typical StreamStats low flow per square mile of the bigger streams in the same river basin (HUC8), marked low confidence and flagged `below_regression_min_drainage_area`. It's an extrapolation and can't see springs; on the Collins River side StreamStats' own basin data suggests it may be up to 5× low, and on the Sequatchie Valley floor spring-fed streams can carry 5–10× more. See [docs/ASSUMPTIONS.md](docs/ASSUMPTIONS.md#regional-low-flow-yield) and [DECISIONS.md D-09](docs/DECISIONS.md).
-- **Only one stream clears 1 kW over a 1,000 ft penstock: Rogers Branch** (StreamStats flow, about 1.3 kW). Head is measured over each stream's steepest 1,000 ft stretch (D-08) instead of the whole stream, which brought the largest ranked net head down from 1,101 ft to 414 ft. Five plateau-edge streams made 1.1–1.5 kW on the gauge estimate; on the regional yield they make 105–146 W and are now ranks 2–6, at the top of the low-flow list. The penstock length matters a lot: before the regional yield, 1 / 6 / 19 streams reached 1 kW at 500 / 1,000 / 2,000 ft (0 / 1 / 3 on StreamStats flows). Worth deciding what pipe length is realistic. See [docs/DECISIONS.md D-08](docs/DECISIONS.md) and [docs/ASSUMPTIONS.md](docs/ASSUMPTIONS.md#how-the-steepest-stretch-is-found).
+- **Only six streams in five counties clear 1 kW over a 1,000 ft penstock**, all on StreamStats flows: Rogers Branch (Sequatchie), an unnamed stream and Bethel Creek (Marion), and Negro Den Creek, the Elk River headwater and Big Creek (Grundy), at 1.0–1.6 kW. Bledsoe and Rhea have none. In Sequatchie only Rogers Branch does (about 1.3 kW). Head is measured over each stream's steepest 1,000 ft stretch (D-08) instead of the whole stream, which brought the largest ranked net head down from 1,101 ft to 414 ft. Five plateau-edge streams made 1.1–1.5 kW on the gauge estimate; on the regional yield they make 105–146 W and are now ranks 2–6, at the top of the low-flow list. The penstock length matters a lot: before the regional yield, 1 / 6 / 19 streams reached 1 kW at 500 / 1,000 / 2,000 ft (0 / 1 / 3 on StreamStats flows). Worth deciding what pipe length is realistic. See [docs/DECISIONS.md D-08](docs/DECISIONS.md) and [docs/ASSUMPTIONS.md](docs/ASSUMPTIONS.md#how-the-steepest-stretch-is-found).
 - **StreamStats sometimes outlines the wrong watershed.** It moves each point onto its own stream grid, which can land on a bigger stream at a confluence or on a hillside next to the creek. When the area it finds is more than 25% off NHDPlus's, the tool asks again 25%, 50% and 75% of the way up the stream and scales the answer back down to the stream's end. In Sequatchie that fixed 18 of the 22 wrong answers: the larger Walden Ridge creeks (Soddy, North Suck, Cain, Conner and others) that had been on the NHDPlus *mean annual* flow, 130–190× their dry-season flow. Thirteen of them had been on the shortlist at 1–21 kW; on dry-season flow none reaches 200 W. The other 4 still use the gauge estimate. See [docs/ASSUMPTIONS.md](docs/ASSUMPTIONS.md#when-streamstats-snaps-to-the-wrong-stream).
 - **The stretch search uses 10 m elevations along the mapped stream line.** It can miss a small waterfall, read a few meters high where the line runs along a bank, and measures pipe length along the stream (a real pipe can cut bends). Each stretch is capped at the drop NHDPlus gives the whole stream. Confirm the drop on the visit.
 - **Most of the ranked list is "low flow".** The 272 "head only" streams that used to fill most of the list now have a power estimate from the regional yield, and no small stream reaches 1 kW on it (best 146 W, median 9 W). Rather than drop them, the list keeps 575 of them last, ordered by power (D-01, D-09): their flow is a typical-basin number, so a spring-fed one with lots of head could still work. They need a dry-season flow check on the visit. A second reference gauge was tried instead and rejected: Collins River near McMinnville runs 10× high like Whitwell, and the Walden Ridge gauges disagree with each other. See [docs/SCORING.md](docs/SCORING.md).
+- **The regional yield differs by county.** Each county's run builds the small-stream yield from its own StreamStats streams, and some differ 3–4× in the same river basin: Bledsoe's part of the Sequatchie River basin gets 0.068 cfs per sq mi against Sequatchie's 0.019, and Marion's Battle Creek side 0.083 against Grundy's 0.022. So a stream within 500 m of a county line, analyzed for both counties, can make 3–4× more power in one county's run than the other's. The map shows each stream once, with the numbers of the county it sits in; the exports list it in both. Pooling the yield across counties would fix it. See [docs/SCORING.md](docs/SCORING.md#five-counties-part-13-profile-hydro_v3-2026-10-20).
+- **Ranks are per county.** Each county has its own #1, so the map shows several. The popup says which county a rank is in.
 - **A long stream can show its rank label twice on the map.** Map tiles cut streams at tile edges and each piece gets a label. Both labels are the same stream; click either for its details.
 
 ### Upcoming (will block later milestones)
@@ -336,6 +349,7 @@ uv run pytest --cov=hhsf.analysis --cov-report=term-missing
 | `make analyze` says "No elevation model" | Run `uv run hhsf ingest terrain` (or `make ingest`), or pass `--no-terrain` to use whole streams. |
 | `make analyze` says "StreamStats looks unavailable" | The USGS service is down or overloaded. The run still finishes with flagged fallback flows; run it again later to get Q90. |
 | The map shows no streams | Check `make ingest` finished, and that <http://localhost:3100/catalog> lists `streams`. |
+| Popups say "ranked #N overall" instead of naming the county | The county was loaded before the map knew which AOI it belongs to. Run `uv run hhsf ingest boundary --aoi <key>` for each county, then refresh. |
 | Every stream is grey, or none are colored | Run `make score`, then refresh the page. The colors come from the latest score run. |
 | Popups have no score breakdown or flags, or don't say which stretch of the stream it is | Run `make up` again: it applies the newest database migration and restarts the tile server. |
 | Tests fail to start a container | Docker must be running for integration tests. Run `uv run pytest tests/unit` to skip them. |
@@ -345,7 +359,7 @@ uv run pytest --cov=hhsf.analysis --cov-report=term-missing
 From [site-selection.md §7](site-selection.md):
 
 1. ~~Project skeleton, database, stream ingest, map~~
-2. ~~Hydro analysis: head, reliable low flow from StreamStats, firm power, over the steepest usable stretch of each stream~~ (StreamStats retry for wrong watersheds: this version) Still to do: gauges for the small streams outside the Sequatchie River's basin (Collins River side, Walden Ridge's Tennessee River slope)
+2. ~~Hydro analysis: head, reliable low flow, firm power, over the steepest usable stretch of each stream~~ Low flow comes from StreamStats for the bigger streams and from a regional yield per river basin for the small ones (D-09). Still to do: a way to spot spring-fed small streams, which the regional yield can't see
 3. ~~Scoring and ranking against the 1 kW minimum, with an explanation for every score~~ Still to do: the original FR-3 weight table as a fallback profile, and the weighting sensitivity check
 4. ~~Exports (CSV, GeoJSON), a summary report, and the scores on the map~~
 5. Then: parcels and ownership, soils, flood zones, roads and drive time, and the full Chattanooga region

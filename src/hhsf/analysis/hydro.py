@@ -302,13 +302,16 @@ def regional_yield(
 
 
 def regional_yield_applies(flow: Flow) -> bool:
-    """True for a basin too small for the regression with no flow, or only the gauge's.
+    """True for a basin too small for the regression with no flow, or only the gauge's,
+    and for any basin left on the NHDPlus mean flow.
 
     D-09 (decided 2026-10-19): the regional yield replaces the gauge transfer for
     small basins too, since the gauge runs about 10x high on them. A gauge
     transfer on a larger basin (StreamStats down or snapped wrong) is kept.
+    PART 13: it also replaces the mean-flow fallback (StreamStats snapped wrong,
+    or the reach is across the state line), which runs about 100x a Q90.
     """
-    if flow.confidence == "below_applicability":
+    if flow.confidence == "below_applicability" or flow.method == FLOW_METHOD_EROM:
         return True
     return flow.method == FLOW_METHOD_GAUGE and "below_regression_min_drainage_area" in flow.flags
 
@@ -324,11 +327,16 @@ def regional_flow(
     the regression's 1.3 sq mi minimum is an extrapolation, so it is always low
     confidence and keeps `below_regression_min_drainage_area`; the basin it came
     from is added as a flag. Replaces only a flow regional_yield_applies() to;
-    a replaced gauge transfer loses its gauge, ratio and ratio flag.
+    a replaced gauge transfer loses its gauge, ratio and ratio flag, and a
+    replaced mean flow keeps why StreamStats wasn't used.
     """
     if not regional_yield_applies(flow):
         return flow
-    flags = [f for f in flow.flags if not f.startswith("area_ratio_outside_")]
+    flags = [
+        f
+        for f in flow.flags
+        if not f.startswith("area_ratio_outside_") and f != "mean_flow_not_q90"
+    ]
     return replace(
         flow,
         firm_flow_cfs=units.sqkm_to_sqmi(drainage_area_sqkm) * yield_cfs_per_sqmi,

@@ -1,0 +1,11 @@
+# Area of interest: Rhea County, TN (see sequatchie_tn.yaml for what each field means).
+key: rhea_tn
+name: Rhea County, TN
+county_geoid: "47143"   # state FIPS 47 + county FIPS 143
+buffer_m: 500
+# Upper Tennessee (Watts Bar Lake, 46%) and Middle Tennessee-Hiwassee (Chickamauga
+# Lake, 54%): Walden Ridge's east slope down to the Tennessee River.
+huc4: ["0601", "0602"]
+# No reference gauge: none of the county drains to the Sequatchie River, and the
+# Walden Ridge gauges were rejected in PART 12 (docs/ASSUMPTIONS.md). Small basins
+# use the regional yield (D-09); the rest need StreamStats.

@@ -159,6 +159,22 @@ def test_success_resets_the_breaker():
     assert not breaker.open
 
 
+def test_open_breaker_stays_open_when_a_late_answer_arrives():
+    # An answer already in flight when the breaker opened must not switch the service back on.
+    breaker = run._Breaker(2)
+    breaker.record(False)
+    breaker.record(False)
+    breaker.record(True)
+    assert breaker.open
+
+
+def test_run_warns_whenever_a_reach_found_streamstats_down():
+    messages: list[str] = []
+    source = Source(error=ServiceUnavailable("502"))
+    run.analyze_reaches([reach()], ASSUMPTIONS, source, SERVICE, echo=messages.append)
+    assert messages[-1].startswith("  StreamStats looks unavailable: 1 reaches got a fallback")
+
+
 def test_summary_counts_power_target():
     corridors = [
         run.analyze_reach(reach(), ASSUMPTIONS, Source()),
@@ -265,3 +281,18 @@ def test_small_basin_keeps_the_gauge_when_no_regional_yield_is_found():
     small = run.analyze_reach(reach(da_sqkm=SMALL_SQKM), ASSUMPTIONS, None, gauge=gauge)
     assert run.fill_regional_yield([small], basins(("06020004", EAST)), ASSUMPTIONS) == {}
     assert small.flow.method == hydro.FLOW_METHOD_GAUGE
+
+
+def test_mean_flow_fallback_switches_to_the_regional_yield():
+    big = [
+        run.analyze_reach(reach(i=i), ASSUMPTIONS, Source(estimate(value_cfs=q)))
+        for i, q in enumerate([0.6, 0.8, 1.0], 1)
+    ]
+    # No StreamStats answer for this one (here: switched off), so it fell back to the mean flow.
+    fallback = run.analyze_reach(reach(i=4), ASSUMPTIONS, None)
+    assert fallback.flow.method == hydro.FLOW_METHOD_EROM
+    used = run.fill_regional_yield([*big, fallback], basins(("06030001", EAST)), ASSUMPTIONS)
+    assert fallback.flow.method == hydro.FLOW_METHOD_REGIONAL
+    assert fallback.flow.firm_flow_cfs == pytest.approx(0.8)  # same area as the median reach
+    assert fallback.flow.flags == ["streamstats_disabled", "regional_yield_basin:06030001"]
+    assert used["06030001"]["reaches_filled"] == 1

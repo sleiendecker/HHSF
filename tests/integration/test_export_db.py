@@ -4,9 +4,11 @@ import csv
 import json
 
 import pytest
+from shapely.geometry import box
 from sqlalchemy import text
 
-from hhsf.analysis import export_run, scoring_run
+from hhsf.analysis import export_run, run, scoring_run
+from hhsf.core.config import AOI
 from tests.integration.test_hydro_db import AREA, engine  # noqa: F401  (fixture)
 from tests.integration.test_scoring_db import PROFILE, hydro_run  # noqa: F401  (fixture)
 
@@ -103,3 +105,49 @@ def test_latest_scores_view_carries_popup_columns(engine, hydro_run):  # noqa: F
         assert r.head_method == "nhdplus_vaa_smoothed_reach"
         assert r.corridor_length_m == r.reach_length_m > 0
         assert r.reach_drop_m >= 0
+
+
+NEIGHBOR = AOI(key="neighbor", name="Neighbor County", county_geoid="99998", buffer_m=20_000)
+
+
+def test_latest_scores_view_keeps_one_row_per_reach_across_aois(engine, hydro_run):  # noqa: F811
+    # A neighbor county whose (wide) buffer takes in both fixture reaches, scored after
+    # the fixture county. The view keeps the run of the county the corridors are in.
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE counties SET aoi_key = 'fixture', aoi_name = 'Fixture County'"
+                " WHERE geoid = '99999'"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO counties"
+                " (geoid, state_code, county_name, geom, source_key, aoi_key, aoi_name)"
+                " VALUES ('99998', '99', 'Neighbor', ST_Multi(ST_GeomFromText(:wkt, 4326)),"
+                " 'test', 'neighbor', 'Neighbor County')"
+            ),
+            {"wkt": box(-85.7, 35.3, -85.5, 35.5).wkt},
+        )
+    home, _, _ = scoring_run.score_hydro(engine, AREA, PROFILE)
+    run.run_hydro(engine, NEIGHBOR, source=None, echo=lambda _: None)
+    neighbor, _, _ = scoring_run.score_hydro(engine, NEIGHBOR, PROFILE)
+
+    def rows():
+        with engine.connect() as conn:
+            return conn.execute(
+                text(
+                    "SELECT nhdplusid, score_run_id, aoi_key, aoi_name FROM latest_hydro_scores"
+                    " ORDER BY nhdplusid"
+                )
+            ).all()
+
+    assert [r.nhdplusid for r in rows()] == [25000100000001, 25000100000002]
+    assert {(r.score_run_id, r.aoi_name) for r in rows()} == {(home, "Fixture County")}
+
+    # A county loaded before migration 0009 has no AOI: the newest run wins instead.
+    with engine.begin() as conn:
+        conn.execute(
+            text("UPDATE counties SET aoi_key = NULL, aoi_name = NULL WHERE geoid = '99999'")
+        )
+    assert {(r.score_run_id, r.aoi_key) for r in rows()} == {(neighbor, "neighbor")}

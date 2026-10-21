@@ -271,18 +271,23 @@ function stretchText(p: Record<string, unknown>): string {
   );
 }
 
+// Each county (AOI) is ranked on its own, so a rank says which county's list it's on.
+function rankedIn(p: Record<string, unknown>): string {
+  return `ranked #${p.rank} ${p.aoi_name ? `in ${esc(p.aoi_name)}` : "overall"}`;
+}
+
 function headline(p: Record<string, unknown>): string {
   if (p.tier === "head_only")
-    return `<div class="score-line"><span class="badge head-only">Head only</span> ranked #${p.rank} overall</div>`;
+    return `<div class="score-line"><span class="badge head-only">Head only</span> ${rankedIn(p)}</div>`;
   if (p.tier === "low_flow")
     return (
-      `<div class="score-line"><span class="badge low-flow">Low flow</span> ranked #${p.rank} overall,` +
+      `<div class="score-line"><span class="badge low-flow">Low flow</span> ${rankedIn(p)};` +
       ` under the 1 kW target</div>`
     );
   if (p.tier)
     return (
       `<div class="score-line"><span class="score">${fmt(p.hydro_score)}</span><span class="out-of">/ 100</span>` +
-      ` <span>ranked #${p.rank} overall, #${p.tier_rank} of the ${esc(p.tier)}-confidence group</span></div>`
+      ` <span>${rankedIn(p)}; #${p.tier_rank} of the ${esc(p.tier)}-confidence group</span></div>`
     );
   return `<div class="score-line"><span class="badge filtered">Not on the shortlist</span></div><p>${esc(p.summary)}</p>`;
 }

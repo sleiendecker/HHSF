@@ -370,3 +370,15 @@ def test_regional_flow_never_replaces_streamstats_or_missing_data():
     assert hydro.regional_flow(medium, BIG_SQKM, 0.018, "06020004") is medium
     unavailable = hydro.firm_flow(None, 1.0, None, SETTINGS)
     assert hydro.regional_flow(unavailable, SMALL_SQKM, 0.018, "06020004") is unavailable
+
+
+def test_regional_flow_replaces_the_mean_flow_fallback():
+    # StreamStats snapped to the wrong basin (or the reach is out of state): the
+    # NHDPlus mean flow is ~100x a Q90, so the basin's yield takes over.
+    mean = hydro.firm_flow(BIG_SQKM, 5.0, None, SETTINGS, "streamstats_drainage_area_mismatch")
+    assert mean.method == hydro.FLOW_METHOD_EROM
+    f = hydro.regional_flow(mean, BIG_SQKM, 0.018, "06030001")
+    assert f.method == hydro.FLOW_METHOD_REGIONAL
+    assert f.firm_flow_cfs == pytest.approx(units.sqkm_to_sqmi(BIG_SQKM) * 0.018)
+    assert (f.statistic, f.confidence) == ("q90", "low")
+    assert f.flags == ["streamstats_drainage_area_mismatch", "regional_yield_basin:06030001"]

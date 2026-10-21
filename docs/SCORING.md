@@ -1,10 +1,10 @@
 # Hydro Scoring and Ranking
 
-How `hhsf score hydro` (or `make score`) turns a finished hydro run into a ranked shortlist, and why it ranks the way it does. The numbers it scores (head, firm flow, firm power) are explained in [ASSUMPTIONS.md](ASSUMPTIONS.md). The judgment calls behind the rules are in [DECISIONS.md](DECISIONS.md) (D-01, D-09, D-11). Every breakpoint and weight lives in the scoring profile, [`config/scoring_profiles/hydro_v2.yaml`](../config/scoring_profiles/hydro_v2.yaml) by default. `hydro_v2` is `hydro_v1` plus the `low_flow` tier (D-09, decided 2026-10-19); score runs made before that used `hydro_v1`.
+How `hhsf score hydro` (or `make score`) turns a finished hydro run into a ranked shortlist, and why it ranks the way it does. The numbers it scores (head, firm flow, firm power) are explained in [ASSUMPTIONS.md](ASSUMPTIONS.md). The judgment calls behind the rules are in [DECISIONS.md](DECISIONS.md) (D-01, D-09, D-11). Every breakpoint and weight lives in the scoring profile, [`config/scoring_profiles/hydro_v3.yaml`](../config/scoring_profiles/hydro_v3.yaml) by default. `hydro_v2` is `hydro_v1` plus the `low_flow` tier (D-09, decided 2026-10-19); `hydro_v3` is `hydro_v2` with the 10 ft net-head minimum applied to every tier (D-11, 2026-10-20). Earlier score runs used the older profiles.
 
 ## The short version
 
-1. A corridor needs at least **1 kW** of firm power to get a score (D-01).
+1. A corridor needs at least **1 kW** of firm power and **10 ft** of net head to get a score (D-01, D-11).
 2. Corridors that make it get a **hydro score from 0 to 100**: 70% from power and 30% from net head (D-11).
 3. Corridors **under 1 kW on a low-confidence flow** stay on the list, last, labeled `LOW FLOW` and ranked by power (D-01, D-09): the flow behind them is too rough to rule them out. Under 1 kW on a medium-confidence StreamStats flow, a corridor is filtered out.
 4. Corridors with **no flow estimate because the basin is too small** (D-09) stay on the list, ranked on head only and labeled `HEAD ONLY`. Since every small basin gets the regional yield, this tier is empty in Sequatchie unless a run uses `--no-regional-yield`.
@@ -41,11 +41,11 @@ Each corridor gets exactly one `status` in `hydro_scores`:
 
 | Status | When | Ranked? | Score |
 | --- | --- | --- | --- |
-| `scored` | Firm power ≥ 1 kW | Yes, in tier `medium` or `low` | Hydro score from power and head |
+| `scored` | Firm power ≥ 1 kW, and net head ≥ 10 ft (`hydro_v3`) | Yes, in tier `medium` or `low` | Hydro score from power and head |
 | `head_only` | No flow estimate because the basin is below the regression's 1.3 sq mi minimum and neither the regional yield nor the gauge covers it (`flow_confidence = below_applicability`), and net head ≥ 10 ft | Yes, in tier `head_only` | No hydro score; ranked on the head sub-score |
-| `low_flow` | Firm power < 1 kW, but on a low-confidence flow (`power_confidence = low`), and net head ≥ 10 ft. Only with a profile that lists the `low_flow` tier (`hydro_v2`) | Yes, in tier `low_flow` | No hydro score; ranked by firm power |
+| `low_flow` | Firm power < 1 kW, but on a low-confidence flow (`power_confidence = low`), and net head ≥ 10 ft. Only with a profile that lists the `low_flow` tier (`hydro_v2` and later) | Yes, in tier `low_flow` | No hydro score; ranked by firm power |
 | `below_power_target` | Firm power < 1 kW on a medium-confidence flow (or on any flow with `hydro_v1`) | No | — |
-| `below_min_head` | Would be head-only or low-flow, but net head < 10 ft (too low for a practical small turbine) | No | — |
+| `below_min_head` | Net head < 10 ft (too low for a practical small turbine): any corridor with `hydro_v3`; only would-be head-only or low-flow ones with `hydro_v1` and `hydro_v2` | No | — |
 | `not_scorable` | Head missing, or flow missing for another reason (e.g. no drainage area) | No | — |
 
 Filtered corridors are still saved, with a sentence saying why, so you can always answer "why isn't this stream on the list?".
@@ -217,8 +217,74 @@ The top 20:
 
 Rogers Branch is the only corridor that reaches 1 kW. Ranks 2–6 are the plateau-edge streams that passed on the gauge transfer; on the regional yield they make 105–146 W, so they'd need about 7–10× the estimated flow (a spring, or the valley's limestone baseflow) to reach 1 kW. The 575 low-flow corridors are all small basins on the regional yield; their median is 9 W. With `--no-regional-yield` the run looks like the previous section's (6 ranked at 1 kW or more, 272 head only), plus 298 low-flow corridors.
 
+## Five counties (PART 13, profile hydro_v3, 2026-10-20)
+
+Marion, Bledsoe, Grundy and Rhea, the counties around Sequatchie on the same valley and plateau edge, were run with the same pipeline (`make ingest analyze score AOI=<key>`). Two rules changed first, both because Marion showed problems Sequatchie didn't have (DECISIONS.md change log, 2026-10-20):
+
+- **No more mean-flow fallback where a regional yield exists.** Nine Marion reaches big enough for StreamStats got no usable answer (wrong basin, or across the Alabama line) and fell back to the NHDPlus mean annual flow. Two 1.5–2 sq mi basins ranked 4th and 5th at 28 and 23 kW. They now get their basin's regional yield ([ASSUMPTIONS.md](ASSUMPTIONS.md#regional-low-flow-yield)).
+- **10 ft minimum net head for every tier** (profile `hydro_v3`). Marion's #3 "medium" site was the Sequatchie River itself, 1.2 kW on 1 ft of head from 392 sq mi, and seven low-confidence entries were big-river channels in the Sequatchie Valley above Jasper with 3–9 ft, on the Whitwell gauge transfer. A small turbine needs real drop; these need a dam.
+
+Sequatchie was re-run on the new code (hydro run 71, score run 72) and comes out the same as hydro run 36 above.
+
+| County | Hydro / score run | Perennial reaches | Small basins (< 1.3 sq mi) | StreamStats Q90 | ≥ 1 kW (all medium confidence) | Low flow | Filtered: < 1 kW on StreamStats | Filtered: < 10 ft |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Sequatchie | 71 / 72 | 989 | 635 | 350 | 1 | 575 | 349 | 63 |
+| Marion | 69 / 70 | 2,382 | 1,763 | 590 | 2 (+1 head only) | 1,503 | 587 | 285 |
+| Bledsoe | 59 / 60 | 2,019 | 1,492 | 503 | 0 | 1,217 | 503 | 297 |
+| Grundy | 65 / 66 | 1,364 | 910 | 442 | 3 | 743 | 439 | 177 |
+| Rhea | 67 / 68 | 2,046 | 1,583 | 429 | 0 | 1,188 | 429 | 425 |
+
+Each county's run includes the reaches within 500 m of its line, so 485 reaches near a county line were analyzed twice (8,800 rows, 8,315 reaches). The map shows each reach once, from the county it sits in; the exports and the counts above are per county and include them.
+
+**Every site at 1 kW or more, all five counties** (no low-confidence site reaches 1 kW anywhere):
+
+| County | Rank | Score | Net head (ft) | Power (W) | Drainage (sq mi) | Stream |
+| --- | --- | --- | --- | --- | --- | --- |
+| Sequatchie | 1 | 71.0 | 287 | 1,345 | 1.61 | Rogers Branch |
+| Marion | 1 | 65.5 | 255 | 1,031 | 1.75 | unnamed (NHDPlus 25000300021756) |
+| Grundy | 1 | 63.5 | 127 | 1,570 | 6.43 | Negro Den Creek |
+| Marion | 2 | 55.4 | 121 | 1,162 | 5.20 | Bethel Creek |
+| Grundy | 2 | 51.5 | 94 | 1,184 | 6.80 | Elk River |
+| Grundy | 3 | 40.0 | 41 | 1,005 | 43.58 | Big Creek |
+
+Six sites across 8,315 reaches. Rogers Branch and Marion's unnamed stream are steep plateau-edge streams just past the regression's minimum; Negro Den Creek, Bethel Creek and the Elk River headwater are larger basins with moderate head; Big Creek is a 44 sq mi basin that clears 1 kW on 41 ft.
+
+**Top 10 per county** (after the sites above, everything is low flow: under 1 kW on the regional yield, so listed by power):
+
+| Rank | Marion | Bledsoe | Grundy | Rhea |
+| --- | --- | --- | --- | --- |
+| 1 | unnamed 25000300021756: 1,031 W, 255 ft | Maise Creek: 706 W, 397 ft | Negro Den Creek: 1,570 W, 127 ft | Henderson Creek: 678 W, 52 ft (32 sq mi) |
+| 2 | Bethel Creek: 1,162 W, 121 ft | Clark Branch: 609 W, 385 ft | Elk River: 1,184 W, 94 ft | Richland Creek: 265 W, 13 ft (50 sq mi) |
+| 3 | Mill Creek: head only, 121 ft | unnamed 25000300016759: 507 W, 369 ft | Big Creek: 1,005 W, 41 ft | unnamed 25000300032855: 261 W, 13 ft |
+| 4 | Kimball Cove Branch: 577 W, 299 ft | Mill Branch: 477 W, 372 ft | unnamed 25000200041180: 552 W, 317 ft | unnamed 25000300007091: 239 W, 12 ft |
+| 5 | unnamed 25000200067345: 522 W, 352 ft | Dry Branch: 390 W, 247 ft | unnamed 25000200062550: 462 W, 254 ft | unnamed 25000300002135: 235 W, 12 ft |
+| 6 | Wildcat Branch: 455 W, 206 ft | unnamed 25000300000272: 388 W, 409 ft | unnamed 25000200016186: 419 W, 309 ft | unnamed 25000300019694: 214 W, 20 ft |
+| 7 | unnamed 25000200025708: 445 W, 467 ft | Cold Spring Cove Branch: 365 W, 286 ft | unnamed 25000200060161: 397 W, 207 ft | Dunlap Creek: 156 W, 50 ft |
+| 8 | unnamed 25000200060161: 419 W, 207 ft | unnamed 25000300012454: 342 W, 394 ft | unnamed 25000200044121: 386 W, 205 ft | Yarborough Branch: 148 W, 295 ft |
+| 9 | Glover Branch: 409 W, 490 ft | Rains Creek: 338 W, 185 ft | Bostick Creek: 340 W, 193 ft | unnamed 25000300036459: 140 W, 13 ft |
+| 10 | unnamed 25000200067901: 402 W, 232 ft | Rocky Branch: 338 W, 221 ft | unnamed 25000200021388: 329 W, 177 ft | Gilbreath Creek: 135 W, 255 ft |
+
+(Sequatchie's top 10 are in the previous section; they didn't change.) Mill Creek, on Marion's list, is head only because its outlet is just over the line in Grundy, outside the HUC8 basins fetched for Marion; the map shows it with Grundy's numbers. Bledsoe's Dry Branch and unnamed 25000300000272 are Sequatchie's #4 and #5, and Marion's and Grundy's unnamed 25000200060161 is the same reach: border reaches with different numbers in each county (below).
+
+**What stands out:**
+
+- **The low-flow lists are much stronger outside Sequatchie** (best 550–710 W against 146 W), because the regional yield differs by county. Each county's run builds it from its own StreamStats reaches only:
+
+  | HUC8 | Sequatchie | Marion | Bledsoe | Grundy | Rhea |
+  | --- | --- | --- | --- | --- | --- |
+  | `06020004` Sequatchie River | 0.0188 | 0.0215 | **0.0675** | 0.0196 | — |
+  | `06020001` Walden Ridge, Tennessee River side | 0.0172 | 0.0157 | 0.0161 | — | 0.0192 |
+  | `05130107` Collins River | 0.0186 | — | — | 0.0209 | — |
+  | `05130108` Caney Fork | 0.0184 (pooled) | — | 0.0166 | — | — |
+  | `06030001` Guntersville Lake (Battle Creek) | — | **0.0834** | — | 0.0216 | — |
+  | `06030003` Upper Elk River | — | — | — | **0.0791** | — |
+  | `06010201` Watts Bar Lake | — | — | 0.0296 | — | 0.0218 |
+
+  (cfs per sq mi.) Bledsoe's part of the Sequatchie basin is the upper valley, and Marion's Battle Creek side and Grundy's Elk River side are limestone; StreamStats rates their bigger streams 3–4× wetter per square mile than the plateau. That's plausible, but it means a reach near a county line can get a 3–4× different flow depending on which county's run it's in (Sequatchie's unnamed 25000300000272: 108 W in Sequatchie's run, 388 W in Bledsoe's). Pooling the yield across counties would fix it; not done yet.
+- **Rhea has no steep high-yield streams.** Its top entries are big basins (27–50 sq mi) near the Tennessee River with 12–52 ft of head, where StreamStats outlined the wrong watershed and the regional yield now fills in (before PART 13 they'd have been on the mean flow, at several kW). Its best plateau-edge stream, Yarborough Branch, makes 148 W.
+- **Bledsoe has nothing at 1 kW** on StreamStats or the regional yield, despite 503 StreamStats reaches. An earlier run made it look like 8 sites at 1.3–2.6 kW: StreamStats went down mid-run and 159 reaches fell back to the Whitwell gauge transfer (about 10× high). A bug kept the run from saying so; it's fixed ([ASSUMPTIONS.md](ASSUMPTIONS.md#streamstats), "Outages").
+
 ## Not built yet
 
 - **FR-3 fallback profile.** §3 of the plan keeps the original weight table (head 40, watershed area 30, length 15, rainfall 15) as a labeled screening profile. It needs its own breakpoints for watershed area and length, and rainfall data (D-10).
 - **Sensitivity check.** DECISIONS.md asks how much the top 20 changes under 70/30 vs 50/50 vs 100/0 weights. Each alternative is just a new profile file and a re-score.
-- Scores aren't drawn on the map yet. The tile server publishes the latest score run as `latest_hydro_scores` (with `tier`, `rank` and `status`), ready for the map to color by tier. `make export` writes them to CSV, GeoJSON and a summary report in `data/outputs/`.

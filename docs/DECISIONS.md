@@ -114,7 +114,7 @@ Measured (2026-10-19): they were. Before any fallback, 635 of 989 reaches were t
 
 **Decision (owner, 2026-10-19): every small basin gets the regional low-flow yield, and streams under the power target on it stay listed.**
 
-1. **Regional yield everywhere.** A basin below 1.3 sq mi gets its drainage area × the median StreamStats Q90 per square mile of the in-range StreamStats reaches in the same HUC8 (the HUC6, then HUC4, pooled if the HUC8 has fewer than 10). That includes small basins in the Whitwell gauge's basin, which used to get the gauge transfer (about 10× higher). Flagged `below_regression_min_drainage_area` plus `regional_yield_basin:<code>`, `flow_method = regional_streamstats_yield`, confidence `low`. The gauge transfer stays for larger reaches StreamStats can't answer for.
+1. **Regional yield everywhere.** A basin below 1.3 sq mi gets its drainage area × the median StreamStats Q90 per square mile of the in-range StreamStats reaches in the same HUC8 (the HUC6, then HUC4, pooled if the HUC8 has fewer than 10). That includes small basins in the Whitwell gauge's basin, which used to get the gauge transfer (about 10× higher). Flagged `below_regression_min_drainage_area` plus `regional_yield_basin:<code>`, `flow_method = regional_streamstats_yield`, confidence `low`. The gauge transfer stays for larger reaches StreamStats can't answer for. Since PART 13 the regional yield also replaces the NHDPlus mean-flow fallback on larger reaches outside the gauge's basin (wrong basin, or across the state line), which ran about 100× a Q90.
 2. **Low-flow streams stay on the list.** A corridor under 1 kW on a low-confidence flow is ranked in a `low_flow` tier, last, by power, instead of being filtered out, so D-01's rule that corridors without a reliable flow stay listed still holds. Scoring profile `hydro_v2` (see [SCORING.md](SCORING.md)). Corridors under 1 kW on a medium-confidence StreamStats Q90 are still filtered out.
 
 `uv run hhsf analyze hydro --no-regional-yield` brings back the starting rule (gauge transfer in its basin, head only elsewhere).
@@ -132,7 +132,7 @@ The plan predicts rainfall is nearly constant across one county. We'll sample PR
 Scores will be absolute (a site's score never changes because another site was added), anchored on D-01:
 
 - Firm power: below the D-01 minimum (1 kW) the corridor gets **no score**: it is filtered out on a medium-confidence flow, or listed last in the `low_flow` tier on a low-confidence one (D-09). Sub-score **50 at 1 kW, 100 at ≥ 3 kW**, linear between. Placeholder.
-- Head sub-score: 0 below **10 ft** (too low for practical small turbines), 100 at **≥ 200 ft**. Placeholder.
+- Head sub-score: 0 below **10 ft** (too low for practical small turbines), 100 at **≥ 200 ft**. Placeholder. Since profile `hydro_v3` (2026-10-20) a corridor below 10 ft of net head is filtered out in every tier, not only head-only and low-flow: in Marion County the Sequatchie River itself made 1.2 kW on 1 ft of head.
 - Hydro score = **70% power, 30% head**. Head gets some weight on its own because it makes sites usable even when flow estimates are uncertain (D-09).
 
 Breakpoints get adjusted after looking at the real spread of head and power in Sequatchie.
@@ -166,4 +166,6 @@ Decisions that barely move the top 20 keep their default and stop being discusse
 | 2026-10-18 | — | Added "What the output is for": a shortlist for in-person visits and owner contact |
 | 2026-10-19 | D-08 | Built: steepest 1,000 ft stretch per reach on 3DEP; open calls listed under D-08 |
 | 2026-10-19 | D-04 | Wrong-basin StreamStats answers retried further up the reach; no corridor uses mean flow any more. Open call listed under D-04 |
+| 2026-10-20 | D-09 | Owner: the regional yield also replaces the mean-flow fallback on larger reaches with no StreamStats answer (PART 13) |
+| 2026-10-20 | D-11 | Owner: the 10 ft net-head minimum applies to every tier (profile `hydro_v3`, PART 13) |
 | 2026-10-19 | D-09 | Decided by the owner: every small basin gets a regional low-flow yield (median StreamStats Q90 per sq mi of its HUC8), replacing the gauge transfer on small basins; corridors under 1 kW on a low-confidence flow stay listed in a `low_flow` tier (profile `hydro_v2`) |

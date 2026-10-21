@@ -1,0 +1,14 @@
+# Area of interest: Marion County, TN (see sequatchie_tn.yaml for what each field means).
+key: marion_tn
+name: Marion County, TN
+county_geoid: "47115"   # state FIPS 47 + county FIPS 115
+buffer_m: 500
+# Middle Tennessee-Hiwassee (lower Sequatchie River and the Tennessee River's Walden
+# Ridge slope) and Middle Tennessee-Elk (Battle Creek and the Tennessee River below
+# Nickajack, HUC8 06030001). Cumberland (Collins River) only inside the buffer.
+huc4: ["0513", "0602", "0603"]
+# The Whitwell gauge is in this county. It covers the Sequatchie side (39% of the
+# county); the Tennessee River slope and Battle Creek aren't covered.
+reference_gauge:
+  site_no: "03571000"       # Sequatchie River near Whitwell, TN (402 sq mi)
+  huc8: "06020004"          # Sequatchie
