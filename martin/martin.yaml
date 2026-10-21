@@ -85,7 +85,9 @@ postgres:
         minutes: int4
     # USDA SSURGO soil map units (migration 0013), stored in pieces that keep the polygon's
     # key. `septic_tn` is the Tennessee septic rating (dominant condition), the one the
-    # buildable-ground step uses; `septic_national` the national one. From zoom 11.
+    # buildable-ground step uses; `septic_national` the national one. `farmland_class`,
+    # `capability_class` (non-irrigated, 1-8) and `pasture_aum` (AUM per acre a year) are
+    # for farmland (0014). From zoom 11.
     soils:
       schema: public
       table: soils
@@ -103,6 +105,9 @@ postgres:
         bedrock_min_cm: float8
         flooding: text
         drainage: text
+        farmland_class: text
+        capability_class: int2
+        pasture_aum: float8
     # Buildable ground on each turbine parcel (0013): gently sloped, outside the 100-year
     # floodplain, on septic-suitable soils, in patches big enough for a homestead
     # (config/buildability.yaml). One multipolygon per parcel. From zoom 11.
@@ -142,7 +147,9 @@ postgres:
     # is inside the drive-time area (0012). turbine_buildable_acres is the turbine parcel's
     # buildable ground, turbine_gentle_acres its gently sloped ground, and
     # nearest_buildable_m how far the nearest buildable ground is from the turbine end
-    # (0013). `factors` is JSON text: each
+    # (0013). turbine_prime_acres, turbine_statewide_acres, turbine_capable_acres (capability
+    # class 1 to turbine_max_capability_class) and turbine_pasture_aum are the turbine
+    # parcel's farmland (0014). `factors` is JSON text: each
     # factor's value, sub-score, weight and contribution, for the click popup.
     latest_hydro_scores:
       schema: public
@@ -196,3 +203,8 @@ postgres:
         turbine_buildable_acres: float8
         turbine_gentle_acres: float8
         nearest_buildable_m: float8
+        turbine_prime_acres: float8
+        turbine_statewide_acres: float8
+        turbine_capable_acres: float8
+        turbine_max_capability_class: int2
+        turbine_pasture_aum: float8

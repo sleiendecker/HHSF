@@ -367,6 +367,20 @@ function buildableText(p: Record<string, unknown>): string {
   return `${fmt(p.turbine_buildable_acres, 1)} ac; ${near}`;
 }
 
+// Farmland on the turbine parcel, from its soils (migration 0014, config/farmland.yaml). AUM:
+// animal-unit months a year of pasture; 12 feed one cow for a year.
+function farmlandText(p: Record<string, unknown>): string {
+  if (typeof p.turbine_prime_acres !== "number") return "Not computed";
+  const prime = p.turbine_prime_acres + (Number(p.turbine_statewide_acres) || 0);
+  const top = typeof p.turbine_max_capability_class === "number" ? p.turbine_max_capability_class : 3;
+  const crop = Number(p.turbine_capable_acres) || 0;
+  const aum = Number(p.turbine_pasture_aum) || 0;
+  const pasture = aum >= 12 ? `; as pasture, soils for about ${fmt(aum / 12)} cows` : "";
+  const acres = (x: number) => fmt(x, x < 10 ? 1 : 0);
+  if (prime === 0 && crop === 0) return `<b>None</b>${pasture}`;
+  return `${acres(prime)} ac prime, ${acres(crop)} ac cropland (class 1–${top})${pasture}`;
+}
+
 export function scorePopupHtml(f: MapGeoJSONFeature): string {
   const p = f.properties as Record<string, unknown>;
   let factors: Factor[] = [];
@@ -393,6 +407,7 @@ export function scorePopupHtml(f: MapGeoJSONFeature): string {
         <dt>Firm power</dt><dd>${withUnit(p.firm_power_w, "W")}</dd>
         <dt>Turbine parcel</dt><dd>${parcelText(p)}</dd>
         <dt>Buildable ground</dt><dd>${buildableText(p)}</dd>
+        <dt>Farmland</dt><dd>${farmlandText(p)}</dd>
         <dt>Parcels crossed</dt><dd>${fmt(p.parcels_crossed)}</dd>
         <dt>Turbine flood zone</dt><dd>${floodText(p)}</dd>
         <dt>Stretch flooding</dt><dd>${stretchFloodText(p)}</dd>

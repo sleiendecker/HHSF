@@ -439,3 +439,53 @@ The six 1 kW streams:
 | Big Creek | Grundy | 10,481 acres | 5,962 acres | 5,802 | 923 | 917 acres (51 patches) | 1.1 mi |
 
 Rogers Branch's and the Marion stream's parcels are almost all steep: the stretch that makes the power is the same slope that rules out a house beside it. A neighboring parcel, or an alternative septic system, may still work; that's for the visit.
+
+## Farmland
+
+PART 18 is FR-5 (agriculture): for every corridor's turbine parcel, how much of it the soil survey calls prime farmland or good cropland, how much is wet, and how much pasture its soils could grow. FR-5 names four things: prime farmland, soil capability, drainage and pasture suitability. It's a flag, not a filter: agriculture is meant to be a sub-score (20%) of the overall score (FR-7), which doesn't exist yet, so nothing is filtered or re-ranked on it (D-02, D-12, D-14).
+
+### What the soil survey says (USDA SSURGO)
+
+The same soil map as [Buildable ground](#buildable-ground). `hhsf ingest soils` now also saves, for each map unit:
+
+- **Farmland class** (`farmland_class`), as NRCS lists it. In these five counties there are only three kinds: *All areas are prime farmland* (90 of the 350 map units), *Prime farmland if drained* (2, Grundy) or *if protected from flooding or not frequently flooded during the growing season* (1, Rhea), and *Not prime farmland*. **Tennessee designates no farmland of statewide or local importance here**, so `statewide_acres` is always 0; it's kept for counties that have some. Prime farmland is NRCS's best: deep, well or moderately well drained, gently sloped, not frequently flooded, with enough water-holding soil to grow a crop without irrigation.
+- **Land capability class** (`capability_class`), non-irrigated, 1 (best) to 8: classes 1–4 can be tilled (with more care the higher the class), 5–7 are pasture, hay or woods, 8 is rock, water and pits. A map unit's class is its **dominant condition** (SSURGO's own `muaggatt.niccdcd`), the class held by the largest share of it, and `capability_pct` is that share. Here 9 map units are class 1 (all prime) and 80 of the other prime ones class 2.
+- **Pasture yield** (`pasture_aum`): SSURGO has no pasture suitability rating, but it gives each soil's expected yields under good management, including grazed forage in **animal-unit months (AUM) per acre a year**. One AUM is a month of grazing for one 1,000 lb cow (or five sheep or goats), so 12 AUM feeds one cow for a year. Each survey lists different forage (Pasture, Tall fescue, Grass-legume pasture, Tall fescue-ladino, bermudagrass), so the tool takes **the best AUM yield of the map unit's main component**, the soil with the largest share (on a tie, the lower yield). Where the main component has none (rock outcrop, pits, steep stony soils, water) the map unit has none. 290 of the 350 map units have one, 2–9 AUM per acre. Hay yields are in SSURGO too but aren't used.
+- **Drainage class** was saved already (PART 17), the dominant condition.
+
+### What's added up on each parcel
+
+`hhsf analyze farmland` (part of `make analyze`, a few seconds per county) overlays the soil polygons on each turbine parcel and adds up, in acres measured on the ground:
+
+| Column | What counts |
+| --- | --- |
+| `prime_acres` | *All areas are prime farmland* |
+| `prime_if_acres` | prime only if drained or protected from flooding. Kept apart, and not counted as farmland: the condition usually isn't met yet |
+| `statewide_acres` | farmland of statewide importance (none here) |
+| `capable_acres` ("cropland") | capability class 1 to `max_capability_class`, **3** (`config/farmland.yaml`, D-14) |
+| `wet_acres` | somewhat poorly, poorly or very poorly drained (`wet_drainage`) |
+| `pasture_aum` | each soil's pasture yield times its acres: the grazing the whole parcel's soils could grow in a year |
+
+**The whole parcel counts, steep or flooded.** Unlike buildable ground there's no slope or floodplain test: capability classes already step down with slope (Allen loam is class 3 on 5–12% slopes, 4 on 12–20% and 6 on 20–30%), and prime farmland already excludes frequently flooded soils. The best farmland here is often bottomland in the 100-year floodplain, fine for hay and crops though not for a house. It's vector work (soil polygons cut by the parcel line), but it's still saved per parcel in `parcel_farmland`, with the settings used, rather than worked out when read: doing it for every stretch on a map tile made a zoom 9 tile about half again as slow. `corridor_turbine_farmland` links each corridor to its turbine parcel's row. Re-ingesting a county's parcels deletes their rows; `make analyze` computes them again. Re-ingesting soils doesn't: run `uv run hhsf analyze farmland` after.
+
+- **Flags:** `no_farmland` (no prime farmland, farmland of statewide importance or class 1–3 ground on the turbine parcel), `farmland_not_computed` (the parcel wasn't analyzed), and `soils_not_loaded`: at least an acre of the parcel has no soil survey loaded (it reaches into a county that hasn't been ingested), so its farmland may be understated.
+- **What it can't see:** this is what the soils could do, not what the land is now. Most of these parcels are forest, and the soil survey rates the ground as if it were cleared. Prime farmland under houses or roads still counts: the soil map doesn't know about them. A map unit gets its main soil's class and yield, so pockets of better and worse ground hide inside it, and maps are drawn at 1:12,000–1:24,000. Yields assume good management (lime, fertilizer, rotational grazing). Current land cover (USGS NLCD) would show which acres are already open field: a follow-up.
+
+### What it found (2026-10-21)
+
+Across the 3,809 turbine parcels of the five counties' latest runs (654,000 acres): 82,000 acres (13%) are prime farmland, 541 more are prime only if drained or protected from flooding, none is farmland of statewide importance. 236,000 acres (36%) are capability class 1–3; class 4 would add another 69,000. 9,800 acres are wet. Their soils could grow about 1.9 million AUM of pasture a year, roughly 3 AUM per acre on average. 319 parcels have neither prime farmland nor class 1–3 ground, and 63 reach past the loaded soil surveys.
+
+Of the 4,919 ranked stretches on the map, **3,247 have some prime farmland on their turbine parcel** (median 19 acres) and 4,468 some class 1–3 cropland (median 42 acres); 2,403 have both buildable ground and prime farmland. **311 have neither prime farmland nor class 1–3 ground** (`no_farmland`), and 140 have no turbine parcel. 327 are flagged `soils_not_loaded` (44 parcels).
+
+The six 1 kW streams:
+
+| Stream | County | Turbine parcel | Prime farmland | Cropland (class 1–3) | Wet | Pasture (AUM a year) |
+| --- | --- | --- | --- | --- | --- | --- |
+| Rogers Branch | Sequatchie | 76 acres | **none** | **none** | 0 | 28 |
+| Unnamed (NHDPlus 25000300021756) | Marion | 44 acres | **none** | **none** | 0 | 0 |
+| Bethel Creek | Marion | 1,355 acres | none | 28 acres | 0 | 160 |
+| Negro Den Creek | Grundy | 1,901 acres | 2.0 acres | 28 acres | 0 | 205 |
+| Elk River | Grundy | same parcel | | | | |
+| Big Creek | Grundy | 10,481 acres | 923 acres | 4,705 acres | 10 | 31,171 |
+
+As with buildable ground, the steep ground that makes the power leaves little to farm on the small parcels: Rogers Branch's and the Marion stream's parcels are class 6–7 slopes with almost no pasture yield. Bethel Creek's parcel is half class 7 and half class 8 (rock outcrop and the like), Negro Den Creek's almost all class 7, each with about 28 acres of class 2–3 ground. Only Big Creek's parcel, on the plateau top, has real farmland.

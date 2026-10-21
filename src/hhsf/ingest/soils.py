@@ -1,4 +1,5 @@
-"""Soils from USDA NRCS SSURGO, through Soil Data Access (SDA), for septic suitability.
+"""Soils from USDA NRCS SSURGO, through Soil Data Access (SDA), for septic suitability
+and farmland.
 
 SSURGO maps soils as map units: polygons that each stand for a mix of soil
 components (say 80% Lily loam, 15% Ramsey, 5% rock outcrop). Ratings like "septic
@@ -7,10 +8,16 @@ dominant condition, as Web Soil Survey shows it by default: the rating held by t
 largest share of the map unit, the more limiting one on a tie. See
 docs/ASSUMPTIONS.md, "Buildable ground".
 
+For farming (PART 18, FR-5) each map unit also keeps NRCS's farmland class (prime
+farmland and the like), its non-irrigated land capability class (1-8, dominant
+condition) and a pasture yield: the best pasture yield (animal-unit months per acre a
+year) SSURGO gives its main component, the one with the largest share. See
+docs/ASSUMPTIONS.md, "Farmland".
+
 SDA answers SQL over HTTP. Per survey area (one per county here: Sequatchie is
-TN153) the ingest asks for the map units, their components' septic ratings, and the
-polygons in pages, each cached in data/raw/usda_ssurgo/<aoi>/. A county's soils are
-replaced as a whole on every ingest.
+TN153) the ingest asks for the map units, their components' septic ratings, the
+farmland attributes, the pasture yields and the polygons in pages, each cached in
+data/raw/usda_ssurgo/<aoi>/. A county's soils are replaced as a whole on every ingest.
 """
 
 import json
@@ -18,7 +25,7 @@ import shutil
 import time
 from collections import defaultdict
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -71,6 +78,10 @@ class MapUnit:
     flooding: str | None  # flooding frequency, dominant condition: None, Rare, Occasional, ...
     drainage: str | None  # drainage class, dominant condition: Well drained, ...
     ratings: dict[str, tuple[str, float]]  # column -> (dominant rating, its share in percent)
+    farmland_class: str | None = None  # 'All areas are prime farmland', 'Not prime farmland', ...
+    capability_class: int | None = None  # non-irrigated land capability class 1-8, dominant
+    capability_pct: float | None = None  # share of the map unit in that class
+    pasture_aum: float | None = None  # main component's best pasture yield, AUM per acre a year
 
 
 @dataclass(frozen=True)
@@ -146,6 +157,35 @@ def map_units_query(areasymbol: str) -> str:
         LEFT JOIN muaggatt ma ON ma.mukey = mu.mukey
         WHERE l.areasymbol = {_quote(areasymbol)}
         ORDER BY mu.mukey
+    """
+
+
+def agriculture_query(areasymbol: str) -> str:
+    """Each map unit's farmland class and non-irrigated capability class (dominant
+    condition, as SSURGO aggregates it in muaggatt)."""
+    return f"""
+        SELECT mu.mukey, mu.farmlndcl, ma.niccdcd, ma.niccdcdpct
+        FROM legend l
+        JOIN mapunit mu ON mu.lkey = l.lkey
+        LEFT JOIN muaggatt ma ON ma.mukey = mu.mukey
+        WHERE l.areasymbol = {_quote(areasymbol)}
+        ORDER BY mu.mukey
+    """
+
+
+def pasture_query(areasymbol: str) -> str:
+    """Every component with its pasture yields: non-irrigated yields given in animal-unit
+    months (AUM), which SSURGO uses only for grazed forage (Pasture, Tall fescue,
+    Grass-legume pasture, ...). Components without one come back once, with no crop."""
+    return f"""
+        SELECT c.mukey, c.cokey, c.comppct_r, cy.cropname, cy.nonirryield_r
+        FROM legend l
+        JOIN mapunit mu ON mu.lkey = l.lkey
+        JOIN component c ON c.mukey = mu.mukey
+        LEFT JOIN cocropyld cy ON cy.cokey = c.cokey AND cy.yldunits = 'AUM'
+                               AND cy.nonirryield_r IS NOT NULL
+        WHERE l.areasymbol = {_quote(areasymbol)}
+        ORDER BY c.mukey, c.cokey
     """
 
 
@@ -243,6 +283,50 @@ def parse_map_units(
     return units
 
 
+def main_component_pasture(rows: Iterable[dict[str, Any]]) -> dict[str, float | None]:
+    """Each map unit's pasture yield, from `pasture_query` rows: the best AUM yield of its
+    main component (the largest share; on a tie, the one with the lower yield). None
+    when that component has no pasture yield (rock outcrop, pits, water, urban land)."""
+    by_component: dict[tuple[str, str], tuple[float, float | None]] = {}
+    for r in rows:
+        key = (str(r["mukey"]), str(r["cokey"]))
+        pct, best = by_component.get(key, (_float(r["comppct_r"]) or 0.0, None))
+        yld = _float(r["nonirryield_r"])
+        if yld is not None and (best is None or yld > best):
+            best = yld
+        by_component[key] = (pct, best)
+    main: dict[str, tuple[float, float | None]] = {}  # mukey -> (share, yield)
+    for (mukey, _), (pct, best) in by_component.items():
+        old = main.get(mukey)
+        if old is None or (pct, -(best or 0.0)) > (old[0], -(old[1] or 0.0)):
+            main[mukey] = (pct, best)
+    return {mukey: best for mukey, (_, best) in main.items()}
+
+
+def add_agriculture(
+    units: list[MapUnit],
+    agriculture_rows: Iterable[dict[str, Any]],
+    pasture_rows: Iterable[dict[str, Any]],
+) -> list[MapUnit]:
+    """`units` with their farmland class, capability class and pasture yield."""
+    ag = {str(r["mukey"]): r for r in agriculture_rows}
+    pasture = main_component_pasture(pasture_rows)
+    out = []
+    for u in units:
+        r = ag.get(u.mukey, {})
+        capability = _float(r.get("niccdcd"))
+        out.append(
+            replace(
+                u,
+                farmland_class=_text(r.get("farmlndcl")),
+                capability_class=None if capability is None else int(capability),
+                capability_pct=_float(r.get("niccdcdpct")),
+                pasture_aum=pasture.get(u.mukey),
+            )
+        )
+    return out
+
+
 def parse_polygon(row: dict[str, Any], areasymbol: str) -> SoilPolygon:
     return SoilPolygon(
         mupolygonkey=int(row["mupolygonkey"]),
@@ -286,7 +370,11 @@ def fetch_soils(
         rating_rows = _cached(
             folder / symbol / "ratings.json", ratings_query(symbol, rules.values())
         )
-        units += parse_map_units(unit_rows, parse_ratings(rating_rows), rules)
+        ag_rows = _cached(folder / symbol / "agriculture.json", agriculture_query(symbol))
+        pasture_rows = _cached(folder / symbol / "pasture.json", pasture_query(symbol))
+        units += add_agriculture(
+            parse_map_units(unit_rows, parse_ratings(rating_rows), rules), ag_rows, pasture_rows
+        )
         after, page = 0, 0
         while True:
             rows = _cached(
@@ -353,6 +441,10 @@ def load_soils(
                 "water_table_min_cm": u.water_table_min_cm,
                 "flooding": u.flooding,
                 "drainage": u.drainage,
+                "farmland_class": u.farmland_class,
+                "capability_class": u.capability_class,
+                "capability_pct": u.capability_pct,
+                "pasture_aum": u.pasture_aum,
                 "wkb": p.geom.wkb,
                 "source_key": SOURCE_KEY,
             }
@@ -364,11 +456,13 @@ def load_soils(
                                musym, muname,
                                septic_tn, septic_tn_pct, septic_national, septic_national_pct,
                                hydric_pct, bedrock_min_cm, water_table_min_cm, flooding,
-                               drainage, geom, source_key)
+                               drainage, farmland_class, capability_class, capability_pct,
+                               pasture_aum, geom, source_key)
             SELECT :mupolygonkey, :mukey, :areasymbol, :county_geoid, :survey_version,
                    :musym, :muname,
                    :septic_tn, :septic_tn_pct, :septic_national, :septic_national_pct,
                    :hydric_pct, :bedrock_min_cm, :water_table_min_cm, :flooding, :drainage,
+                   :farmland_class, :capability_class, :capability_pct, :pasture_aum,
                    ST_Multi(piece), :source_key
             FROM ST_Subdivide(ST_GeomFromWKB(:wkb, 4326), 256) AS piece
             """
