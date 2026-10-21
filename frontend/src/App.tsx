@@ -68,6 +68,16 @@ const ROADS_MIN_ZOOM = 10;
 const ROAD_COLORS = { public: "#d97706", other: "#78350f" };
 // The area within a 1-hour drive of downtown Chattanooga (D-02, migration 0012).
 const DRIVE_AREA_COLOR = "#15803d";
+// SSURGO soils and the turbine parcels' buildable ground from zoom 11 (migration 0013).
+const SOILS_MIN_ZOOM = 11;
+// The Tennessee septic rating (septic_tn), the one the buildable-ground step uses.
+const SEPTIC_COLORS = {
+  "Slightly limited": "#4d9221",
+  "Moderately limited": "#e6ab02",
+  "Very limited": "#c51b7d",
+  "Not rated": "#9ca3af",
+};
+const BUILDABLE_COLOR = "#16a34a";
 
 // Scores and plain streams are the same lines, so only one set shows at a time.
 function setScoresVisible(map: maplibregl.Map, visible: boolean) {
@@ -89,6 +99,10 @@ export function App() {
   const showRoadsRef = useRef(showRoads);
   const [showDriveArea, setShowDriveArea] = useState(false);
   const showDriveAreaRef = useRef(showDriveArea);
+  const [showSoils, setShowSoils] = useState(false);
+  const showSoilsRef = useRef(showSoils);
+  const [showBuildable, setShowBuildable] = useState(false);
+  const showBuildableRef = useRef(showBuildable);
   const [zoom, setZoom] = useState(10);
 
   useEffect(() => {
@@ -135,6 +149,17 @@ export function App() {
         tiles: [`${TILES}/drive_time_areas/{z}/{x}/{y}`],
         attribution: "Drive time: Valhalla, © OpenStreetMap contributors",
       });
+      map.addSource("soils", {
+        type: "vector",
+        tiles: [`${TILES}/soils/{z}/{x}/{y}`],
+        minzoom: SOILS_MIN_ZOOM,
+        attribution: "Soils: USDA NRCS SSURGO",
+      });
+      map.addSource("buildable", {
+        type: "vector",
+        tiles: [`${TILES}/parcel_buildable/{z}/{x}/{y}`],
+        minzoom: SOILS_MIN_ZOOM,
+      });
       map.addSource("scores", {
         type: "vector",
         tiles: [`${TILES}/latest_hydro_scores/{z}/{x}/{y}`],
@@ -167,6 +192,31 @@ export function App() {
         paint: { "line-color": DRIVE_AREA_COLOR, "line-width": 2 },
       });
 
+      // Septic ratings at the bottom. Stored in pieces (migration 0013), so fill only.
+      map.addLayer({
+        id: "soils-fill",
+        type: "fill",
+        source: "soils",
+        "source-layer": "soils",
+        minzoom: SOILS_MIN_ZOOM,
+        layout: { visibility: showSoilsRef.current ? "visible" : "none" },
+        paint: {
+          "fill-color": [
+            "match",
+            ["get", "septic_tn"],
+            "Slightly limited",
+            SEPTIC_COLORS["Slightly limited"],
+            "Moderately limited",
+            SEPTIC_COLORS["Moderately limited"],
+            "Very limited",
+            SEPTIC_COLORS["Very limited"],
+            SEPTIC_COLORS["Not rated"],
+          ],
+          "fill-opacity": 0.3,
+          "fill-antialias": false,
+        },
+      });
+
       // Flood zones under everything else. Stored in pieces (migration 0011), so fill only: outlines would show the seams.
       map.addLayer({
         id: "flood-fill",
@@ -188,6 +238,27 @@ export function App() {
           "fill-opacity": 0.35,
           "fill-antialias": false,
         },
+      });
+
+      // Buildable ground on turbine parcels: a wash with a solid edge (one shape per parcel).
+      const buildableVisibility = showBuildableRef.current ? "visible" : "none";
+      map.addLayer({
+        id: "buildable-fill",
+        type: "fill",
+        source: "buildable",
+        "source-layer": "parcel_buildable",
+        minzoom: SOILS_MIN_ZOOM,
+        layout: { visibility: buildableVisibility },
+        paint: { "fill-color": BUILDABLE_COLOR, "fill-opacity": 0.3 },
+      });
+      map.addLayer({
+        id: "buildable-outline",
+        type: "line",
+        source: "buildable",
+        "source-layer": "parcel_buildable",
+        minzoom: SOILS_MIN_ZOOM,
+        layout: { visibility: buildableVisibility },
+        paint: { "line-color": BUILDABLE_COLOR, "line-width": 1.2 },
       });
 
       // Property lines under the streams; showBasemap() sets the color. No owner data in these tiles.
@@ -300,6 +371,19 @@ export function App() {
   }, [showDriveArea]);
 
   useEffect(() => {
+    showSoilsRef.current = showSoils;
+    if (mapRef.current?.getLayer("soils-fill"))
+      mapRef.current.setLayoutProperty("soils-fill", "visibility", showSoils ? "visible" : "none");
+  }, [showSoils]);
+
+  useEffect(() => {
+    showBuildableRef.current = showBuildable;
+    for (const layer of ["buildable-fill", "buildable-outline"])
+      if (mapRef.current?.getLayer(layer))
+        mapRef.current.setLayoutProperty(layer, "visibility", showBuildable ? "visible" : "none");
+  }, [showBuildable]);
+
+  useEffect(() => {
     showScoresRef.current = showScores;
     if (mapRef.current?.getLayer("scores-hit")) setScoresVisible(mapRef.current, showScores);
   }, [showScores]);
@@ -353,6 +437,34 @@ export function App() {
           {showDriveArea && (
             <p className="hint">
               <span className="swatch" style={{ background: DRIVE_AREA_COLOR }} /> by car, no traffic (the search region, D-02).
+            </p>
+          )}
+          <label className="toggle">
+            <input type="checkbox" checked={showBuildable} onChange={(e) => setShowBuildable(e.target.checked)} />
+            Show buildable ground on turbine parcels
+          </label>
+          {showBuildable && (
+            <p className="hint">
+              {zoom < SOILS_MIN_ZOOM && "Zoom in to see buildable ground. "}
+              <span className="swatch" style={{ background: BUILDABLE_COLOR }} /> slope 15% or less, outside the 100-year
+              floodplain, soils not very limited for septic, in patches of half an acre or more. A screen, not a site
+              evaluation.
+            </p>
+          )}
+          <label className="toggle">
+            <input type="checkbox" checked={showSoils} onChange={(e) => setShowSoils(e.target.checked)} />
+            Show soils rated for septic
+          </label>
+          {showSoils && (
+            <p className="hint">
+              {zoom < SOILS_MIN_ZOOM && "Zoom in to see soils. "}
+              Tennessee septic rating:{" "}
+              {Object.entries(SEPTIC_COLORS).map(([label, color]) => (
+                <span key={label}>
+                  <span className="swatch" style={{ background: color }} /> {label.toLowerCase()}{" "}
+                </span>
+              ))}
+              (USDA SSURGO, mapped at 1:24,000).
             </p>
           )}
         </Collapsible>

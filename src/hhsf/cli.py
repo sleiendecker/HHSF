@@ -8,6 +8,7 @@ from sqlalchemy import text
 
 from hhsf.analysis import (
     basins,
+    buildable,
     drive_time,
     export_run,
     gauges,
@@ -19,7 +20,16 @@ from hhsf.analysis import (
 )
 from hhsf.core.config import REPO_ROOT, hydrography_source, load_aoi
 from hhsf.core.db import engine, record_source
-from hhsf.ingest import boundary, flood, hydrography, nhdplus_bulk, parcels, roads, terrain
+from hhsf.ingest import (
+    boundary,
+    flood,
+    hydrography,
+    nhdplus_bulk,
+    parcels,
+    roads,
+    soils,
+    terrain,
+)
 
 app = typer.Typer(help="Hydro Homestead Site Finder", no_args_is_help=True)
 db_app = typer.Typer(help="Database schema", no_args_is_help=True)
@@ -156,15 +166,35 @@ def ingest_roads(
     typer.echo(f"Loaded {n:,} road segments ({public:,} public roads).")
 
 
+@ingest_app.command("soils")
+def ingest_soils(
+    aoi: str = AOI_OPTION,
+    refresh: bool = typer.Option(
+        False, help="Download again instead of using data/raw/ (SSURGO updates yearly)."
+    ),
+) -> None:
+    """Load the AOI county's soils and their septic ratings from USDA SSURGO."""
+    area = load_aoi(aoi)
+    typer.echo(f"Fetching USDA SSURGO soils for {area.name} from Soil Data Access...")
+    units, polygons, versions = soils.fetch_soils(area, refresh, echo=typer.echo)
+    with engine().begin() as conn:
+        n = soils.load_soils(conn, area, units, polygons, versions)
+    rated = sum(u.ratings["septic_tn"][0] != soils.NOT_RATED for u in units)
+    typer.echo(
+        f"Loaded {n:,} soil polygons ({len(units)} map units, {rated} with a septic rating)."
+    )
+
+
 @ingest_app.command("all")
 def ingest_all(aoi: str = AOI_OPTION, source: str | None = SOURCE_OPTION) -> None:
-    """Boundary, then hydrography, terrain, parcels, flood zones and roads."""
+    """Boundary, then hydrography, terrain, parcels, flood zones, roads and soils."""
     ingest_boundary(aoi)
     ingest_hydrography(aoi, source)
     ingest_terrain(aoi)
     ingest_parcels(aoi)
     ingest_flood(aoi)
     ingest_roads(aoi)
+    ingest_soils(aoi)
 
 
 @analyze_app.command("hydro")
@@ -297,6 +327,40 @@ def analyze_drive_area() -> None:
         aoi = analyzed.get(s.geoid) or "-"
         typer.echo(f"  {s.label:<26} {s.share:7.0%}  {s.inside_sqkm:7,.0f}  {aoi}")
     typer.echo("Counties without an AOI are the ones to add next (D-02).")
+
+
+@analyze_app.command("buildable")
+def analyze_buildable(aoi: str = AOI_OPTION) -> None:
+    """Buildable ground on each corridor's turbine parcel: gentle slope, out of the
+    100-year floodplain, septic-suitable soils (needs make ingest and analyze hydro)."""
+    area = load_aoi(aoi)
+    settings = buildable.load_settings()
+    with engine().connect() as conn:
+        hydro_run = buildable.latest_hydro_run(conn, area.key)
+        if hydro_run is None:
+            raise typer.BadParameter(f"No hydro run for {area.name}. Run `make analyze` first.")
+        targets = buildable.turbine_parcels(conn, hydro_run)
+        reaches = run.load_reaches(conn, area)
+    if not targets:
+        typer.echo(f"No turbine parcels for hydro run {hydro_run}: are parcels loaded?")
+        return
+    # The elevation model was saved for the streams; big parcels can reach past it.
+    needed = buildable.bounds_of([*(r.geom for r in reaches), *(g for _, g in targets)])
+    dem, source = terrain.fetch_dem(area.key, needed, echo=typer.echo)
+    typer.echo(
+        f"Buildable ground on {len(targets):,} turbine parcels of hydro run {hydro_run} "
+        f"(slope up to {settings.max_slope_pct:g}%, outside the 100-year floodplain, "
+        f"{settings.septic_rating} not {' or '.join(settings.septic_excluded)}, "
+        f"patches of {settings.min_patch_acres:g} acres or more)..."
+    )
+    with engine().begin() as conn:
+        record_source(conn, source)
+        results = buildable.run_buildable(conn, area, targets, dem, settings, typer.echo)
+    none = sum(r.buildable_acres == 0 for r in results)
+    typer.echo(
+        f"Saved {len(results):,} parcels: {sum(r.buildable_acres for r in results):,.0f} "
+        f"buildable acres in all; {none:,} parcels have none."
+    )
 
 
 @analyze_app.command("drive-time")

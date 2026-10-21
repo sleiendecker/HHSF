@@ -105,6 +105,21 @@ Open call (2026-10-19): when StreamStats outlines the wrong basin at a reach's o
 
 ---
 
+### D-13 · What counts as buildable ground: **Default**
+
+PART 17 (FR-4, buildability) needs three thresholds the requirements don't give. Starting values, in `config/buildability.yaml`:
+
+- **Slope: 15% or less.** Where NRCS's soil ratings for houses without basements and for septic fields turn Very limited. 10% would be stricter (a flat pad and drain field); 20–25% is buildable with grading.
+- **Septic: the Tennessee rating, Slightly or Moderately limited.** SSURGO's Tennessee rule approximates the state's conventional septic rules; the national rule is far stricter here (bedrock within 100 cm alone rules a soil out) and would leave most plateau parcels with nothing. Very limited and Not rated soils don't count.
+- **Smallest patch: half an acre**, for a house, a drain field with its replacement area, and a driveway.
+- Ground in FEMA's 100-year floodplain doesn't count (the house-site check D-12 asked for).
+
+What it does on the five counties (2026-10-21): soils are the main limit. Of 654,000 acres of turbine parcels, 56% is gently sloped but only 12% is also on septic-suitable soils. 1,700 of 4,919 ranked stretches have no buildable ground on their turbine parcel. Of the six 1 kW streams, Rogers Branch and Marion's unnamed stream have none; Bethel Creek's parcel has 2.6 acres and the Negro Den Creek / Elk River parcel 2.0, a third of a mile to 1¾ miles from the turbine ends; Big Creek's 10,481-acre parcel has 917.
+
+Flagged only, like flood zones (D-12) and drive time (D-02): the counts and `no_buildable_ground` remove nothing. Buildability becomes a sub-score (20%) of the overall score (FR-7) when that's built, along with road access. Details: [ASSUMPTIONS.md](ASSUMPTIONS.md#buildable-ground).
+
+---
+
 ## To be measured on real data
 
 ### D-08 · What counts as one "corridor": **Measure**
@@ -179,6 +194,7 @@ Decisions that barely move the top 20 keep their default and stop being discusse
 
 | Date | Decision | Change |
 | --- | --- | --- |
+| 2026-10-21 | D-13 | New default (PART 17): buildable ground is slope 15% or less, outside the 100-year floodplain, on soils not Very limited for septic (Tennessee rating), in half-acre patches. Flagged only, never filtered or re-ranked |
 | 2026-10-20 | D-02 | Built the 1-hour drive area (PART 16): touches 20 counties. Owner deferred to the requirements: drive time and road distance are flagged only until the overall score (FR-7) gives them its Logistics (10%) and Buildability (20%) parts |
 | 2026-10-20 | D-12 | Decided by the owner: FEMA flood zones (PART 15) are flagged only, never filtered or re-ranked; revisit for the house site with the buildable-land step |
 | 2026-10-20 | D-03 | Owner: parcels loaded (PART 14); minimum acreage only flags, filters nothing until D-03 is decided. Owner names stay out of map tiles and the repo, in a separate table read only by the local exports |

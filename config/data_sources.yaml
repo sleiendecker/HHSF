@@ -210,3 +210,34 @@ osm_valhalla:
     is share-alike (ODbL) if passed on. Valhalla is MIT licensed.
   attribution: © OpenStreetMap contributors
   version: Valhalla 3.9.1 on Geofabrik extracts  # the run records the road graph's build date
+
+usda_ssurgo:
+  description: >-
+    USDA NRCS Soil Survey Geographic database (SSURGO), read through Soil Data Access (SDA),
+    NRCS's SQL web service over the same database Web Soil Survey shows. Per county survey
+    area (Sequatchie is TN153: "TN" + county FIPS): the soil map unit polygons, each map
+    unit's components with their septic ratings, and a few map unit summaries (hydric share,
+    depth to bedrock and to the water table, flooding frequency, drainage class). Used for
+    septic suitability in the buildable-land step (PART 17); see docs/ASSUMPTIONS.md,
+    "Buildable ground".
+  url: https://sdmdataaccess.sc.egov.usda.gov/Tabular/post.rest
+  service: https://sdmdataaccess.nrcs.usda.gov/
+  license: >-
+    Public domain (US Government work, USDA NRCS). NRCS asks to be cited as "Soil Survey
+    Staff, Natural Resources Conservation Service, United States Department of Agriculture.
+    Soil Survey Geographic (SSURGO) Database." Mapped at 1:12,000 to 1:24,000: a map unit
+    can hold small areas of other soils, so a rating is a planning screen, not a site
+    evaluation (Tennessee permits septic systems on a soil scientist's on-site evaluation).
+  attribution: USDA NRCS Soil Survey Geographic (SSURGO) Database
+  version: SSURGO via Soil Data Access  # the ingest adds each survey area's version and date
+  # Septic ratings: SSURGO has two (checked 2026-10-21). The national "ENG - Septic Tank
+  # Absorption Fields" rates about 3 in 4 major soils here Very limited (bedrock within
+  # 100 cm, slope over 15%, flooding). The Tennessee "ENG - Conventional On-Site Septic
+  # Systems (TN)" approximates the state's own rules (TDEC chapter 0400-48-01, formerly
+  # 1200-01-06) and leaves flooding to be judged separately; about half are Very limited.
+  # Both are saved; config/buildability.yaml picks which one counts (the Tennessee one).
+  septic_rules:
+    septic_tn: ENG - Conventional On-Site Septic Systems (TN)
+    septic_national: ENG - Septic Tank Absorption Fields
+  # SDA caps a response at 100,000 rows or about 32 MB; 1,000 polygons is ~3 MB.
+  page_size: 1000

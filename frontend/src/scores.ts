@@ -355,6 +355,18 @@ function driveText(p: Record<string, unknown>): string {
   return `${fmt(p.drive_minutes)} min${miles}${area ? `, ${area}` : ""}`;
 }
 
+// Buildable ground on the turbine parcel (migration 0013, config/buildability.yaml).
+function buildableText(p: Record<string, unknown>): string {
+  if (typeof p.turbine_buildable_acres !== "number") return "Not computed";
+  const gentle = typeof p.turbine_gentle_acres === "number" ? ` (${fmt(p.turbine_gentle_acres)} ac gently sloped)` : "";
+  if (p.turbine_buildable_acres === 0) return `<b>None</b>${gentle}`;
+  const near =
+    typeof p.nearest_buildable_m !== "number" || p.nearest_buildable_m === 0
+      ? "the turbine end is on it"
+      : `nearest ${distance(p.nearest_buildable_m)} from the turbine end`;
+  return `${fmt(p.turbine_buildable_acres, 1)} ac; ${near}`;
+}
+
 export function scorePopupHtml(f: MapGeoJSONFeature): string {
   const p = f.properties as Record<string, unknown>;
   let factors: Factor[] = [];
@@ -380,6 +392,7 @@ export function scorePopupHtml(f: MapGeoJSONFeature): string {
         <dt>Firm flow</dt><dd>${flow === undefined ? "—" : `${fmt(flow, 2)} cfs (${fmt(flow * CFS_TO_GPM)} gpm)`}</dd>
         <dt>Firm power</dt><dd>${withUnit(p.firm_power_w, "W")}</dd>
         <dt>Turbine parcel</dt><dd>${parcelText(p)}</dd>
+        <dt>Buildable ground</dt><dd>${buildableText(p)}</dd>
         <dt>Parcels crossed</dt><dd>${fmt(p.parcels_crossed)}</dd>
         <dt>Turbine flood zone</dt><dd>${floodText(p)}</dd>
         <dt>Stretch flooding</dt><dd>${stretchFloodText(p)}</dd>

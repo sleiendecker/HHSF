@@ -541,3 +541,83 @@ def test_report_says_when_roads_and_drive_area_are_missing():
     report = export.render_report(INFO, ROWS)
     assert "No roads are loaded" in report and "No drive-time area is built" in report
     assert "Roads and drive time (ranked corridors" not in report
+
+
+# --- Buildable ground ---------------------------------------------------------
+
+BUILD_INFO = export.BuildableInfo(
+    max_slope_pct=15.0,
+    septic_rating="septic_tn",
+    septic_excluded=("Very limited", "Not rated"),
+    min_patch_acres=0.5,
+    computed="2026-10-21",
+)
+SOME_GROUND = export.Buildable(gentle_acres=12.34, buildable_acres=4.56, nearest_m=152.4)
+NO_GROUND = export.Buildable(gentle_acres=7.4, buildable_acres=0.0, nearest_m=None)
+
+
+def test_buildable_flags():
+    assert export.buildable_flags(PARCEL, SOME_GROUND) == ()
+    assert export.buildable_flags(PARCEL, NO_GROUND) == (export.NO_BUILDABLE_GROUND,)
+    assert export.buildable_flags(PARCEL, None) == (export.BUILDABLE_NOT_COMPUTED,)
+    assert export.buildable_flags(None, None) == ()  # no parcel: the parcel flags say so
+    partly = export.Buildable(gentle_acres=9.0, buildable_acres=2.0, nearest_m=0, no_soil_acres=3)
+    assert export.buildable_flags(PARCEL, partly, 0.5) == (export.SOILS_NOT_LOADED,)
+    assert export.buildable_flags(PARCEL, partly, 5) == ()
+
+
+def test_record_has_buildable_ground():
+    r = export.record(replace(ON_PARCEL, turbine_buildable=SOME_GROUND))
+    assert r["turbine_parcel_gentle_acres"] == 12.3
+    assert r["turbine_parcel_buildable_acres"] == 4.6
+    assert r["nearest_buildable_ft"] == 500
+    none = export.record(
+        replace(ON_PARCEL, turbine_buildable=NO_GROUND, buildable_flags=("no_buildable_ground",))
+    )
+    assert none["turbine_parcel_buildable_acres"] == 0.0 and none["nearest_buildable_ft"] is None
+    assert none["buildable_flags"] == "no_buildable_ground"
+    blank = export.record(ROWS[0])
+    assert blank["turbine_parcel_buildable_acres"] is None and blank["buildable_flags"] == ""
+
+
+def test_buildable_columns_are_in_the_geojson():
+    rows = [replace(ON_PARCEL, turbine_buildable=SOME_GROUND)]
+    props = export.to_geojson(rows, INFO)["features"][0]["properties"]
+    assert props["turbine_parcel_buildable_acres"] == 4.6 and props["nearest_buildable_ft"] == 500
+
+
+def test_report_counts_buildable_ground_and_says_it_is_a_screen():
+    loaded = replace(INFO, buildable=BUILD_INFO, soils_version="TN153 version 20, downloaded")
+    rows = [
+        replace(ON_PARCEL, turbine_buildable=SOME_GROUND),
+        row(
+            2,
+            rank=2,
+            tier_rank=2,
+            turbine_parcel=PARCEL,
+            turbine_buildable=NO_GROUND,
+            buildable_flags=(export.NO_BUILDABLE_GROUND,),
+        ),
+        row(
+            3,
+            rank=3,
+            tier_rank=3,
+            turbine_parcel=PARCEL,
+            buildable_flags=(export.BUILDABLE_NOT_COMPUTED,),
+        ),
+    ]
+    report = export.render_report(loaded, rows)
+    assert "| Some buildable ground | 1 |" in report
+    assert "| Within 1/4 mile of the turbine end | 1 |" in report
+    assert "| None | 1 |" in report
+    assert "| Not computed (turbine parcel not analyzed) | 1 |" in report
+    assert "sloped 15% or less" in report and "Tennessee septic rating" in report
+    assert "Very limited or Not rated" in report and "0.5 acres" in report
+    assert "| usda_ssurgo (at export) |" in report
+    assert "| 4.6 |" in report  # the tier table's buildable column
+
+
+def test_report_says_when_buildable_ground_is_missing():
+    report = export.render_report(INFO, ROWS)
+    assert "Buildable ground isn't computed" in report
+    assert "Buildable ground on the turbine parcel (ranked" not in report
