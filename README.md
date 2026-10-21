@@ -224,6 +224,22 @@ Untick **Show hydro scores** to go back to plain streams (bigger streams darker)
 make down
 ```
 
+### Backing up
+
+```bash
+make backup
+```
+
+Saves the whole database to `data/backups/hhsf-<date>-<time>.dump` (about 64 MB for the five counties, a few seconds). Worth doing after any long run: rebuilding from scratch means re-running every step, and on a new computer without `data/cache/` the StreamStats answers alone took about 11 hours for four counties. **The backup includes property owner names, so keep it private:** don't commit it, share it or put it in a synced folder others can open.
+
+To go back to a backup:
+
+```bash
+make restore FILE=data/backups/hhsf-20261020-234756.dump
+```
+
+This **replaces everything in the database** with the backup's contents, then restarts the tile server. Run `make restore` with no `FILE` to list the backups. If the backup is older than your code, run `make up` afterwards to apply the newer migrations. `make down` doesn't delete data, so a backup is only needed for mistakes, a new computer, or before something risky.
+
 ## Usage
 
 Run `make` to list all commands.
@@ -257,6 +273,8 @@ Run `make` to list all commands.
 | `make web` | Run the map at <http://localhost:5173> |
 | `make test` | Run all tests (Docker must be running) |
 | `make lint` | Check code style |
+| `make backup` | Save the whole database to `data/backups/` (includes owner names: keep it private) |
+| `make restore FILE=<path>` | Replace the database with a backup, then restart the tile server |
 | `make down` | Stop services (data is kept) |
 
 The pipeline tool can also be run directly:
