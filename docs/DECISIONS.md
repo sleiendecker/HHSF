@@ -63,7 +63,7 @@ Candidates from the plan: Hamilton, Sequatchie, Marion, Bledsoe, Rhea (TN); poss
 
 - Minimum usable acreage for a homestead: placeholder **10 acres**
 - Rough budget ceiling (filters parcels later, via assessed value): placeholder **none**
-- Privacy weight in the overall score (spec says 10%): placeholder **10%**
+- Privacy weight in the overall score (spec says 10%): placeholder **10%** (used since `hydro_v6`, D-17)
 
 Parcels are loaded now (PART 14). Until this is decided, the 10-acre placeholder (`config/parcels.yaml`) only **flags** small turbine parcels in the exports (`parcel_under_min_acres`); nothing is filtered or re-ranked.
 
@@ -154,11 +154,23 @@ What it does (2026-10-21): Big Creek (Grundy) moves from #3 to #1 on its land, B
 
 ### D-16 · Farmland that's already open: **Default**
 
-PART 20 adds USGS NLCD 2021 land cover ([ASSUMPTIONS.md](ASSUMPTIONS.md#land-cover)), and profile `hydro_v5` (now the default) uses it: the agriculture part gains a fourth factor, **cropland soils (class 1–3) that are open now** (pasture, hay, crops or grassland), 0 → 0, 5 acres → 60, 20 acres → 100. The other three keep their curves and drop to prime farmland 30%, cropland 20%, pasture 20%, so good soil under forest still counts, for less. `hydro_v4` is unchanged and still available.
+PART 20 adds USGS NLCD 2021 land cover ([ASSUMPTIONS.md](ASSUMPTIONS.md#land-cover)), and profile `hydro_v5` (the default until `hydro_v6`, D-17) uses it: the agriculture part gains a fourth factor, **cropland soils (class 1–3) that are open now** (pasture, hay, crops or grassland), 0 → 0, 5 acres → 60, 20 acres → 100. The other three keep their curves and drop to prime farmland 30%, cropland 20%, pasture 20%, so good soil under forest still counts, for less. `hydro_v4` is unchanged and still available.
 
 Why: 79% of the turbine parcels' ground is forest, and only 27% of their cropland soils are open. Clearing woods for a field is real money and years of work, so a parcel with ten open acres on good soil is worth more to a homestead than one with a hundred acres of the same soil under trees.
 
 What it does (2026-10-21): the six 1 kW streams keep their order (all their parcels are about 99% forest; Negro Den Creek's agriculture part drops from 64 to 43). The median agriculture part across ranked stretches drops from 70 to 63, and low-flow stretches move an average of 44 places.
+
+### D-17 · Privacy (FR-6): **Default**
+
+PART 21 builds FR-6 ([ASSUMPTIONS.md](ASSUMPTIONS.md#privacy)) and profile `hydro_v6` (now the default) gives it its 10% of the overall score (D-15 left it out until now). The defaults, all in `config/privacy.yaml` and the profile:
+
+- **Where:** a home site, the turbine parcel's buildable ground nearest the turbine end (the turbine end where there's none). Not the most secluded spot on the parcel: the house goes near the turbine, and picking the best spot of a 900-acre parcel would flatter big parcels.
+- **What's a building:** a Microsoft footprint of 400 sq ft or more, not on the turbine parcel (buildings on it would be yours).
+- **The part** (each factor a curve, like the others): other buildings within 1/4 mile, 35% (0 → 100, 2 → 70, 5 → 40, 15 → 0); the nearest one, 15% (200 ft → 0, 1/8 mile → 50, 1/4 mile → 80, 1/2 mile → 100; none within 2 miles → 100); buildings per square mile within 1 mile, 20% (5 → 100, 25 → 60, 100 → 0); feet of woods toward the nearest public road, 20% (0 → 0, 200 → 70, 500 → 100); the nearest public road from the home site, 10% (100 ft → 0, 500 → 50, 1/4 mile → 100).
+
+Why: neighbors close by are what most homesteaders mean by privacy, so the 1/4-mile count carries the most; density says whether the area is filling in; road visibility is about being seen from the road, so the woods between count twice as much as the distance. The curves sit on the five counties' medians (1 building within 1/4 mile, 25 per square mile, nearest 1,160 ft, 575 ft of woods) so a typical site scores about 70. The road distance pulls the other way from buildability's (a near road is easy access but less private); that's the real trade-off, and privacy is only 10%.
+
+What it does (2026-10-21): the six 1 kW streams keep their order. Their privacy: Negro Den Creek and the Elk River 100, Bethel Creek 93, Big Creek 85, Rogers Branch 56, Marion's unnamed stream 51, so each one's overall score rises 1–5 points. Low-flow stretches move an average of 66 places. `hydro_v5` is unchanged and still available.
 
 ---
 
@@ -236,6 +248,7 @@ Decisions that barely move the top 20 keep their default and stop being discusse
 
 | Date | Decision | Change |
 | --- | --- | --- |
+| 2026-10-21 | D-17 | New default (PART 21, profile `hydro_v6`): privacy gets its 10%: buildings within 1/4 mile of the home site 35%, the nearest 15%, density within 1 mile 20%, woods toward the nearest public road 20%, that road's distance 10% |
 | 2026-10-21 | D-16 | New default (PART 20, profile `hydro_v5`): the agriculture part counts class 1–3 cropland that's open now (NLCD 2021) at 30%, prime farmland 30%, cropland 20%, pasture 20% |
 | 2026-10-21 | D-15 | Owner: the FR-7 overall score (PART 19, profile `hydro_v4`) re-ranks each confidence tier; privacy is left out with the other weights rescaled until FR-6 is built. Default sub-score curves; missing data left out, never scored as zero |
 | 2026-10-21 | D-14 | New default (PART 18): farmland is NRCS prime farmland (plus statewide importance, none here) and cropland is capability class 1–3; pasture from SSURGO grazing yields. Whole turbine parcel, no slope or floodplain test. Flagged only, never filtered or re-ranked |

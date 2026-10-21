@@ -125,6 +125,18 @@ postgres:
         parcel_acres: float8
         patches: int4
         max_slope_pct: float8
+    # Microsoft Global ML Building Footprints (0018), from zoom 13: thousands per county.
+    buildings:
+      schema: public
+      table: buildings
+      srid: 4326
+      geometry_column: geom
+      geometry_type: MULTIPOLYGON
+      id_column: building_id
+      minzoom: 13
+      properties:
+        area_m2: float8
+        height_m: float8
     counties:
       schema: public
       table: counties
@@ -155,6 +167,11 @@ postgres:
     # with its buildability, agriculture and logistics sub-scores (0015, profile hydro_v4).
     # turbine_open_acres, turbine_open_cropland_acres (open land on class 1-3 soils),
     # turbine_forest_acres and turbine_canopy_pct are its NLCD 2021 land cover (0016).
+    # privacy_subscore is the FR-6 part of the overall score (profile hydro_v6), measured at
+    # the home site (privacy_home_site: buildable ground nearest the turbine end, or the
+    # turbine end): other buildings within 1/4 and 1/2 mile, buildings per sq mi within 1 mile,
+    # the nearest one, buildings on the turbine parcel, the nearest public road and the woods
+    # on the line to it (0018).
     # `factors` is JSON text: each
     # factor's value, sub-score, weight and contribution, for the click popup.
     latest_hydro_scores:
@@ -222,3 +239,12 @@ postgres:
         turbine_open_cropland_acres: float8
         turbine_forest_acres: float8
         turbine_canopy_pct: float8
+        privacy_subscore: float8
+        privacy_home_site: text
+        buildings_quarter_mile: int4
+        buildings_half_mile: int4
+        buildings_per_sqmi: float8
+        nearest_building_m: float8
+        parcel_buildings: int4
+        home_public_road_m: float8
+        road_woods_m: float8

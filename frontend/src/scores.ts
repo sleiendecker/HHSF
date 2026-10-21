@@ -277,7 +277,7 @@ function rankedIn(p: Record<string, unknown>): string {
 }
 
 // The FR-7 overall score's parts (migration 0015, profile hydro_v4): a part with no data is left out
-// and the others rescaled. Privacy isn't built yet, so it's always left out.
+// and the others rescaled. Privacy only counts from profile hydro_v6 (migration 0018).
 function overallParts(p: Record<string, unknown>): string {
   if (typeof p.overall_score !== "number") return "";
   const hydro = p.tier === "head_only" ? "head" : p.tier === "low_flow" ? "hydro (under target)" : "hydro";
@@ -286,9 +286,11 @@ function overallParts(p: Record<string, unknown>): string {
     hydroValue ? `${hydro} ${hydroValue}` : "",
     `buildability ${fmt(p.buildability_subscore)}`,
     `agriculture ${fmt(p.agriculture_subscore)}`,
+    typeof p.privacy_subscore === "number" ? `privacy ${fmt(p.privacy_subscore)}` : "",
     `logistics ${fmt(p.logistics_subscore)}`,
   ].filter(Boolean);
-  return `<p class="overall-parts">Overall score from ${parts.join(" · ")} (a dash: no data; privacy isn't built yet).</p>`;
+  const privacy = typeof p.privacy_subscore === "number" ? "" : "; privacy left out";
+  return `<p class="overall-parts">Overall score from ${parts.join(" · ")} (a dash: no data${privacy}).</p>`;
 }
 
 function headline(p: Record<string, unknown>): string {
@@ -414,6 +416,24 @@ function landCoverText(p: Record<string, unknown>): string {
   return `${acres(p.turbine_open_acres)} ac open (${acres(good)} on cropland soils)${forest}${canopy}`;
 }
 
+// Privacy around the home site (migration 0018, config/privacy.yaml): other buildings, the nearest one,
+// and the woods between it and the nearest public road.
+function privacyText(p: Record<string, unknown>): string {
+  if (typeof p.buildings_quarter_mile !== "number") return "Not computed";
+  const where = p.privacy_home_site === "buildable" ? "Near the buildable ground" : "At the turbine end";
+  const near =
+    typeof p.nearest_building_m === "number" ? `, nearest ${distance(p.nearest_building_m)}` : ", none within 2 mi";
+  const count = p.buildings_quarter_mile === 0 ? "<b>no other building</b>" : `${fmt(p.buildings_quarter_mile)} other buildings`;
+  const half = typeof p.buildings_half_mile === "number" ? ` (${fmt(p.buildings_half_mile)} within ½ mi)` : "";
+  let road = "";
+  if (typeof p.home_public_road_m === "number") {
+    const woods = typeof p.road_woods_m === "number" ? `, ${distance(p.road_woods_m)} of it woods` : "";
+    road = `; public road ${distance(p.home_public_road_m)}${woods}`;
+  }
+  const own = typeof p.parcel_buildings === "number" && p.parcel_buildings > 0 ? `; ${fmt(p.parcel_buildings)} on the parcel` : "";
+  return `${where}: ${count} within ¼ mi${half}${near}${road}${own}`;
+}
+
 export function scorePopupHtml(f: MapGeoJSONFeature): string {
   const p = f.properties as Record<string, unknown>;
   let factors: Factor[] = [];
@@ -444,6 +464,7 @@ export function scorePopupHtml(f: MapGeoJSONFeature): string {
         <dt>Buildable ground</dt><dd>${buildableText(p)}</dd>
         <dt>Farmland</dt><dd>${farmlandText(p)}</dd>
         <dt>Land cover</dt><dd>${landCoverText(p)}</dd>
+        <dt>Privacy</dt><dd>${privacyText(p)}</dd>
         <dt>Parcels crossed</dt><dd>${fmt(p.parcels_crossed)}</dd>
         <dt>Turbine flood zone</dt><dd>${floodText(p)}</dd>
         <dt>Stretch flooding</dt><dd>${stretchFloodText(p)}</dd>

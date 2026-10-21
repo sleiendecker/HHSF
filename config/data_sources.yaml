@@ -110,6 +110,23 @@ mrlc_nlcd:
     tree_canopy: mrlc_download__nlcd_tcc_conus_2021_v2021-4
   year: 2021
 
+ms_buildings:
+  description: >-
+    Microsoft Global ML Building Footprints: outlines of buildings traced by a machine
+    learning model from Bing aerial imagery (imagery mostly 2014-2023), one gzipped GeoJSON
+    file per zoom 9 web-map tile ("quadkey"), listed in the CSV at `url`. Far more complete in
+    rural Tennessee than OpenStreetMap. No use (house, barn, shed) or address: just the
+    outline and sometimes a height estimate. Used for neighbors near each home site (PART 21,
+    FR-6 privacy); see docs/ASSUMPTIONS.md, "Privacy".
+  url: https://minedbuildings.z5.web.core.windows.net/global-buildings/dataset-links.csv
+  license: >-
+    Open Data Commons Open Database License (ODbL 1.0), (c) Microsoft. Attribute Microsoft;
+    a database made from it must be shared under the ODbL too.
+  version: Global ML Building Footprints  # the ingest adds the release date from the file links
+  region: UnitedStates   # the link list's Location
+  zoom: 9                # its tiles' zoom level
+  pad_m: 2000            # tiles touching the county plus this margin are loaded
+
 fema_nfhl:
   description: >-
     FEMA National Flood Hazard Layer (NFHL), "Flood Hazard Zones" (layer 28, the S_FLD_HAZ_AR

@@ -517,3 +517,38 @@ PART 20 adds what each turbine parcel is **now**. The farmland step counts what 
 The turbine parcels are mostly forest: of their 654,000 acres, 516,000 (79%) are forest and 96,000 (15%) open; median tree canopy across ranked stretches is 76%. Only 43% of the prime farmland soils and 27% of the class 1–3 cropland soils on them are open today. Of the 4,919 ranked stretches, 1,043 have no open land at all on their turbine parcel (140 more have no turbine parcel).
 
 All six 1 kW streams' turbine parcels are about 99% forest, with 86–91% canopy: Big Creek's 10,488 acres have 11 acres open (8 of them on cropland soils, 2.4 on prime farmland); Negro Den Creek and the Elk River share a parcel with none; Rogers Branch's and Bethel Creek's have a fraction of an acre; Marion's unnamed stream's has none. Every one would mean clearing land to farm.
+
+## Privacy
+
+PART 21 adds FR-6: how private a homestead at each stretch would be, from **nearby structures, road visibility and development density**. It's measured at a **home site**, where a house would most likely go: the turbine parcel's buildable ground (PART 17) nearest the turbine end, the shortest wire from the turbine, as the buildability part assumes. Where the parcel has no buildable ground (or no parcel was found), the home site is the turbine end itself; `home_site` says which, and the exports give its coordinates.
+
+- **Buildings:** Microsoft's Global ML Building Footprints (`config/data_sources.yaml`, `ms_buildings`; ODbL, © Microsoft), outlines traced by a machine learning model from Bing aerial imagery, mostly 2014–2023. OpenStreetMap was checked first: it has about half as many buildings in Sequatchie County (11,200 against Microsoft's 21,800), since many rural houses were never drawn there. Overture's building layer is a superset of both but only comes as cloud Parquet files, which this project doesn't read yet. `hhsf ingest buildings` (part of `make ingest`) downloads the zoom 9 web-map tiles touching the county (10–30 MB each, cached in `data/raw/ms_buildings/`) and keeps the buildings within 2 km of any loaded county, so a house just over the county line still counts: 86,000 for the five counties, 77,000 of them inside. They're on the map (**Show buildings**, zoom 13 and in).
+- **Which buildings count** (`config/privacy.yaml`): footprints of **400 sq ft or more** (sheds, carports and the odd misread shadow are smaller; a single-wide trailer is about 900), and **not on the turbine parcel**: those would be yours (`turbine_parcel_buildings` counts them, a house or barn that may come with the land). 3,000 of the 77,000 buildings in the five counties are under 400 sq ft. The footprints say nothing about use, so a barn counts as a neighbor and a farmstead with a house and two barns counts 3.
+- **What's measured**, saved per corridor in `corridor_privacy` (`hhsf analyze privacy`, part of `make analyze`):
+
+| Column | What it is |
+| --- | --- |
+| `buildings_quarter_mile`, `buildings_half_mile` | other buildings within 1/4 and 1/2 mile of the home site (nearest edge of the footprint) |
+| `buildings_mile`, `buildings_per_sqmi` | within 1 mile, and that per square mile: development density |
+| `nearest_building_m` | the nearest other building; empty when there's none within 2 miles |
+| `turbine_buildings_quarter_mile` | other buildings within 1/4 mile of the turbine end, for comparison |
+| `public_road_m` | the home site to the nearest public road a driveway can join (TIGER, as for buildability) |
+| `road_woods_m` | how much of the straight line from the home site toward that road is woods (a 30 m cell with **50% or more tree canopy**, USFS NLCD 2021, sampled every 10 m), over its first **1,320 ft** (past 1/4 mile a house is a speck from the road whatever stands between) |
+
+- **Flags:** `neighbor_within_660_ft` (another building within 1/8 mile of the home site), `open_to_road` (a public road within 500 ft with under 100 ft of woods between), `buildings_on_parcel`, `privacy_not_computed`. Not a filter.
+- **In the score:** profile `hydro_v6` gives privacy its 10% (D-17, [SCORING.md](SCORING.md#the-overall-score-fr-7)).
+- **What it can't see:** the imagery is a few years old, so new houses are missing and torn-down ones are still there. Hills and ridges that hide a house from the road aren't counted (only trees are), and neither is winter, when leaf-off hardwoods screen far less than the summer canopy says. Only roads in the loaded counties count, and TIGER misses many private and logging roads. Noise (a highway, a quarry, a chicken house) isn't measured. Re-ingesting parcels deletes the privacy of their corridors, and re-ingesting buildings deletes the county's; `make analyze` computes them again.
+
+### What it found (2026-10-21)
+
+The stretches are rural: of the 4,919 ranked ones, 2,244 have no other building within 1/4 mile of their home site, and the median is 1 within 1/4 mile, 13 within 1/2 mile, 25 per square mile within a mile, and the nearest 1,160 ft away. 1,509 have a building within 660 ft, and 833 are open to a public road within 500 ft. 2,467 turbine parcels already have a building of 400 sq ft or more on them. 1,840 home sites are at the turbine end (no buildable ground). The median privacy part is 72.
+
+The six 1 kW streams:
+
+| Stream | Home site | Within 1/4 mi | Within 1/2 mi | Nearest | Per sq mi | Public road, woods between | Privacy |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Big Creek (Grundy) | buildable | 0 | 0 | 3,490 ft | 13 | 290 ft, all woods | 85 |
+| Negro Den Creek, Elk River (Grundy, one parcel) | buildable | 0 | 0 | 3,610 ft | 4 | 3,360 ft, 1,320 of the first 1,320 woods | 100 |
+| Bethel Creek (Marion) | buildable | 0 | 1 | 2,120 ft | 18 | 1,330 ft, 1,160 woods | 93 |
+| Marion's unnamed stream | turbine end | 4 | 27 | 645 ft | 117 | 970 ft, 420 woods | 51 |
+| Rogers Branch (Sequatchie) | turbine end | 4 | 22 | 640 ft | 66 | 590 ft, all woods | 56 |

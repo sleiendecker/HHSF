@@ -78,6 +78,11 @@ const SEPTIC_COLORS = {
   "Not rated": "#9ca3af",
 };
 const BUILDABLE_COLOR = "#16a34a";
+// Microsoft building footprints from zoom 13 (migration 0018). Ones under the privacy step's smallest
+// footprint (config/privacy.yaml: keep in step) are drawn faint: they aren't counted as neighbors.
+const BUILDINGS_MIN_ZOOM = 13;
+const BUILDING_COLOR = "#7c3aed";
+const MIN_FOOTPRINT_M2 = 400 / 10.7639;
 // SSURGO farmland (migration 0014): prime farmland, prime only if drained or protected from flooding,
 // and other cropland (capability class 1-3: keep in step with config/farmland.yaml). Nothing else is drawn.
 const FARMLAND_COLORS = { prime: "#1b7837", primeIf: "#7fbf7b", cropland: "#d9b44a" };
@@ -115,6 +120,8 @@ export function App() {
   const showBuildableRef = useRef(showBuildable);
   const [showFarmland, setShowFarmland] = useState(false);
   const showFarmlandRef = useRef(showFarmland);
+  const [showBuildings, setShowBuildings] = useState(false);
+  const showBuildingsRef = useRef(showBuildings);
   const [showLandCover, setShowLandCover] = useState(false);
   const showLandCoverRef = useRef(showLandCover);
   const [zoom, setZoom] = useState(10);
@@ -174,6 +181,12 @@ export function App() {
         tiles: [NLCD_WMS],
         tileSize: 256,
         attribution: "Land cover: USGS NLCD 2021 (MRLC)",
+      });
+      map.addSource("buildings", {
+        type: "vector",
+        tiles: [`${TILES}/buildings/{z}/{x}/{y}`],
+        minzoom: BUILDINGS_MIN_ZOOM,
+        attribution: "Buildings: Microsoft (ODbL)",
       });
       map.addSource("buildable", {
         type: "vector",
@@ -315,6 +328,20 @@ export function App() {
         paint: { "line-color": BUILDABLE_COLOR, "line-width": 1.2 },
       });
 
+      // Building footprints: the ones counted as neighbors solid, smaller ones faint.
+      map.addLayer({
+        id: "buildings-fill",
+        type: "fill",
+        source: "buildings",
+        "source-layer": "buildings",
+        minzoom: BUILDINGS_MIN_ZOOM,
+        layout: { visibility: showBuildingsRef.current ? "visible" : "none" },
+        paint: {
+          "fill-color": BUILDING_COLOR,
+          "fill-opacity": ["case", ["<", ["get", "area_m2"], MIN_FOOTPRINT_M2], 0.25, 0.75],
+        },
+      });
+
       // Property lines under the streams; showBasemap() sets the color. No owner data in these tiles.
       map.addLayer({
         id: "parcel-outline",
@@ -443,6 +470,12 @@ export function App() {
   }, [showFarmland]);
 
   useEffect(() => {
+    showBuildingsRef.current = showBuildings;
+    if (mapRef.current?.getLayer("buildings-fill"))
+      mapRef.current.setLayoutProperty("buildings-fill", "visibility", showBuildings ? "visible" : "none");
+  }, [showBuildings]);
+
+  useEffect(() => {
     showBuildableRef.current = showBuildable;
     for (const layer of ["buildable-fill", "buildable-outline"])
       if (mapRef.current?.getLayer(layer))
@@ -515,6 +548,17 @@ export function App() {
               <span className="swatch" style={{ background: BUILDABLE_COLOR }} /> slope 15% or less, outside the 100-year
               floodplain, soils not very limited for septic, in patches of half an acre or more. A screen, not a site
               evaluation.
+            </p>
+          )}
+          <label className="toggle">
+            <input type="checkbox" checked={showBuildings} onChange={(e) => setShowBuildings(e.target.checked)} />
+            Show buildings
+          </label>
+          {showBuildings && (
+            <p className="hint">
+              {zoom < BUILDINGS_MIN_ZOOM && "Zoom in to see buildings. "}
+              <span className="swatch" style={{ background: BUILDING_COLOR }} /> counted as neighbors (400 sq ft or more);
+              faint: smaller. Traced from aerial imagery by Microsoft: barns count, recent houses may be missing.
             </p>
           )}
           <label className="toggle">

@@ -6,8 +6,9 @@ hydro_scores row per corridor. Earlier score runs are kept.
 
 A profile with an `overall` section (hydro_v4 on) also reads each corridor's site
 data as it stands when scoring runs: its turbine parcel's buildable ground and
-farmland and land cover (`make analyze`), the nearest public road, and the drive time (`make
-drive-time`). Run those first; whatever is missing is left out of the overall score.
+farmland and land cover, the privacy around its home site (`make analyze`), the nearest
+public road, and the drive time (`make drive-time`). Run those first; whatever is
+missing is left out of the overall score.
 """
 
 import json
@@ -60,13 +61,16 @@ def load_site_inputs(conn: Connection, hydro_run_id: int) -> dict[int, scoring.S
             """
             SELECT c.corridor_id, b.buildable_acres, b.nearest_buildable_m,
                    r.public_distance_m, f.prime_acres + f.statewide_acres AS farmland_acres,
-                   f.capable_acres, f.pasture_aum, l.open_cropland_acres, d.minutes
+                   f.capable_acres, f.pasture_aum, l.open_cropland_acres, d.minutes,
+                   pr.buildings_quarter_mile, pr.nearest_building_m, pr.buildings_per_sqmi,
+                   pr.road_woods_m, pr.public_road_m AS home_road_m
             FROM hydro_corridors c
             LEFT JOIN corridor_turbine_buildable b USING (corridor_id)
             LEFT JOIN corridor_turbine_roads r USING (corridor_id)
             LEFT JOIN corridor_turbine_farmland f USING (corridor_id)
             LEFT JOIN corridor_turbine_landcover l USING (corridor_id)
             LEFT JOIN corridor_drive_times d USING (corridor_id)
+            LEFT JOIN corridor_privacy pr USING (corridor_id)
             WHERE c.run_id = :r
             """
         ),
@@ -85,13 +89,18 @@ def load_site_inputs(conn: Connection, hydro_run_id: int) -> dict[int, scoring.S
             cropland_acres=r.capable_acres,
             pasture_aum=r.pasture_aum,
             open_cropland_acres=r.open_cropland_acres,
+            buildings_quarter_mile=r.buildings_quarter_mile,
+            nearest_building_ft=ft(r.nearest_building_m),
+            buildings_per_sqmi=r.buildings_per_sqmi,
+            road_woods_ft=ft(r.road_woods_m),
+            home_road_ft=ft(r.home_road_m),
             drive_minutes=r.minutes,
         )
         for r in rows
     }
 
 
-def summarize(scores: list[scoring.Score]) -> dict:
+def summarize(scores: list[scoring.Score], p: scoring.ScoringProfile) -> dict:
     out = {
         "corridors": len(scores),
         "status": dict(Counter(s.status for s in scores)),
@@ -99,8 +108,10 @@ def summarize(scores: list[scoring.Score]) -> dict:
     }
     overall = [s for s in scores if s.overall is not None]
     if overall:
+        # Profiles before hydro_v6 always leave privacy out: no need to count it.
+        always = "privacy" if p.overall is not None and p.overall.privacy is None else None
         out["overall_parts_left_out"] = dict(
-            Counter(part for s in overall for part in s.overall["left_out"] if part != "privacy")
+            Counter(part for s in overall for part in s.overall["left_out"] if part != always)
         )
     return out
 
@@ -116,12 +127,13 @@ def save_scores(
             INSERT INTO hydro_scores (
                 run_id, corridor_id, status, tier, net_head_ft, head_subscore,
                 power_subscore, hydro_score, rank, tier_rank, explanation, overall_score,
-                buildability_subscore, agriculture_subscore, logistics_subscore
+                buildability_subscore, agriculture_subscore, logistics_subscore,
+                privacy_subscore
             ) VALUES (
                 :run_id, :corridor_id, :status, :tier, :net_head_ft, :head_subscore,
                 :power_subscore, :hydro_score, :rank, :tier_rank, CAST(:explanation AS jsonb),
                 :overall_score, :buildability_subscore, :agriculture_subscore,
-                :logistics_subscore
+                :logistics_subscore, :privacy_subscore
             )
             """
         ),
@@ -142,6 +154,7 @@ def save_scores(
                 "buildability_subscore": s.buildability_subscore,
                 "agriculture_subscore": s.agriculture_subscore,
                 "logistics_subscore": s.logistics_subscore,
+                "privacy_subscore": s.privacy_subscore,
             }
             for s in scores
         ],
@@ -167,7 +180,7 @@ def score_hydro(
             site = load_site_inputs(conn, hydro_run_id)
             inputs = [replace(c, site=site.get(c.corridor_id)) for c in inputs]
         scores = scoring.score_all(inputs, profile)
-        summary = summarize(scores)
+        summary = summarize(scores, profile)
         run_id = conn.execute(
             text(
                 """

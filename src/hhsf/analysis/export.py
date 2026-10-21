@@ -50,6 +50,7 @@ SHORTLIST_COLUMNS = [
     "overall_score",
     "buildability_subscore",
     "agriculture_subscore",
+    "privacy_subscore",
     "logistics_subscore",
     "hydro_score",
     "power_subscore",
@@ -113,6 +114,17 @@ SHORTLIST_COLUMNS = [
     "turbine_parcel_developed_acres",
     "turbine_parcel_canopy_pct",
     "landcover_flags",
+    "home_site",
+    "home_site_lat",
+    "home_site_lon",
+    "buildings_quarter_mile",
+    "buildings_half_mile",
+    "buildings_per_sqmi",
+    "nearest_building_ft",
+    "turbine_parcel_buildings",
+    "home_public_road_ft",
+    "road_woods_ft",
+    "privacy_flags",
     "explanation",
 ]
 ALL_CORRIDORS_COLUMNS = ["status", *SHORTLIST_COLUMNS]
@@ -162,6 +174,16 @@ FARMLAND_UNSURVEYED_ACRES = 1.0
 # landcover_flags values. Not a filter.
 NO_OPEN_LAND = "no_open_land"  # no field, pasture or crops on the turbine parcel (NLCD 2021)
 LANDCOVER_NOT_COMPUTED = "landcover_not_computed"  # the turbine parcel wasn't analyzed
+
+# privacy_flags values. Flags only: privacy is a part of the overall score (hydro_v6 on),
+# never a filter.
+NEIGHBOR_CLOSE = "neighbor_within_660_ft"  # another building within 1/8 mile of the home site
+NEIGHBOR_CLOSE_M = 660 / units.FT_PER_M
+# A public road within 500 ft of the home site with under 100 ft of woods between.
+OPEN_TO_ROAD = "open_to_road"
+OPEN_TO_ROAD_M, OPEN_TO_ROAD_WOODS_M = 500 / units.FT_PER_M, 100 / units.FT_PER_M
+BUILDINGS_ON_PARCEL = "buildings_on_parcel"  # the turbine parcel already has buildings
+PRIVACY_NOT_COMPUTED = "privacy_not_computed"  # `hhsf analyze privacy` hasn't run
 
 
 @dataclass(frozen=True)
@@ -264,6 +286,32 @@ class Landcover:
 
 
 @dataclass(frozen=True)
+class Privacy:
+    """Around the corridor's home site (hhsf.analysis.privacy)."""
+
+    home_site: str  # buildable (nearest buildable ground) | turbine_end
+    lat: float
+    lon: float
+    buildings_quarter_mile: int  # other buildings, not on the turbine parcel
+    buildings_half_mile: int
+    buildings_per_sqmi: float  # within 1 mile
+    nearest_building_m: float | None  # None: none within the search radius
+    parcel_buildings: int | None  # on the turbine parcel; None: no turbine parcel
+    public_road_m: float | None  # None: no roads loaded
+    road_woods_m: float | None  # woods on the line toward that road; None: no data
+
+
+@dataclass(frozen=True)
+class PrivacyInfo:
+    """The settings privacy was computed with (config/privacy.yaml) and the buildings."""
+
+    min_footprint_sqft: float
+    woods_canopy_pct: float
+    buildings_version: str | None  # ms_buildings release and download date
+    computed: str  # date of the latest computation
+
+
+@dataclass(frozen=True)
 class FarmlandInfo:
     """The settings farmland was computed with (config/farmland.yaml)."""
 
@@ -321,9 +369,12 @@ class ExportRow:
     farmland_flags: tuple[str, ...] = ()
     turbine_landcover: Landcover | None = None  # None: no turbine parcel, or not computed
     landcover_flags: tuple[str, ...] = ()
+    privacy: Privacy | None = None  # None: not computed
+    privacy_flags: tuple[str, ...] = ()
     overall_score: float | None = None  # FR-7; only for profiles with an overall section
     buildability_subscore: float | None = None  # None: no data, left out
     agriculture_subscore: float | None = None
+    privacy_subscore: float | None = None
     logistics_subscore: float | None = None
 
     @property
@@ -355,6 +406,7 @@ class RunInfo:
     buildable: BuildableInfo | None = None  # None: buildable ground never computed
     farmland: FarmlandInfo | None = None  # None: farmland never computed
     landcover_year: int | None = None  # NLCD year; None: land cover never computed
+    privacy: PrivacyInfo | None = None  # None: privacy never computed
 
 
 # --- Rows ---------------------------------------------------------------------
@@ -472,6 +524,25 @@ def landcover_flags(turbine: Parcel | None, lc: Landcover | None) -> tuple[str, 
     return (NO_OPEN_LAND,) if lc.open_acres == 0 else ()
 
 
+def privacy_flags(p: Privacy | None) -> tuple[str, ...]:
+    """What to check about the home site's privacy."""
+    if p is None:
+        return (PRIVACY_NOT_COMPUTED,)
+    flags = []
+    if p.nearest_building_m is not None and p.nearest_building_m <= NEIGHBOR_CLOSE_M:
+        flags.append(NEIGHBOR_CLOSE)
+    if (
+        p.public_road_m is not None
+        and p.public_road_m <= OPEN_TO_ROAD_M
+        and p.road_woods_m is not None
+        and p.road_woods_m < OPEN_TO_ROAD_WOODS_M
+    ):
+        flags.append(OPEN_TO_ROAD)
+    if p.parcel_buildings:
+        flags.append(BUILDINGS_ON_PARCEL)
+    return tuple(flags)
+
+
 def _ft(m: float | None) -> int | None:
     return None if m is None else round(units.m_to_ft(m))
 
@@ -487,6 +558,7 @@ def record(r: ExportRow) -> dict:
     b = r.turbine_buildable
     f = r.turbine_farmland
     lc = r.turbine_landcover
+    pv = r.privacy
     return {
         "status": r.status,
         "rank": r.rank,
@@ -495,6 +567,7 @@ def record(r: ExportRow) -> dict:
         "overall_score": _round(r.overall_score, 1),
         "buildability_subscore": _round(r.buildability_subscore, 1),
         "agriculture_subscore": _round(r.agriculture_subscore, 1),
+        "privacy_subscore": _round(r.privacy_subscore, 1),
         "logistics_subscore": _round(r.logistics_subscore, 1),
         "hydro_score": _round(r.hydro_score, 1),
         "power_subscore": _round(r.power_subscore, 1),
@@ -562,6 +635,17 @@ def record(r: ExportRow) -> dict:
         "turbine_parcel_developed_acres": lc and round(lc.developed_acres, 1),
         "turbine_parcel_canopy_pct": lc and _round(lc.canopy_pct, 0),
         "landcover_flags": "; ".join(r.landcover_flags),
+        "home_site": pv and pv.home_site,
+        "home_site_lat": pv and round(pv.lat, 6),
+        "home_site_lon": pv and round(pv.lon, 6),
+        "buildings_quarter_mile": pv and pv.buildings_quarter_mile,
+        "buildings_half_mile": pv and pv.buildings_half_mile,
+        "buildings_per_sqmi": pv and round(pv.buildings_per_sqmi, 1),
+        "nearest_building_ft": pv and _ft(pv.nearest_building_m),
+        "turbine_parcel_buildings": pv and pv.parcel_buildings,
+        "home_public_road_ft": pv and _ft(pv.public_road_m),
+        "road_woods_ft": pv and _ft(pv.road_woods_m),
+        "privacy_flags": "; ".join(r.privacy_flags),
         "explanation": r.explanation.get("summary", ""),
     }
 
@@ -742,6 +826,7 @@ def caveats(info: RunInfo) -> list[str]:
         _buildable_caveat(info),
         _farmland_caveat(info),
         _landcover_caveat(info),
+        _privacy_caveat(info),
         *_overall_caveat(info),
     ]
 
@@ -905,6 +990,35 @@ def _landcover_caveat(info: RunInfo) -> str:
     )
 
 
+def _privacy_caveat(info: RunInfo) -> str:
+    p = info.privacy
+    if p is None:
+        return (
+            "**Privacy isn't computed**, so its columns are empty and the overall score leaves "
+            "it out. Run `make ingest` and `make analyze` (or `uv run hhsf ingest buildings` and "
+            "`uv run hhsf analyze privacy`), then score and export again."
+        )
+    return (
+        "**Privacy (FR-6) is measured at a home site**: the turbine parcel's buildable ground "
+        "nearest the turbine end (`home_site` buildable), or the turbine end where there's "
+        "none (`turbine_end`); `home_site_lat`/`lon` say where. Buildings are Microsoft's "
+        f"machine-traced footprints ({p.buildings_version or 'Global ML Building Footprints'}) "
+        f"of {p.min_footprint_sqft:,.0f} sq ft or more, not on the turbine parcel: "
+        "`buildings_quarter_mile`, `buildings_half_mile`, `nearest_building_ft`, and "
+        "`buildings_per_sqmi` within 1 mile. `turbine_parcel_buildings` counts the ones on the "
+        "parcel itself (a house or barn that may come with it). `road_woods_ft` is how many "
+        "feet of the straight line from the home site toward the nearest public road "
+        f"(`home_public_road_ft`) are woods ({p.woods_canopy_pct:g}%+ tree canopy, NLCD 2021), "
+        "over its first 1,320 ft. Flags `neighbor_within_660_ft`, `open_to_road` (a public road "
+        "within 500 ft with under 100 ft of woods between) and `buildings_on_parcel` remove "
+        "nothing. **Where the data runs out:** footprints say nothing about use, so a barn "
+        "counts as a neighbor and a farmstead as 2 or 3; the imagery is a few years old "
+        "(new houses are missing, torn-down ones still there); hills that hide a house from "
+        "the road aren't counted, nor winter, when leaf-off hardwoods screen far less; and "
+        "only roads in the loaded counties count."
+    )
+
+
 def _overall_caveat(info: RunInfo) -> list[str]:
     o = info.score_params.get("scoring_profile", {}).get("overall")
     if not o:
@@ -913,10 +1027,21 @@ def _overall_caveat(info: RunInfo) -> list[str]:
         "**The overall score ranks each tier** (FR-7, D-15): the hydro part plus "
         "buildability (buildable ground on the turbine parcel, how far it is, and the nearest "
         "public road), agriculture (prime farmland, cropland and pasture on the turbine "
-        "parcel) and logistics (drive time), weighted "
+        "parcel), "
+        + (
+            "privacy (neighbors, density and road screening at the home site, D-17), "
+            if o.get("privacy")
+            else ""
+        )
+        + "and logistics (drive time), weighted "
         + ", ".join(f"{k} {v:g}" for k, v in o.get("weights", {}).items())
-        + ". Privacy (FR-6) isn't built, so it's left out and the other weights are rescaled, "
-        "as is any part with no data for a corridor (no turbine parcel, no drive time): "
+        + (
+            ". A part with no data for a corridor"
+            if o.get("privacy")
+            else ". Privacy (FR-6) isn't in this profile, so it's left out and the other "
+            "weights are rescaled, as is any part with no data for a corridor"
+        )
+        + " (no turbine parcel, no drive time) is left out and the rest rescaled: "
         "missing data is never scored as zero. Tiers still come first, so a low-confidence "
         "or low-flow corridor never outranks a medium one, and overall scores only compare "
         "within a tier. The sub-score columns show each part; the site data is read when "
@@ -987,6 +1112,16 @@ def _drive(r: ExportRow) -> str:
     return f"{r.drive_minutes:.0f}" + (" (outside)" if r.in_drive_area is False else "")
 
 
+def _neighbors(r: ExportRow) -> str:
+    """Other buildings within 1/4 mile of the home site, and the nearest one."""
+    p = r.privacy
+    if p is None:
+        return "–"
+    if p.nearest_building_m is None:
+        return "0"
+    return f"{p.buildings_quarter_mile} (nearest {units.m_to_ft(p.nearest_building_m):,.0f} ft)"
+
+
 def tier_table(rows: list[ExportRow], tier: str) -> list[str]:
     if tier == scoring.HEAD_ONLY:
         header = [
@@ -1003,6 +1138,7 @@ def tier_table(rows: list[ExportRow], tier: str) -> list[str]:
             "Turbine flood zone",
             "Buildable (ac)",
             "Prime / cropland (ac)",
+            "Buildings within 1/4 mi",
             "Public road (ft)",
             "Drive (min)",
             "NHDPlus ID",
@@ -1022,6 +1158,7 @@ def tier_table(rows: list[ExportRow], tier: str) -> list[str]:
                 _flood(r),
                 _buildable(r),
                 _farmland(r),
+                _neighbors(r),
                 _public_road(r),
                 _drive(r),
                 str(r.nhdplusid),
@@ -1045,6 +1182,7 @@ def tier_table(rows: list[ExportRow], tier: str) -> list[str]:
             "Turbine flood zone",
             "Buildable (ac)",
             "Prime / cropland (ac)",
+            "Buildings within 1/4 mi",
             "Public road (ft)",
             "Drive (min)",
             "NHDPlus ID",
@@ -1066,6 +1204,7 @@ def tier_table(rows: list[ExportRow], tier: str) -> list[str]:
                 _flood(r),
                 _buildable(r),
                 _farmland(r),
+                _neighbors(r),
                 _public_road(r),
                 _drive(r),
                 str(r.nhdplusid),
@@ -1198,6 +1337,36 @@ def _landcover_counts(info: RunInfo, ranked: list[ExportRow]) -> list[str]:
     ]
 
 
+def _privacy_counts(info: RunInfo, ranked: list[ExportRow]) -> list[str]:
+    if info.privacy is None:
+        return []
+    found = [r.privacy for r in ranked if r.privacy]
+    n = Counter(f for r in ranked for f in r.privacy_flags)
+    return [
+        *_table(
+            ["Privacy at the home site (ranked)", "Corridors"],
+            [
+                [
+                    "No other building within 1/4 mile",
+                    str(sum(p.buildings_quarter_mile == 0 for p in found)),
+                ],
+                [
+                    "Another building within 660 ft (1/8 mile)",
+                    str(n[NEIGHBOR_CLOSE]),
+                ],
+                ["Open to a public road within 500 ft", str(n[OPEN_TO_ROAD])],
+                ["Buildings on the turbine parcel already", str(n[BUILDINGS_ON_PARCEL])],
+                [
+                    "Home site at the turbine end (no buildable ground)",
+                    str(sum(p.home_site != "buildable" for p in found)),
+                ],
+                ["Not computed", str(n[PRIVACY_NOT_COMPUTED])],
+            ],
+        ),
+        "",
+    ]
+
+
 def _count(rows: list[ExportRow], in_area: bool) -> str:
     return str(sum(r.in_drive_area is in_area for r in rows))
 
@@ -1279,6 +1448,7 @@ def render_report(info: RunInfo, rows: list[ExportRow], top_n: int = 20) -> str:
         *_buildable_counts(info, ranked),
         *_farmland_counts(info, ranked),
         *_landcover_counts(info, ranked),
+        *_privacy_counts(info, ranked),
         "## Caveats",
         "",
         *[f"- {c}" for c in caveats(info)],
