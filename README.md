@@ -27,7 +27,7 @@ This is different from a real estate search. It starts from the terrain and wate
 | Scoring and ranking: streams of 1 kW or more scored 0–100 on power and head with an explanation for each score, ranked by confidence; streams under 1 kW on a rough flow estimate listed last as "low flow" | |
 | Exports: the ranked shortlist as CSV and GeoJSON, every stream with the reason it was or wasn't listed, and a summary report for planning visits | Parcels for Hamilton County (Chattanooga) and other counties outside the state's parcel layer |
 | Parcels and owners: each stretch's turbine parcel (ID, acreage, owner) and every parcel it crosses, in the exports; property lines on the map. Owner names stay on this computer, never on the map | A minimum acreage filter (D-03 is open; small parcels are only flagged) |
-| Flood zones: FEMA's flood zone at each stretch's turbine end and how much of the stretch is in the 100-year floodplain, in the exports and the map popup; flood zones on the map | Filtering or scoring on flood zones (D-12 is open; they're only flagged) |
+| Flood zones: FEMA's flood zone at each stretch's turbine end and how much of the stretch is in the 100-year floodplain, in the exports and the map popup; flood zones on the map | Checking for buildable ground outside the floodplain on each parcel (flood zones are flagged only, by decision D-12) |
 
 ## How it works
 
@@ -344,7 +344,7 @@ uv run pytest --cov=hhsf.analysis --cov-report=term-missing
 - **Parcel lines are for reference, not surveys.** The state's layer is "not intended for commercial use" and comes with no warranty; owner names can lag a sale. Check the deed through the parcel's TPAD link before contacting anyone. Details: [docs/ASSUMPTIONS.md](docs/ASSUMPTIONS.md#parcels-and-owners).
 - **140 ranked stretches have no parcel.** They end outside the five counties (streams within 500 m of a county line are analyzed for both counties), where no parcels are loaded. Streams are often property lines, so a stretch usually crosses the parcels on both banks; the turbine parcel is just the one under its bottom end.
 - **The three biggest 1 kW streams sit on very large parcels** (1,355 to 10,481 acres), likely timber, conservation or public land. Check the owner type before planning a visit.
-- **Flood zones are flagged, not used in the score (D-12 is open).** 369 of the five counties' 5,233 ranked stretches touch FEMA's 100-year floodplain: 331 have their turbine end in it, 13 of those in a floodway. None of the six 1 kW streams has its turbine end in it: all six end in zone X (minimal hazard), and only Bethel Creek's stretch crosses the floodplain, for about 240 ft. See [docs/ASSUMPTIONS.md](docs/ASSUMPTIONS.md#flood-zones).
+- **Flood zones are flagged, not used in the score (decided, D-12).** 369 of the five counties' 5,233 ranked stretches touch FEMA's 100-year floodplain: 331 have their turbine end in it, 13 of those in a floodway. None of the six 1 kW streams has its turbine end in it: all six end in zone X (minimal hazard), and only Bethel Creek's stretch crosses the floodplain, for about 240 ft. See [docs/ASSUMPTIONS.md](docs/ASSUMPTIONS.md#flood-zones).
 - **"Minimal hazard" on a small creek usually means unstudied.** FEMA generally maps streams draining about a square mile or more; most of the ranked stretches are on smaller creeks, inside zone X. Grundy County's flood map shows only a handful of studied streams. 161 ranked stretches show "not mapped": 158 end outside the five counties, and 3 sit within 8 m of a county line where FEMA's and Census's county outlines differ.
 - **A long stream can show its rank label twice on the map.** Map tiles cut streams at tile edges and each piece gets a label. Both labels are the same stream; click either for its details.
 
@@ -387,5 +387,5 @@ From [site-selection.md §7](site-selection.md):
 3. ~~Scoring and ranking against the 1 kW minimum, with an explanation for every score~~ Still to do: the original FR-3 weight table as a fallback profile, and the weighting sensitivity check
 4. ~~Exports (CSV, GeoJSON), a summary report, and the scores on the map~~
 5. ~~Parcels and ownership~~ Still to do: a minimum acreage filter once D-03 is decided, and Hamilton County's own parcel source
-6. ~~Flood zones~~ (flagged only) Still to do: decide whether they filter or penalize anything (D-12)
+6. ~~Flood zones~~ Flagged only (D-12). Still to do: check each parcel for buildable ground outside the floodplain, with soils and slope
 7. Then: soils, roads and drive time, and the full Chattanooga region

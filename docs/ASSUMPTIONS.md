@@ -315,7 +315,7 @@ On the five counties' latest runs, 4,779 of 4,919 ranked corridors have a turbin
 
 ## Flood zones
 
-PART 15 shows, for every corridor, whether its turbine end and its stretch sit in a FEMA flood hazard area. It's a flag for planning visits, not a filter (D-12 is open).
+PART 15 shows, for every corridor, whether its turbine end and its stretch sit in a FEMA flood hazard area. It's a flag for planning visits, not a filter (decided, D-12).
 
 - **Source:** FEMA's National Flood Hazard Layer (NFHL), the "Flood Hazard Zones" layer of its public ArcGIS service (`config/data_sources.yaml`, `fema_nfhl`). It holds the *effective* flood maps (FIRMs) as polygons; preliminary and pending maps are a separate service and aren't used.
 - **Terms:** a US Government work, generally public domain; FEMA's service page states no license. It's a planning screen, not a flood determination: for a real property, the FIRM panel itself (or a Letter of Map Amendment) is what counts.
@@ -344,6 +344,6 @@ Computed by two database views (migration 0011), like the parcel links, so they 
 - **Turbine zone** (`corridor_turbine_flood_zones`): the zone under the bottom of the stretch. Where zones meet, the more hazardous one wins: floodway, then SFHA, then the rest. No zone there means "not mapped" (`flood_zone_not_mapped`).
 - **Stretch zones** (`corridor_flood_zones`): every zone the stretch runs through and how much of it is in each; `stretch_sfha_ft` in the exports is the part in the 100-year floodplain.
 - Zones are stored in pieces of at most 256 corners (the minimal-hazard zone can be one polygon the size of a county), which keeps these lookups fast. The pieces keep FEMA's zone ID (`fld_ar_id`).
-- **Flags, not filters:** `turbine_in_floodway`, `turbine_in_sfha` and `stretch_in_sfha`. Nothing is filtered or re-ranked (D-12). A run-of-river intake and turbine normally sit right by the creek, so being in its floodplain mostly means a permit and flood-proofing the powerhouse; the house site is what needs to stay out, and that's chosen on the visit.
+- **Flags, not filters:** `turbine_in_floodway`, `turbine_in_sfha` and `stretch_in_sfha`. Nothing is filtered or re-ranked, by decision (D-12). A run-of-river intake and turbine normally sit right by the creek, so being in its floodplain mostly means a permit and flood-proofing the powerhouse; the house site is what needs to stay out, and that's chosen on the visit.
 
 On the five counties' latest runs, 369 of 5,233 ranked corridors touch the 100-year floodplain. 331 have their turbine end in it (240 in zone A, 91 in AE), 13 of those in a floodway; 4,735 end in minimal-hazard zone X. 161 are "not mapped": 158 end outside the five counties, and 3 sit within 8 m of a county line, where FEMA's county outline and the Census one differ by a few meters. None of the six 1 kW streams has its turbine end in a flood hazard area: all six end in zone X, minimal hazard. Only Bethel Creek's stretch crosses the 100-year floodplain, for about 240 ft (72 m).
