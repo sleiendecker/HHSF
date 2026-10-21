@@ -20,7 +20,7 @@ This is different from a real estate search. It starts from the terrain and wate
 | Works now | Not built yet |
 | --- | --- |
 | Loads the county boundary, every perennial (year-round) stream in the county and a 10 m elevation model into a local database and `data/raw/` | A way to spot spring-fed small streams (the low-flow estimates for small streams are typical-basin numbers) |
-| Records each stream's elevation drop, length, slope, drainage area and estimated mean flow | Soils, roads |
+| Records each stream's elevation drop, length, slope, drainage area and estimated mean flow | Soils |
 | Hydro corridors: the steepest 1,000 ft stretch of each stream (where one penstock would get the most drop), found on the elevation model | |
 | Map viewer: each stream's best stretch colored by its hydro score and styled by confidence, with a legend; click one for its score explained in plain words. Light, satellite or topo map underneath | |
 | Hydro analysis: head over that stretch, reliable low flow (Q90 from USGS StreamStats, or, for streams too small for it, the typical StreamStats low flow per square mile of their river basin; the Whitwell stream gauge where StreamStats is down) and firm power, saved as a numbered run | |
@@ -28,6 +28,7 @@ This is different from a real estate search. It starts from the terrain and wate
 | Exports: the ranked shortlist as CSV and GeoJSON, every stream with the reason it was or wasn't listed, and a summary report for planning visits | Parcels for Hamilton County (Chattanooga) and other counties outside the state's parcel layer |
 | Parcels and owners: each stretch's turbine parcel (ID, acreage, owner) and every parcel it crosses, in the exports; property lines on the map. Owner names stay on this computer, never on the map | A minimum acreage filter (D-03 is open; small parcels are only flagged) |
 | Flood zones: FEMA's flood zone at each stretch's turbine end and how much of the stretch is in the 100-year floodplain, in the exports and the map popup; flood zones on the map | Checking for buildable ground outside the floodplain on each parcel (flood zones are flagged only, by decision D-12) |
+| Roads and drive time: the 1-hour drive area from downtown Chattanooga (the search region, D-02) and the counties it touches; each stretch's nearest road and its type, the nearest public road, and the drive from Chattanooga, in the exports and the map popup; roads and the drive area on the map | The 15 other counties the 1-hour area touches (Hamilton and north Georgia first); the overall score (FR-7), where drive time becomes the Logistics part and road access part of Buildability (flagged only until then, D-02) |
 
 ## How it works
 
@@ -104,11 +105,11 @@ This starts PostGIS and Martin in Docker and creates the database tables. Data i
 make ingest
 ```
 
-This downloads the Sequatchie County boundary from Census, the stream data and the elevation model from USGS, the property parcels from the Tennessee Comptroller and the flood zones from FEMA, then loads them. The first run downloads about **270 MB** of USGS stream files (one per river basin the county touches) plus about **84 MB** of elevation data, and takes **a couple of minutes** on a typical connection; after that the files are reused from `data/raw/` and a re-run takes about 30 seconds.
+This downloads the Sequatchie County boundary from Census, the stream data and the elevation model from USGS, the property parcels from the Tennessee Comptroller, the flood zones from FEMA and the roads from Census, then loads them. The first run downloads about **270 MB** of USGS stream files (one per river basin the county touches) plus about **84 MB** of elevation data, and takes **a couple of minutes** on a typical connection; after that the files are reused from `data/raw/` and a re-run takes about 30 seconds.
 
 The elevation model is USGS 3DEP at 1/3 arc-second (about 10 m). USGS publishes it in 1×1 degree tiles (Sequatchie's is 472 MB), but only the part under the county's streams is read, about 84 MB, saved as a 48 MB file in `data/raw/usgs_3dep_13/`. To fetch just that step: `uv run hhsf ingest terrain`.
 
-Parcels take about 10 seconds per county and are cached in `data/raw/tn_parcels/`. The state updates them monthly; `uv run hhsf ingest parcels --refresh` downloads them again. Owner names come with the parcels and are kept in their own table, which the map never reads (see [docs/ASSUMPTIONS.md](docs/ASSUMPTIONS.md#parcels-and-owners)). Flood zones come from FEMA, one county at a time, cached in `data/raw/fema_nfhl/` (about 50 MB for the five counties). FEMA's server is slow and drops connections under load, so the first download takes from a few seconds to about 5 minutes per county (Rhea, the largest); the tool retries, and a re-run reuses the cache and takes a few seconds. Streams are saved as each file is read, so the map starts filling in before the run finishes. If it fails partway, run it again: nothing is lost or duplicated.
+Parcels take about 10 seconds per county and are cached in `data/raw/tn_parcels/`. The state updates them monthly; `uv run hhsf ingest parcels --refresh` downloads them again. Owner names come with the parcels and are kept in their own table, which the map never reads (see [docs/ASSUMPTIONS.md](docs/ASSUMPTIONS.md#parcels-and-owners)). Flood zones come from FEMA, one county at a time, cached in `data/raw/fema_nfhl/` (about 50 MB for the five counties). FEMA's server is slow and drops connections under load, so the first download takes from a few seconds to about 5 minutes per county (Rhea, the largest); the tool retries, and a re-run reuses the cache and takes a few seconds. Roads come from the Census TIGER/Line file for the county (about 1 MB, a few seconds), cached in `data/raw/tiger_roads/`. Streams are saved as each file is read, so the map starts filling in before the run finishes. If it fails partway, run it again: nothing is lost or duplicated.
 
 **Other counties.** Marion, Bledsoe, Grundy and Rhea are set up in `config/aoi/`. Run each step with `AOI=<key>`, one county at a time:
 
@@ -149,7 +150,19 @@ make score
 
 Scores the latest hydro run and prints the top 20. Streams of 1 kW or more get a 0–100 hydro score (70% power, 30% head), and every score is saved with an explanation of how it was reached. The list is ranked by confidence first: every stream whose low flow came from StreamStats ranks above every stream whose flow is a rougher estimate, then streams with no flow estimate ("head only"), then streams under 1 kW on a rough flow estimate ("low flow", ordered by power). Streams under 1 kW on a StreamStats flow are dropped, and so is any stream with under 10 ft of net head (too little drop for a small turbine). Each scoring is saved as a new numbered run in the `hydro_scores` table. Details: [docs/SCORING.md](docs/SCORING.md).
 
-### 7. Export the shortlist
+### 7. Drive times from Chattanooga
+
+```bash
+make routing
+make drive-area
+make drive-time
+```
+
+`make routing` starts [Valhalla](https://github.com/valhalla/valhalla), a routing engine, in Docker. The first time, it downloads OpenStreetMap road data for Tennessee, Georgia and Alabama (about 700 MB, into `data/valhalla/`) and builds a road graph from it, which took about 6 minutes here; later starts take seconds. `make up` doesn't start it; `make down` stops it.
+
+`make drive-area` builds the area within a 1-hour drive of downtown Chattanooga (D-02: the search region) and lists the counties it touches, with how much of each is inside, and which ones are already analyzed. `make drive-time` (per county, like the other steps: `AOI=<key>`) works out the drive from downtown Chattanooga to the bottom of every stream's stretch. Both are by car with no traffic. Run `make drive-time` again after each `make analyze`: a new hydro run has new stretches. The origin and the 60 minutes are in `config/drive_time.yaml`. Nothing is filtered or re-ranked on drive time or road distance; they're columns and flags. See [docs/ASSUMPTIONS.md](docs/ASSUMPTIONS.md#roads-and-drive-time).
+
+### 8. Export the shortlist
 
 ```bash
 make export
@@ -159,8 +172,8 @@ Writes the latest scoring to `data/outputs/sequatchie_tn/run_<N>/` (N is the sco
 
 | File | What's in it |
 | --- | --- |
-| `report.md` | Summary for planning visits: which runs and data it came from, the assumptions used, how many streams made the list, the top 20 of each confidence tier with each one's turbine parcel, owner and flood zone, how many stretches are in a flood zone, and the caveats. Start here. |
-| `shortlist.csv` | Every ranked stream, best first: score, net head (ft), firm power (W), firm flow (cfs and gallons per minute), drainage area (sq mi), the stretch's length (ft) and the whole stream's (mi), how the flow was estimated, a lat/lon point at the bottom of the stretch (where a turbine would go), and a one-line explanation. Then the property: the turbine parcel's ID, county, acreage (measured and on the deed), owner(s), street address and a link to its record on the Comptroller's site, plus every parcel the stretch crosses and their owners, and flags such as `parcel_under_min_acres`. Then flooding: FEMA's zone at the turbine end (`turbine_flood_zone`, e.g. A, AE or X, and its subtype), whether that's in the 100-year floodplain (`turbine_in_sfha`), how many feet of the stretch are (`stretch_sfha_ft`), and `flood_flags` such as `turbine_in_floodway` or `flood_zone_not_mapped`. Opens in Excel or Google Sheets. |
+| `report.md` | Summary for planning visits: which runs and data it came from, the assumptions used, how many streams made the list, the top 20 of each confidence tier with each one's turbine parcel, owner, flood zone, distance to a public road and drive time, how many stretches are in a flood zone or outside the 1-hour drive, and the caveats. Start here. |
+| `shortlist.csv` | Every ranked stream, best first: score, net head (ft), firm power (W), firm flow (cfs and gallons per minute), drainage area (sq mi), the stretch's length (ft) and the whole stream's (mi), how the flow was estimated, a lat/lon point at the bottom of the stretch (where a turbine would go), and a one-line explanation. Then the property: the turbine parcel's ID, county, acreage (measured and on the deed), owner(s), street address and a link to its record on the Comptroller's site, plus every parcel the stretch crosses and their owners, and flags such as `parcel_under_min_acres`. Then flooding: FEMA's zone at the turbine end (`turbine_flood_zone`, e.g. A, AE or X, and its subtype), whether that's in the 100-year floodplain (`turbine_in_sfha`), how many feet of the stretch are (`stretch_sfha_ft`), and `flood_flags` such as `turbine_in_floodway` or `flood_zone_not_mapped`. Then access: the nearest road to the turbine end (`turbine_road_ft`, its type and name), the nearest public road (`turbine_public_road_ft`), the drive from downtown Chattanooga (`drive_minutes`, `drive_miles`), whether the turbine end is in the 1-hour area (`in_drive_area`), and `access_flags` such as `outside_drive_area` or `nearest_road_not_public`. Opens in Excel or Google Sheets. |
 | `shortlist.geojson` | The same stretches as map lines, for QGIS, Google Earth or [geojson.io](https://geojson.io). Parcel IDs and acreage, but no owner names. |
 | `all_corridors.csv` | Every stream, including the ones that were dropped, with the reason. Use it to answer "why isn't this stream on the list?". |
 
@@ -168,7 +181,7 @@ Writes the latest scoring to `data/outputs/sequatchie_tn/run_<N>/` (N is the sco
 
 Exporting again overwrites that run's folder; earlier runs' folders are kept. `uv run hhsf export hydro --run-id N` exports an older score run.
 
-### 8. Open the map
+### 9. Open the map
 
 ```bash
 make web
@@ -201,7 +214,7 @@ Satellite and topo come from the USGS National Map and stop sharpening past abou
 
 ![The same stretch on the satellite map, with the map menu open: the top site sits in forest above a road and farm fields](docs/images/map-satellite.jpg)
 
-Click a stretch to see its score and why: how many points power and head each added, which part of the stream it is (how long the stretch is, and how long the whole stream is and how much it drops), the net head (ft), firm flow (cfs and gallons per minute), firm power (W), where the flow number came from, the confidence group and any warnings. The popup also shows the **turbine parcel** (the parcel under the bottom of the stretch: its ID and acreage) and how many parcels the stretch crosses, then the **FEMA flood zone** at the turbine end and how much of the stretch is in the 100-year floodplain. Tick **Show property lines** to draw parcel outlines (pink; pale yellow on satellite) from zoom 12. Owner names are only in the exports. Tick **Show FEMA flood zones** to shade floodways (dark blue), the rest of the 100-year floodplain (blue) and the 0.2% annual chance ("500-year") area (pale blue) from zoom 10; the rest is FEMA zone X, minimal hazard, and isn't shaded.
+Click a stretch to see its score and why: how many points power and head each added, which part of the stream it is (how long the stretch is, and how long the whole stream is and how much it drops), the net head (ft), firm flow (cfs and gallons per minute), firm power (W), where the flow number came from, the confidence group and any warnings. The popup also shows the **turbine parcel** (the parcel under the bottom of the stretch: its ID and acreage) and how many parcels the stretch crosses, then the **FEMA flood zone** at the turbine end and how much of the stretch is in the 100-year floodplain. Tick **Show property lines** to draw parcel outlines (pink; pale yellow on satellite) from zoom 12. Owner names are only in the exports. Tick **Show FEMA flood zones** to shade floodways (dark blue), the rest of the 100-year floodplain (blue) and the 0.2% annual chance ("500-year") area (pale blue) from zoom 10; the rest is FEMA zone X, minimal hazard, and isn't shaded. The popup's last two lines are the **nearest road** (Census TIGER/Line: distance, type and name, and the nearest public road if that's farther) and the **drive from Chattanooga** (minutes and miles, and whether it's inside the 1-hour area). Tick **Show Census roads** to draw roads from zoom 10 (orange: public; dashed brown: 4WD trails and private roads), and **Show 1-hour drive from downtown Chattanooga** to outline the search region in green.
 
 Untick **Show hydro scores** to go back to plain streams (bigger streams darker), where a click shows elevation drop, length, slope, drainage area and estimated mean flow.
 
@@ -225,6 +238,10 @@ Run `make` to list all commands.
 | `uv run hhsf ingest terrain` | Just the elevation model step (after the streams are loaded) |
 | `uv run hhsf ingest parcels --aoi <key>` | Just the parcels step; add `--refresh` to download the monthly update |
 | `uv run hhsf ingest flood --aoi <key>` | Just the FEMA flood zones step; add `--refresh` to download again after a flood map revision |
+| `uv run hhsf ingest roads --aoi <key>` | Just the Census roads step; add `--refresh` to download again |
+| `make routing` | Start the Valhalla drive-time service (the first start downloads OpenStreetMap and builds a road graph) |
+| `make drive-area` | Build the 1-hour drive area from downtown Chattanooga and list the counties it touches (after `make routing`) |
+| `make drive-time AOI=<key>` | Drive time from downtown Chattanooga to each stretch of the latest hydro run (after `make routing` and `make analyze`) |
 | `make analyze` | Find each stream's steepest stretch, then compute head, low flow and firm power for it (after `make ingest`) |
 | `uv run hhsf analyze hydro --penstock-ft 2000` | Same, allowing a longer penstock (D-08 sensitivity check) |
 | `uv run hhsf analyze hydro --no-terrain` | Same, but each whole stream is one corridor (the old method; overstates long streams) |
@@ -256,6 +273,7 @@ uv run hhsf --help
 | `config/data_sources.yaml` | Where each dataset is downloaded from, plus license and version notes. `hydrography_source` picks the stream source: `bulk` (file download, default) or `service` (web service). The `streamstats` section lists its endpoints and how hard to call it. |
 | `config/hydro.yaml` | Hydro analysis assumptions: the longest penstock a corridor may assume (1,000 ft), efficiency, net-head and diversion allowances, the 1 kW target, which StreamStats statistic to use, and where to ask StreamStats again when it outlines the wrong watershed (`pour_point_retry_shares`, `min_pour_point_area_share`). Values come from [docs/DECISIONS.md](docs/DECISIONS.md); change them here and re-run. |
 | `config/parcels.yaml` | The minimum-acreage placeholder (D-03) that flags small parcels in the exports. |
+| `config/drive_time.yaml` | Where drives start (downtown Chattanooga, a placeholder for an address), how long (60 minutes, D-02), and which roads a drive may end on. Change it, then run `make drive-area` and `make drive-time` again. The OpenStreetMap downloads are listed in `docker-compose.yml` (the `routing` service). |
 | `config/scoring_profiles/*.yaml` | Scoring rules: the 1 kW cutoff, the head and power breakpoints, the 70/30 weights and the confidence tiers. To change one, copy the file to a new version and score again (see [docs/SCORING.md](docs/SCORING.md)). |
 | `.env` (optional) | Override the database connection (`DATABASE_URL`). Copy from `.env.example`. Only needed if you change the database port. |
 
@@ -270,7 +288,7 @@ hydro-homestead/
 ├── docs/SCORING.md          # How corridors are scored and ranked
 ├── docs/images/             # Screenshots for this README
 ├── Makefile                 # Common commands
-├── docker-compose.yml       # PostGIS + Martin
+├── docker-compose.yml       # PostGIS + Martin, and Valhalla (drive times)
 ├── pyproject.toml           # Python dependencies and tool settings
 ├── alembic.ini
 ├── config/
@@ -278,12 +296,13 @@ hydro-homestead/
 │   ├── data_sources.yaml    # Dataset endpoints and licenses
 │   ├── hydro.yaml           # Hydro analysis assumptions
 │   ├── parcels.yaml         # Minimum-acreage placeholder (D-03)
+│   ├── drive_time.yaml      # Drive-time origin and minutes (D-02)
 │   └── scoring_profiles/    # Versioned scoring rules
 ├── src/hhsf/                # Python pipeline
 │   ├── cli.py               # `hhsf` command-line tool
 │   ├── core/                # Config, database, coordinate systems, units
 │   ├── ingest/              # Downloading and loading each dataset
-│   └── analysis/            # Hydro calculations, StreamStats client, scoring, runs, exports
+│   └── analysis/            # Hydro calculations, StreamStats and Valhalla clients, scoring, runs, exports
 ├── migrations/versions/     # Database table definitions
 ├── martin/martin.yaml       # Which tables the tile server publishes
 ├── frontend/                # React + MapLibre map app (src/scores.ts: score colors and popup; src/basemaps.ts and BasemapControl.ts: light, satellite and topo maps)
@@ -292,6 +311,7 @@ hydro-homestead/
 │   ├── integration/         # Starts a throwaway PostGIS in Docker
 │   └── fixtures/            # Small synthetic test data
 └── data/                    # Downloaded data cache and exports (not committed)
+    ├── valhalla/            # OpenStreetMap downloads and Valhalla's road graph
     └── outputs/             # `make export` results, one folder per score run
 ```
 
@@ -306,10 +326,12 @@ hydro-homestead/
 | Streams, elevations, drainage area, flow estimates | [USGS NHDPlus High Resolution](https://www.usgs.gov/national-hydrography/nhdplus-high-resolution) (final release; HU4 file geodatabases from the National Map, or its web service) | Public domain |
 | Property parcels and owners | [Tennessee Comptroller of the Treasury](https://comptroller.tn.gov/office-functions/pa/gisredistricting/redistricting-and-land-use-maps/parcel-data.html) statewide parcel layer ("Tennessee Property Boundaries Public Use", on TNMap), 86 counties, updated monthly | Public service, not for commercial use, no warranty. Owner names are personal information: local exports only |
 | Flood zones | [FEMA National Flood Hazard Layer](https://www.fema.gov/flood-maps/national-flood-hazard-layer) (effective flood maps, ArcGIS service at hazards.fema.gov). All five counties have countywide digital maps (2008–2010, some panels revised 2025) | US Government work, generally public domain (FEMA states no license). A planning screen, not a flood determination |
+| Roads | [US Census TIGER/Line](https://www.census.gov/geographies/mapping-files/time-series/geo/tiger-line-file.html) roads, one file per county (2025 release) | Public domain |
+| Drive times and the 1-hour area | [Valhalla](https://github.com/valhalla/valhalla) routing engine (MIT), run locally, on [OpenStreetMap](https://www.openstreetmap.org/copyright) roads for TN, GA and AL ([Geofabrik](https://download.geofabrik.de/) extracts) | ODbL: credit "© OpenStreetMap contributors" wherever drive times or the area are shown |
 | Basemap (Light) | [OpenFreeMap](https://openfreemap.org/), © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors | ODbL |
 | Basemap (Satellite, Topo) | [USGS The National Map](https://www.usgs.gov/programs/national-geospatial-program/national-map) tile services USGSImageryOnly (USDA NAIP aerial photos) and USGSTopo | Public domain |
 
-Planned sources (soils, roads, building footprints, rainfall) are listed in [site-selection.md §4](site-selection.md).
+Planned sources (soils, building footprints, rainfall) are listed in [site-selection.md §4](site-selection.md).
 
 ## Testing
 
@@ -317,7 +339,7 @@ Planned sources (soils, roads, building footprints, rainfall) are listed in [sit
 make test
 ```
 
-Unit tests run without Docker. They include reading a tiny synthetic NHDPlus HR file built during the test, so no large files are needed, the steepest-stretch search on made-up elevation profiles and a tiny made-up elevation model, the head, flow and power calculations against a fake StreamStats service (no network), and every scoring and ranking rule. Integration tests start a temporary PostGIS container, run the migrations, load sample streams, check that re-loading doesn't create duplicates, and run the hydro analysis (with and without an elevation model), scoring and exports, including linking corridors to parcels and checking that owner names reach the CSVs but not the GeoJSON, and linking corridors to flood zones (the floodway wins where zones meet; turbine ends off the map are flagged). A unit test fails if any map layer in `martin/martin.yaml` gets an owner or address column.
+Unit tests run without Docker. They include reading a tiny synthetic NHDPlus HR file built during the test, so no large files are needed, the steepest-stretch search on made-up elevation profiles and a tiny made-up elevation model, the head, flow and power calculations against a fake StreamStats service (no network), and every scoring and ranking rule. Integration tests start a temporary PostGIS container, run the migrations, load sample streams, check that re-loading doesn't create duplicates, and run the hydro analysis (with and without an elevation model), scoring and exports, including linking corridors to parcels and checking that owner names reach the CSVs but not the GeoJSON, and linking corridors to flood zones (the floodway wins where zones meet; turbine ends off the map are flagged), and to roads (interstates never count as the nearest road) and drive times. The Valhalla client is tested against a fake service: batching, a request that fails over one point, and points with no route to a public road. A unit test fails if any map layer in `martin/martin.yaml` gets an owner or address column.
 
 To see test coverage of the calculation code:
 
@@ -346,11 +368,15 @@ uv run pytest --cov=hhsf.analysis --cov-report=term-missing
 - **The three biggest 1 kW streams sit on very large parcels** (1,355 to 10,481 acres), likely timber, conservation or public land. Check the owner type before planning a visit.
 - **Flood zones are flagged, not used in the score (decided, D-12).** 369 of the five counties' 5,233 ranked stretches touch FEMA's 100-year floodplain: 331 have their turbine end in it, 13 of those in a floodway. None of the six 1 kW streams has its turbine end in it: all six end in zone X (minimal hazard), and only Bethel Creek's stretch crosses the floodplain, for about 240 ft. See [docs/ASSUMPTIONS.md](docs/ASSUMPTIONS.md#flood-zones).
 - **"Minimal hazard" on a small creek usually means unstudied.** FEMA generally maps streams draining about a square mile or more; most of the ranked stretches are on smaller creeks, inside zone X. Grundy County's flood map shows only a handful of studied streams. 161 ranked stretches show "not mapped": 158 end outside the five counties, and 3 sit within 8 m of a county line where FEMA's and Census's county outlines differ.
+- **Drive times and road distances are flagged, not used in the score.** 1,266 of the 4,919 ranked stretches on the map end inside the 1-hour drive area (from downtown Chattanooga, no traffic). Of the six 1 kW streams, only Marion's unnamed stream (48 min) and Rogers Branch (54 min) are inside; the three Grundy streams are 83–100 minutes away and Bethel Creek about 75. They stay flags until the overall score (FR-7) is built, where drive time is the 10% Logistics part and road access part of Buildability (D-02). See [docs/ASSUMPTIONS.md](docs/ASSUMPTIONS.md#roads-and-drive-time).
+- **The 1-hour area and the drive times can disagree near the edge.** The area is Valhalla's isochrone over every road; each drive time ends on the nearest public road to the turbine end, by a different calculation. About 8% of ranked stretches are inside the area at over 60 minutes or outside it at under 60. `in_drive_area` is the search-region flag; treat anything within ~10 minutes of the hour as borderline.
+- **TIGER misses most driveways and logging roads.** The nearest road is often a 4WD trail or private road (644 ranked stretches), and a public road in TIGER isn't proof of a right of way to the parcel. Median distance from a ranked turbine end to a public road: about 1,100 ft. Near a county line the nearest road can be in a county that isn't loaded, so the distance is overstated.
+- **34 ranked stretches have no drive time.** Valhalla failed on the point or found no route. 45 stretches whose nearest public road is in a gated or private section end on a track instead (`drive_ends_on_track`).
 - **A long stream can show its rank label twice on the map.** Map tiles cut streams at tile edges and each piece gets a label. Both labels are the same stream; click either for its details.
 
 ### Upcoming (will block later milestones)
 
-- **The 1-hour drive radius needs data we don't have yet.** It needs a road network and a routing tool to calculate drive times (D-02).
+- **The 1-hour drive area touches 20 counties; 5 are analyzed.** By share inside: Catoosa GA (100%), Dade GA (89%), Hamilton TN (85%), Whitfield GA (77%), Bradley TN (70%), Marion (58%), Sequatchie (55%), Walker GA (49%), DeKalb AL (16%), Rhea (12%), Gordon GA (11%), Jackson AL (8%), McMinn TN (5%), Grundy (5%), Murray GA (4%), Bledsoe (4%), and slivers of Polk, Franklin, Meigs and Coffee TN. Georgia and Alabama counties need their own parcel sources (the TN parcel layer is Tennessee only). Run `make drive-area` for the current list.
 - **Hamilton County (Chattanooga itself) isn't in the state parcel layer.** It, and eight other counties, keep their own parcels; the regional run will need Hamilton's source.
 - **Some decisions are still open.** Minimum acreage, budget and privacy weighting (D-03). Parcels are loaded, but small ones are only flagged until it's decided.
 - **Permits are outside the tool.** Putting a turbine on a Tennessee stream needs state (TDEC ARAP) and possibly federal (FERC) approval. The tool won't evaluate this, so every site needs a permitting check before it's a real option.
@@ -369,6 +395,8 @@ uv run pytest --cov=hhsf.analysis --cov-report=term-missing
 | `make analyze` says "StreamStats looks unavailable" | The USGS service is down or overloaded. The run still finishes with flagged fallback flows; run it again later to get Q90. |
 | `make export` leaves the parcel columns empty | Parcels aren't loaded: run `uv run hhsf ingest parcels --aoi <key>` (or `make ingest`), then export again. |
 | `make ingest` stops in the flood step with "Query failed after 4 attempts" | FEMA's server dropped the connection (it does under load). Run `uv run hhsf ingest flood --aoi <key>` again; finished pages in `data/raw/fema_nfhl/` are reused. |
+| `make drive-area` or `make drive-time` says "Valhalla isn't answering" | Run `make routing` and wait for it to finish (the first start builds the road graph, 5–30 minutes; `docker logs hydro-homestead-routing-1` shows progress). |
+| `make export` leaves the drive columns empty | Run `make drive-area`, then `make drive-time AOI=<key>`, then export again. After a new `make analyze`, run `make drive-time` again. |
 | `make export` leaves the flood columns empty | Flood zones aren't loaded: run `uv run hhsf ingest flood --aoi <key>`, then export again. |
 | **Show FEMA flood zones** shades nothing | Zoom in past zoom 10, and check <http://localhost:3100/catalog> lists `flood_zones`; if not, run `make up`. Small creeks often have no flood zone at all: FEMA didn't study them. |
 | **Show property lines** draws nothing | Zoom in past zoom 12 (about 1:150,000), and check <http://localhost:3100/catalog> lists `parcels`; if not, run `make up`. |
@@ -388,4 +416,5 @@ From [site-selection.md §7](site-selection.md):
 4. ~~Exports (CSV, GeoJSON), a summary report, and the scores on the map~~
 5. ~~Parcels and ownership~~ Still to do: a minimum acreage filter once D-03 is decided, and Hamilton County's own parcel source
 6. ~~Flood zones~~ Flagged only (D-12). Still to do: check each parcel for buildable ground outside the floodplain, with soils and slope
-7. Then: soils, roads and drive time, and the full Chattanooga region
+7. ~~Roads and drive time~~ Flagged only (D-02). Still to do: road frontage per parcel (FR-9), and the Logistics score (FR-7) from drive time
+8. Then: soils, and the rest of the Chattanooga region (the counties the 1-hour area touches)

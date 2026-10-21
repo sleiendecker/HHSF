@@ -53,6 +53,11 @@ Candidates from the plan: Hamilton, Sequatchie, Marion, Bledsoe, Rhea (TN); poss
 - Needs a road network and a routing tool to build the 1-hour area (see the missing-data notes in site-selection.md §2.C). Sequatchie County, the v0.1 test county, sits mostly inside it.
 - v0.1 stays Sequatchie-only; the 1-hour area is used from the regional run onward.
 
+**Built (PART 16, 2026-10-20).** The 1-hour area is computed by Valhalla (a routing engine run locally) on OpenStreetMap roads, by car with no traffic, from Miller Park downtown (`config/drive_time.yaml`). It touches 20 counties; by share inside: Catoosa GA 100%, Dade GA 89%, Hamilton 85%, Whitfield GA 77%, Bradley 70%, Marion 58%, Sequatchie 55%, Walker GA 49%, DeKalb AL 16%, Rhea 12%, Gordon GA 11%, Jackson AL 8%, McMinn 5%, Grundy 5%, Murray GA 4%, Bledsoe 4%, and slivers (1% or less) of Polk, Franklin, Meigs and Coffee. `make drive-area` prints the current list. Of the 4,919 ranked stretches in the five analyzed counties, 1,266 end inside it; of the six 1 kW streams, only Rogers Branch (54 min) and Marion's unnamed stream (48 min) do. Details: [ASSUMPTIONS.md](ASSUMPTIONS.md#roads-and-drive-time).
+
+- **Decided (owner, 2026-10-20: "whatever is in the reqs"): flagged only, for now.** The requirements put drive time in the **Logistics** score (10% of the overall score, FR-7) and road access in the **Buildability** score (20%, FR-4), not in the hydro score. Neither exists yet: buildability also needs slope and septic soils, and the overall score also needs agriculture and privacy. So drive time and road distance stay columns and flags (`outside_drive_area`, `nearest_road_not_public`), and nothing is dropped or re-ranked on them. The 1-hour area decides which counties to load, not which streams to keep: dropping stretches outside it would remove four of the six 1 kW streams over an edge that assumes no traffic and a placeholder origin. When the overall score is built, drive time becomes its Logistics part and road distance part of Buildability.
+- **Open (owner):** which counties to add next. The biggest unanalyzed shares are Hamilton (needs its own parcel source) and the north Georgia counties (need Georgia parcel and flood sources). Counties with under ~10% inside may not be worth a full ingest.
+
 ### D-03 · Minimum acreage, budget, privacy weight: **Owner** (not needed until parcels are added)
 
 - Minimum usable acreage for a homestead: placeholder **10 acres**
@@ -174,6 +179,7 @@ Decisions that barely move the top 20 keep their default and stop being discusse
 
 | Date | Decision | Change |
 | --- | --- | --- |
+| 2026-10-20 | D-02 | Built the 1-hour drive area (PART 16): touches 20 counties. Owner deferred to the requirements: drive time and road distance are flagged only until the overall score (FR-7) gives them its Logistics (10%) and Buildability (20%) parts |
 | 2026-10-20 | D-12 | Decided by the owner: FEMA flood zones (PART 15) are flagged only, never filtered or re-ranked; revisit for the house site with the buildable-land step |
 | 2026-10-20 | D-03 | Owner: parcels loaded (PART 14); minimum acreage only flags, filters nothing until D-03 is decided. Owner names stay out of map tiles and the repo, in a separate table read only by the local exports |
 | 2026-10-18 | All | Initial defaults |

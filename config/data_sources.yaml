@@ -178,3 +178,35 @@ tn_parcels:
   # Per-county shapefiles with the full assessment table (mailing address, values) come
   # through a form on this page, by hand only; not used.
   downloads: https://comptroller.tn.gov/office-functions/pa/gisredistricting/redistricting-and-land-use-maps/parcel-data.html
+
+tiger_roads:
+  description: >-
+    US Census Bureau TIGER/Line roads, one shapefile per county (all roads, named or not,
+    with the Census feature class MTFCC). Used for each turbine end's nearest road and its
+    type. Walkways, stairs, bike and bridle paths, and S1750 lines ("internal Census Bureau
+    use") aren't loaded; see hhsf.ingest.roads. TIGER misses most driveways and many
+    logging roads and farm tracks, so "nearest road" can be farther than the real access.
+  url: https://www2.census.gov/geo/tiger/TIGER2025/ROADS/
+  file_url: https://www2.census.gov/geo/tiger/TIGER{year}/ROADS/tl_{year}_{geoid}_roads.zip
+  year: 2025  # TIGER/Line comes out yearly (around September); bump to switch releases
+  license: Public domain (US Government work)
+  attribution: US Census Bureau TIGER/Line
+  version: TIGER/Line 2025 (files dated 2025-09)
+
+osm_valhalla:
+  description: >-
+    Drive times and the 1-hour drive area from Chattanooga (D-02), computed by Valhalla, an
+    open-source routing engine running locally in Docker (`make routing`), on OpenStreetMap
+    road data for Tennessee, Georgia and Alabama (Geofabrik daily extracts, downloaded once
+    into data/valhalla/). Car profile, no traffic. The extract URLs are set in
+    docker-compose.yml (the `routing` service's tile_urls); the origin and minutes in
+    config/drive_time.yaml.
+  url: https://download.geofabrik.de/north-america/us/
+  engine: https://github.com/valhalla/valhalla
+  license: >-
+    OpenStreetMap data is ODbL 1.0 (© OpenStreetMap contributors): credit it wherever the
+    drive-time area or drive times are shown. The area and times are a "produced work",
+    free to share with the credit; the road data itself, or a database built from it,
+    is share-alike (ODbL) if passed on. Valhalla is MIT licensed.
+  attribution: © OpenStreetMap contributors
+  version: Valhalla 3.9.1 on Geofabrik extracts  # the run records the road graph's build date

@@ -457,3 +457,87 @@ def test_report_says_when_flood_zones_are_not_loaded():
     report = export.render_report(INFO, ROWS)
     assert "No flood zones are loaded" in report
     assert "FEMA flood zones (ranked corridors" not in report
+
+
+# --- Roads and drive time -------------------------------------------------------
+
+TRAIL = export.Road(road_class="4wd_trail", name=None, public=False, distance_m=100.0)
+AREA = export.DriveArea(
+    origin_name="Downtown Chattanooga",
+    minutes=60,
+    built="2026-10-20",
+    engine_version="Valhalla 3.9.1, road graph built 2026-10-20",
+)
+FAR = row(
+    turbine_road=TRAIL,
+    turbine_public_road_m=804.672,  # half a mile
+    drive_minutes=83.4,
+    drive_km=101.4,
+    drive_road_point_m=30.48,
+    in_drive_area=False,
+    access_flags=export.access_flags(TRAIL, 83.4, False, True),
+)
+
+
+def test_access_flags():
+    local = export.Road("local", "Smith Mountain Rd", True, 50.0)
+    assert export.access_flags(TRAIL, 83.4, False, True) == (
+        export.OUTSIDE_DRIVE_AREA,
+        export.ROAD_NOT_PUBLIC,
+    )
+    assert export.access_flags(local, 40.0, True, True) == ()
+    assert export.access_flags(local, None, True, True) == (export.NO_DRIVE_TIME,)
+    assert export.access_flags(local, 40.0, True, True, drive_any_road=True) == (
+        export.DRIVE_ENDS_ON_TRACK,
+    )
+    # No drive-time area built: nothing to say about drives.
+    assert export.access_flags(local, None, None, False) == ()
+
+
+def test_record_has_roads_and_drive_time():
+    r = export.record(FAR)
+    assert r["turbine_road_ft"] == 328
+    assert r["turbine_road_type"] == "4WD trail"
+    assert r["turbine_road_name"] is None
+    assert r["turbine_public_road_ft"] == 2640
+    assert (r["drive_minutes"], r["drive_miles"], r["drive_road_point_ft"]) == (83, 63.0, 100)
+    assert r["in_drive_area"] is False
+    assert r["access_flags"] == "outside_drive_area; nearest_road_not_public"
+
+
+def test_record_without_roads_or_drive_time_is_blank():
+    r = export.record(row())
+    assert r["turbine_road_ft"] is None and r["drive_minutes"] is None
+    assert r["in_drive_area"] is None and r["access_flags"] == ""
+
+
+def test_road_columns_are_in_the_geojson():
+    props = export.to_geojson([FAR], INFO)["features"][0]["properties"]
+    assert props["turbine_public_road_ft"] == 2640 and props["drive_minutes"] == 83
+
+
+def test_report_counts_access_and_credits_openstreetmap():
+    loaded = replace(INFO, roads_version="TIGER/Line 2025, downloaded 2026-10-20", drive_area=AREA)
+    near = row(
+        2,
+        rank=2,
+        tier_rank=2,
+        turbine_road=export.Road("local", None, True, 50.0),
+        turbine_public_road_m=50.0,
+        drive_minutes=40.0,
+        in_drive_area=True,
+    )
+    report = export.render_report(loaded, [FAR, near])
+    assert "| Turbine end inside the 60-minute drive area | 1 |" in report
+    assert "| Turbine end outside it | 1 |" in report
+    assert "| Public road within 1/4 mile of the turbine end | 1 |" in report
+    assert "| Nearest road a 4WD trail or private road | 1 |" in report
+    assert "| 2,640 | 83 (outside) |" in report and "| 164 | 40 |" in report
+    assert "© OpenStreetMap contributors" in report and "Downtown Chattanooga" in report
+    assert "| osm_valhalla (at export) |" in report and "| tiger_roads (at export) |" in report
+
+
+def test_report_says_when_roads_and_drive_area_are_missing():
+    report = export.render_report(INFO, ROWS)
+    assert "No roads are loaded" in report and "No drive-time area is built" in report
+    assert "Roads and drive time (ranked corridors" not in report

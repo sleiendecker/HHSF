@@ -5,6 +5,7 @@ ACRES_PER_SQKM = 247.105
 GPM_PER_CFS = 448.831
 M3S_PER_CFS = 0.0283168
 SQKM_PER_SQMI = 2.58999
+KM_PER_MI = 1.609344
 
 
 def m_to_ft(m: float) -> float:
@@ -35,3 +36,7 @@ def sqkm_to_sqmi(sqkm: float) -> float:
 
 def sqmi_to_sqkm(sqmi: float) -> float:
     return sqmi * SQKM_PER_SQMI
+
+
+def km_to_mi(km: float) -> float:
+    return km / KM_PER_MI

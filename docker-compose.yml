@@ -34,5 +34,34 @@ services:
       db:
         condition: service_healthy
 
+  routing:
+    # Valhalla, the drive-time engine (PART 16). Not started by `make up`: run `make routing`.
+    # The first start downloads OpenStreetMap for Tennessee, Georgia and Alabama (~0.7 GB)
+    # into data/valhalla/ and builds a road graph from it (5-30 min); later starts reuse it.
+    # To rebuild from fresh OpenStreetMap data, empty data/valhalla/ and run `make routing`.
+    image: ghcr.io/valhalla/valhalla-scripted:3.9.1
+    environment:
+      tile_urls: >-
+        https://download.geofabrik.de/north-america/us/tennessee-latest.osm.pbf
+        https://download.geofabrik.de/north-america/us/georgia-latest.osm.pbf
+        https://download.geofabrik.de/north-america/us/alabama-latest.osm.pbf
+      use_tiles_ignore_pbf: "True"
+      build_tar: "True"
+      build_elevation: "False"
+      build_admins: "True"
+      build_time_zones: "False"
+      build_transit: "False"
+      server_threads: "4"
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./data/valhalla:/custom_files
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:8002/status || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 1h
+
 volumes:
   pgdata:

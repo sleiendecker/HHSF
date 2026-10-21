@@ -58,6 +58,31 @@ postgres:
         subtype: text
         sfha: bool
         floodway: bool
+    # Drivable roads from Census TIGER/Line (migration 0012), with their Census class
+    # (`road_class`: primary, secondary, local, 4wd_trail, private, ...). From zoom 10.
+    roads:
+      schema: public
+      table: roads
+      srid: 4326
+      geometry_column: geom
+      geometry_type: MULTILINESTRING
+      id_column: road_id
+      minzoom: 10
+      properties:
+        name: text
+        road_class: text
+        public: bool
+    # The area within the D-02 drive of downtown Chattanooga, from Valhalla (0012).
+    drive_time_areas:
+      schema: public
+      table: drive_time_areas
+      srid: 4326
+      geometry_column: geom
+      geometry_type: MULTIPOLYGON
+      id_column: area_id
+      properties:
+        origin_name: text
+        minutes: int4
     counties:
       schema: public
       table: counties
@@ -74,7 +99,10 @@ postgres:
     # `rank` counts within the AOI named by `aoi_name`. The turbine_parcel_* columns are the
     # parcel at the bottom of the stretch (migration 0010); no owner fields, ever. The
     # turbine_flood_* columns are the FEMA zone there, and stretch_sfha_m how much of the
-    # stretch is in the 100-year floodplain (0011). `factors` is JSON text: each
+    # stretch is in the 100-year floodplain (0011). turbine_road_* is the nearest TIGER road
+    # to the turbine end and turbine_public_road_m the nearest public one; drive_minutes and
+    # drive_km the drive from downtown Chattanooga, and in_drive_area whether the turbine end
+    # is inside the drive-time area (0012). `factors` is JSON text: each
     # factor's value, sub-score, weight and contribution, for the click popup.
     latest_hydro_scores:
       schema: public
@@ -118,3 +146,10 @@ postgres:
         turbine_flood_subtype: text
         turbine_in_sfha: bool
         stretch_sfha_m: float8
+        turbine_road_m: float8
+        turbine_road_class: text
+        turbine_road_name: text
+        turbine_public_road_m: float8
+        drive_minutes: float8
+        drive_km: float8
+        in_drive_area: bool

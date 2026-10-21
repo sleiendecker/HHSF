@@ -18,6 +18,7 @@ from pathlib import Path
 
 from hhsf.analysis import scoring, stretch
 from hhsf.core import units
+from hhsf.ingest.roads import ROAD_LABELS
 
 SHORTLIST_CSV = "shortlist.csv"
 SHORTLIST_GEOJSON = "shortlist.geojson"
@@ -82,6 +83,15 @@ SHORTLIST_COLUMNS = [
     "stretch_sfha_ft",
     "stretch_flood_zones",
     "flood_flags",
+    "turbine_road_ft",
+    "turbine_road_type",
+    "turbine_road_name",
+    "turbine_public_road_ft",
+    "drive_minutes",
+    "drive_miles",
+    "drive_road_point_ft",
+    "in_drive_area",
+    "access_flags",
     "explanation",
 ]
 ALL_CORRIDORS_COLUMNS = ["status", *SHORTLIST_COLUMNS]
@@ -104,6 +114,12 @@ FLOOD_NOT_MAPPED = "flood_zone_not_mapped"  # no FEMA zone at the turbine end
 TURBINE_IN_FLOODWAY = "turbine_in_floodway"
 TURBINE_IN_SFHA = "turbine_in_sfha"  # the 1% annual chance ("100-year") floodplain
 STRETCH_IN_SFHA = "stretch_in_sfha"  # some of the stretch is in it
+
+# access_flags values. Flags only: nothing is filtered or re-ranked on roads or drive time.
+OUTSIDE_DRIVE_AREA = "outside_drive_area"  # the turbine end is outside the D-02 drive area
+NO_DRIVE_TIME = "no_drive_time"  # not computed yet, or Valhalla found no route
+ROAD_NOT_PUBLIC = "nearest_road_not_public"  # a 4WD trail or private road is nearer
+DRIVE_ENDS_ON_TRACK = "drive_ends_on_track"  # no route to the nearest public road; see below
 
 
 @dataclass(frozen=True)
@@ -133,6 +149,30 @@ class FloodZone:
     def label(self) -> str:
         """'AE floodway', 'X (0.2% annual chance)', 'X (minimal hazard)', 'A'."""
         return flood_zone_label(self.zone, self.subtype)
+
+
+@dataclass(frozen=True)
+class Road:
+    """The nearest TIGER road to a turbine end."""
+
+    road_class: str  # hhsf.ingest.roads.ROAD_CLASSES key: local, 4wd_trail, ...
+    name: str | None
+    public: bool
+    distance_m: float
+
+    @property
+    def label(self) -> str:
+        return ROAD_LABELS.get(self.road_class, self.road_class)
+
+
+@dataclass(frozen=True)
+class DriveArea:
+    """The drive-time area the corridors were checked against (D-02)."""
+
+    origin_name: str
+    minutes: int
+    built: str  # date
+    engine_version: str | None
 
 
 @dataclass(frozen=True)
@@ -171,6 +211,13 @@ class ExportRow:
     stretch_flood_zones: tuple[str, ...] = ()  # zone labels along the stretch, longest first
     stretch_sfha_m: float | None = None  # None where no zone is mapped along the stretch
     flood_flags: tuple[str, ...] = ()
+    turbine_road: Road | None = None  # None: no roads loaded
+    turbine_public_road_m: float | None = None
+    drive_minutes: float | None = None  # from the origin; None: not computed or no route
+    drive_km: float | None = None
+    drive_road_point_m: float | None = None  # turbine end to the road point the drive ends at
+    in_drive_area: bool | None = None  # None: no drive-time area built
+    access_flags: tuple[str, ...] = ()
 
     @property
     def ranked(self) -> bool:
@@ -195,6 +242,8 @@ class RunInfo:
     exported_with: str | None = None  # code version of the exporter
     parcels_version: str | None = None  # tn_parcels version and download date; None: not loaded
     flood_version: str | None = None  # fema_nfhl version and download date; None: not loaded
+    roads_version: str | None = None  # tiger_roads version and download date; None: not loaded
+    drive_area: DriveArea | None = None  # None: no drive-time area built
 
 
 # --- Rows ---------------------------------------------------------------------
@@ -245,6 +294,34 @@ def flood_flags(turbine: FloodZone | None, stretch_sfha_m: float | None) -> tupl
     return tuple(flags)
 
 
+def access_flags(
+    road: Road | None,
+    drive_minutes: float | None,
+    in_area: bool | None,
+    drive_area: bool,
+    drive_any_road: bool = False,
+) -> tuple[str, ...]:
+    """What to check about getting there. `drive_area`: whether a drive-time area exists.
+
+    `drive_any_road`: the drive ends on a track or driveway, because the nearest public
+    road has no route from the origin in OpenStreetMap (a gated or private section).
+    """
+    flags = []
+    if drive_area and in_area is False:
+        flags.append(OUTSIDE_DRIVE_AREA)
+    if drive_area and drive_minutes is None:
+        flags.append(NO_DRIVE_TIME)
+    if drive_any_road and drive_minutes is not None:
+        flags.append(DRIVE_ENDS_ON_TRACK)
+    if road is not None and not road.public:
+        flags.append(ROAD_NOT_PUBLIC)
+    return tuple(flags)
+
+
+def _ft(m: float | None) -> int | None:
+    return None if m is None else round(units.m_to_ft(m))
+
+
 def record(r: ExportRow) -> dict:
     """One corridor as readable, rounded values (None where there's no estimate)."""
     flow = r.firm_flow_cfs
@@ -252,6 +329,7 @@ def record(r: ExportRow) -> dict:
     distance = r.turbine_parcel_distance_m
     fz = r.turbine_flood_zone
     sfha_m = r.stretch_sfha_m
+    road = r.turbine_road
     return {
         "status": r.status,
         "rank": r.rank,
@@ -297,6 +375,15 @@ def record(r: ExportRow) -> dict:
         "stretch_sfha_ft": None if sfha_m is None else round(units.m_to_ft(sfha_m)),
         "stretch_flood_zones": "; ".join(r.stretch_flood_zones),
         "flood_flags": "; ".join(r.flood_flags),
+        "turbine_road_ft": road and _ft(road.distance_m),
+        "turbine_road_type": road and road.label,
+        "turbine_road_name": road and road.name,
+        "turbine_public_road_ft": _ft(r.turbine_public_road_m),
+        "drive_minutes": _round(r.drive_minutes, 0),
+        "drive_miles": None if r.drive_km is None else round(units.km_to_mi(r.drive_km), 1),
+        "drive_road_point_ft": _ft(r.drive_road_point_m),
+        "in_drive_area": r.in_drive_area,
+        "access_flags": "; ".join(r.access_flags),
         "explanation": r.explanation.get("summary", ""),
     }
 
@@ -463,6 +550,8 @@ def caveats(info: RunInfo) -> list[str]:
         "covers permits, access or soils.",
         _parcel_caveat(info),
         _flood_caveat(info),
+        _roads_caveat(info),
+        _drive_caveat(info),
     ]
 
 
@@ -502,6 +591,48 @@ def _flood_caveat(info: RunInfo) -> str:
         "`flood_zone_not_mapped` marks turbine ends with no FEMA zone at all: outside the "
         "loaded counties, a few meters inside a county line (where FEMA's county outline "
         "differs from the Census one), or a county without a digital flood map."
+    )
+
+
+def _roads_caveat(info: RunInfo) -> str:
+    if info.roads_version is None:
+        return (
+            "**No roads are loaded**, so the road columns are empty. Run `make ingest` "
+            "(or `uv run hhsf ingest roads`) and export again."
+        )
+    return (
+        f"**Roads come from Census TIGER/Line** ({info.roads_version}). `turbine_road_ft` "
+        "is the straight-line distance from the bottom of the stretch to the nearest road of "
+        "any kind, interstates aside; `turbine_public_road_ft` to the nearest public one "
+        "(`nearest_road_not_public` marks a 4WD trail or private road being nearer). TIGER "
+        "misses most driveways, logging roads and farm tracks, and a public road in TIGER "
+        "isn't proof of a right of way to the parcel: check access on the visit. Only the "
+        "loaded counties' roads count, so near a county line the nearest road can be in the "
+        "next county and is then overstated."
+    )
+
+
+def _drive_caveat(info: RunInfo) -> str:
+    a = info.drive_area
+    if a is None:
+        return (
+            "**No drive-time area is built**, so the drive columns are empty. Run `make "
+            "routing`, `make drive-area` and `make drive-time`, then export again."
+        )
+    return (
+        f"**Drive times are from {a.origin_name}** (D-02, a placeholder origin), by car with "
+        f"no traffic, from {a.engine_version or 'Valhalla'} on OpenStreetMap roads "
+        f"(© OpenStreetMap contributors), built {a.built}. They end at the road point "
+        "nearest the turbine end, so the walk or track in from the road isn't counted; "
+        "`drive_road_point_ft` is how far that road point is (OpenStreetMap often has "
+        "tracks TIGER lacks). Drives end on the nearest public road; "
+        "`drive_ends_on_track` marks the few that had no route to it (a gated or private "
+        "section) and end on the nearest track or driveway instead. "
+        f"`in_drive_area` is whether the turbine end is inside the {a.minutes}-minute area, "
+        f"the search region; `outside_drive_area` flags the ones that aren't. Flagged only: "
+        "nothing is filtered or re-ranked on drive time or road distance. "
+        "`no_drive_time` means drive times weren't computed for this run yet (`make "
+        "drive-time`) or Valhalla found no route."
     )
 
 
@@ -546,6 +677,16 @@ def _flood(r: ExportRow) -> str:
     return r.turbine_flood_zone.label
 
 
+def _public_road(r: ExportRow) -> str:
+    return _fmt(None if r.turbine_public_road_m is None else units.m_to_ft(r.turbine_public_road_m))
+
+
+def _drive(r: ExportRow) -> str:
+    if r.drive_minutes is None:
+        return "–"
+    return f"{r.drive_minutes:.0f}" + (" (outside)" if r.in_drive_area is False else "")
+
+
 def tier_table(rows: list[ExportRow], tier: str) -> list[str]:
     if tier == scoring.HEAD_ONLY:
         header = [
@@ -559,6 +700,8 @@ def tier_table(rows: list[ExportRow], tier: str) -> list[str]:
             "Turbine parcel (acres)",
             "Owner",
             "Turbine flood zone",
+            "Public road (ft)",
+            "Drive (min)",
             "NHDPlus ID",
         ]
         lines = [
@@ -573,6 +716,8 @@ def tier_table(rows: list[ExportRow], tier: str) -> list[str]:
                 _parcel(r),
                 _owner(r),
                 _flood(r),
+                _public_road(r),
+                _drive(r),
                 str(r.nhdplusid),
             ]
             for r in rows
@@ -591,6 +736,8 @@ def tier_table(rows: list[ExportRow], tier: str) -> list[str]:
             "Turbine parcel (acres)",
             "Owner",
             "Turbine flood zone",
+            "Public road (ft)",
+            "Drive (min)",
             "NHDPlus ID",
         ]
         lines = [
@@ -607,6 +754,8 @@ def tier_table(rows: list[ExportRow], tier: str) -> list[str]:
                 _parcel(r),
                 _owner(r),
                 _flood(r),
+                _public_road(r),
+                _drive(r),
                 str(r.nhdplusid),
             ]
             for r in rows
@@ -630,6 +779,39 @@ def _flood_counts(info: RunInfo, ranked: list[ExportRow]) -> list[str]:
         ),
         "",
     ]
+
+
+def _access_counts(info: RunInfo, ranked: list[ExportRow]) -> list[str]:
+    lines = []
+    if info.drive_area is not None:
+        a = info.drive_area
+        lines += [
+            [f"Turbine end inside the {a.minutes}-minute drive area", _count(ranked, True)],
+            ["Turbine end outside it", _count(ranked, False)],
+            ["No drive time (not computed, or no route)", _flag_count(ranked, NO_DRIVE_TIME)],
+        ]
+    if info.roads_version is not None:
+        quarter_mi_m = 402.336
+        near = sum(
+            r.turbine_public_road_m is not None and r.turbine_public_road_m <= quarter_mi_m
+            for r in ranked
+        )
+        lines += [
+            ["Public road within 1/4 mile of the turbine end", str(near)],
+            ["Nearest road a 4WD trail or private road", _flag_count(ranked, ROAD_NOT_PUBLIC)],
+        ]
+    if not lines:
+        return []
+    header = ["Roads and drive time (ranked corridors, flagged only)", "Corridors"]
+    return [*_table(header, lines), ""]
+
+
+def _count(rows: list[ExportRow], in_area: bool) -> str:
+    return str(sum(r.in_drive_area is in_area for r in rows))
+
+
+def _flag_count(rows: list[ExportRow], flag: str) -> str:
+    return str(sum(flag in r.access_flags for r in rows))
 
 
 def render_report(info: RunInfo, rows: list[ExportRow], top_n: int = 20) -> str:
@@ -670,7 +852,13 @@ def render_report(info: RunInfo, rows: list[ExportRow], top_n: int = 20) -> str:
             ["Source", "Version"],
             [[k, str(v)] for k, v in sorted(info.data_source_versions.items())]
             + ([["tn_parcels (at export)", info.parcels_version]] if info.parcels_version else [])
-            + ([["fema_nfhl (at export)", info.flood_version]] if info.flood_version else []),
+            + ([["fema_nfhl (at export)", info.flood_version]] if info.flood_version else [])
+            + ([["tiger_roads (at export)", info.roads_version]] if info.roads_version else [])
+            + (
+                [["osm_valhalla (at export)", f"{a.engine_version}, area built {a.built}"]]
+                if (a := info.drive_area)
+                else []
+            ),
         ),
         "",
         "## Key assumptions",
@@ -694,6 +882,7 @@ def render_report(info: RunInfo, rows: list[ExportRow], top_n: int = 20) -> str:
         ),
         "",
         *_flood_counts(info, ranked),
+        *_access_counts(info, ranked),
         "## Caveats",
         "",
         *[f"- {c}" for c in caveats(info)],
@@ -719,7 +908,10 @@ def render_report(info: RunInfo, rows: list[ExportRow], top_n: int = 20) -> str:
         "report name property owners: personal information, so don't post or share them. "
         "`turbine_parcel_tpad_url` opens the parcel's full record on the Comptroller's site. "
         "`turbine_flood_zone` is FEMA's zone at the bottom of the stretch and "
-        "`stretch_sfha_ft` how much of the stretch is in the 100-year floodplain.",
+        "`stretch_sfha_ft` how much of the stretch is in the 100-year floodplain. "
+        "`turbine_public_road_ft` is the straight-line distance to the nearest public road "
+        "and `drive_minutes` the drive from downtown Chattanooga to the road nearest the "
+        "turbine end.",
         "",
     ]
     return "\n".join(out)
