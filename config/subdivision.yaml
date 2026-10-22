@@ -1,0 +1,68 @@
+# Subdivision feasibility (PART 22, FR-9: road frontage, buildable area, access feasibility
+# and hydro retention). See docs/ASSUMPTIONS.md, "Subdivision feasibility", and D-18 in
+# docs/DECISIONS.md. Not part of the overall score: FR-7 doesn't list it. It's its own
+# 0-100 score and flags, in the exports and the map popup.
+#
+# Many turbine parcels are far bigger than a homestead (Big Creek's is 10,481 acres), so
+# you'd buy a piece of one. The "homestead cut" asks whether a piece holding the stretch,
+# a house site and a driveway to a public road could be split off that parcel alone:
+#
+# - the house site is the parcel's buildable ground nearest the turbine end (PART 17), as
+#   for privacy; the turbine end where the parcel has none;
+# - the driveway runs from it to the nearest public road along the parcel, and the wire
+#   from the turbine end to it, both measured straight (a winding one is longer), and both
+#   must be able to stay on the parcel.
+#
+# The piece is a strip along the stretch, the wire and the driveway plus a house lot,
+# trimmed to the parcel. Public roads are TIGER's, as for buildability: every type but
+# 4WD trails, private roads, parking lot roads and interstates.
+
+# A road counts as frontage, and a line as staying on the parcel, within this many feet of
+# the parcel's edge. Parcel lines and TIGER roads are both drawn to a few meters, and a
+# road usually runs down the middle of a right of way 40-60 ft wide that the parcel
+# stops at.
+edge_tolerance_ft: 50
+
+# Road frontage a new lot needs. Tennessee counties without their own rule commonly ask
+# for 50 ft on a public road (a flag lot's "pole"); some ask for more. Less than this is
+# flagged `no_road_frontage`.
+min_frontage_ft: 50
+
+# Share of the stretch (the penstock route) that must be on the turbine parcel for the
+# piece to keep the hydro. Under it: `stretch_crosses_parcels`, and you'd need a neighbor's
+# easement or land.
+min_stretch_share: 0.9
+
+# The house lot around the home site, in acres: room for a house, a septic field and its
+# repair area, a garden. Also the buildable acres that earn full points.
+home_lot_acres: 2
+
+# Width of the strips along the stretch (intake, penstock, the turbine shed), the wire
+# and the driveway, in feet: 50 ft each side of the stretch, a 100 ft lane for the rest.
+strip_width_ft: 100
+
+# Tennessee leaves divisions into tracts of 5 acres or more with no new street out of
+# subdivision review (TCA 13-3-401), so a piece is rounded up to this.
+min_piece_acres: 5
+
+# A driveway up to this long earns full access points, falling to none at
+# driveway_zero_ft. A gravel drive costs very roughly $10-30 a foot here; a mile of it
+# rivals the hydro system.
+driveway_full_ft: 1320
+driveway_zero_ft: 5280
+
+# The score's four parts, each 0-1 times its weight, out of 100. A part with no data
+# (no roads loaded, the parcel's buildable ground not computed) is left out and the rest
+# rescaled: missing data is never scored as zero.
+#
+# - frontage: road frontage up to min_frontage_ft;
+# - hydro_retention: the share of the stretch on the parcel;
+# - buildable: the parcel's buildable acres up to home_lot_acres;
+# - access: by driveway length, when the turbine end, the house site and some frontage
+#   are on one part of the parcel (a wire and driveway can join them without crossing
+#   another parcel); none otherwise, or without frontage.
+weights:
+  frontage: 25
+  hydro_retention: 25
+  buildable: 25
+  access: 25

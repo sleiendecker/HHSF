@@ -12,7 +12,9 @@ turbine parcels' buildable ground from parcel_buildable (`hhsf analyze buildable
 through corridor_turbine_buildable, 0013) and their farmland from parcel_farmland (`hhsf
 analyze farmland`, through corridor_turbine_farmland, 0014) and their land cover from
 parcel_landcover (`hhsf analyze landcover`, through corridor_turbine_landcover, 0016).
-Each corridor's privacy is read from corridor_privacy (`hhsf analyze privacy`, 0018).
+Each corridor's privacy is read from corridor_privacy (`hhsf analyze privacy`, 0018), and
+whether a homestead piece could be cut from its turbine parcel from corridor_subdivision
+(`hhsf analyze subdivision`, 0019).
 """
 
 import json
@@ -192,6 +194,24 @@ def privacy_info(conn: Connection) -> export.PrivacyInfo | None:
     )
 
 
+def subdivision_info(conn: Connection) -> export.SubdivisionInfo | None:
+    """The settings of the latest homestead cut computation, or None if never run."""
+    row = conn.execute(
+        text(
+            "SELECT min_frontage_ft, min_stretch_share,"
+            " to_char(computed_at, 'YYYY-MM-DD') AS computed"
+            " FROM corridor_subdivision ORDER BY computed_at DESC LIMIT 1"
+        )
+    ).one_or_none()
+    if row is None:
+        return None
+    return export.SubdivisionInfo(
+        min_frontage_ft=row.min_frontage_ft,
+        min_stretch_share=row.min_stretch_share,
+        computed=row.computed,
+    )
+
+
 def drive_area(conn: Connection) -> export.DriveArea | None:
     """The drive-time area corridors are checked against, or None if none is built."""
     row = conn.execute(
@@ -309,6 +329,25 @@ def _privacy(r: dict) -> export.Privacy | None:
     )
 
 
+def _subdivision(r: dict) -> export.Subdivision | None:
+    if r["sd_stretch_share"] is None:
+        return None
+    return export.Subdivision(
+        score=r["sd_score"],
+        homestead_cut=r["sd_cut"],
+        frontage_m=r["sd_frontage_m"],
+        stretch_share=r["sd_stretch_share"],
+        driveway_m=r["sd_driveway_m"],
+        wire_m=r["sd_wire_m"],
+        piece_acres=r["sd_piece_acres"],
+        flags=tuple(r["sd_flags"]),
+    )
+
+
+# Columns load_rows gathers into its parts (turbine parcel, flood zone, ...).
+PREFIXES = ("tp_", "tf_", "tr_", "dt_", "tb_", "tfm_", "tlc_", "pv_", "sd_", "stretch_")
+
+
 def load_rows(
     conn: Connection,
     score_run_id: int,
@@ -320,6 +359,7 @@ def load_rows(
     flag_farmland: bool = True,
     flag_landcover: bool = True,
     flag_privacy: bool = True,
+    flag_subdivision: bool = True,
 ) -> list[export.ExportRow]:
     """The run's corridors with their parcels, flood zones, roads, drive times,
     buildable ground and farmland.
@@ -376,7 +416,11 @@ def load_rows(
                    pv.buildings_per_sqmi AS pv_per_sqmi,
                    pv.nearest_building_m AS pv_nearest_m,
                    pv.parcel_buildings AS pv_parcel_buildings,
-                   pv.public_road_m AS pv_road_m, pv.road_woods_m AS pv_woods_m
+                   pv.public_road_m AS pv_road_m, pv.road_woods_m AS pv_woods_m,
+                   sd.subdivision_score AS sd_score, sd.homestead_cut AS sd_cut,
+                   sd.frontage_m AS sd_frontage_m, sd.stretch_share AS sd_stretch_share,
+                   sd.driveway_m AS sd_driveway_m, sd.wire_m AS sd_wire_m,
+                   sd.piece_acres AS sd_piece_acres, sd.flags AS sd_flags
             FROM hydro_scores s
             JOIN hydro_corridors c USING (corridor_id)
             JOIN streams st USING (stream_id)
@@ -410,6 +454,7 @@ def load_rows(
             LEFT JOIN corridor_turbine_farmland tfm USING (corridor_id)
             LEFT JOIN corridor_turbine_landcover tlc USING (corridor_id)
             LEFT JOIN corridor_privacy pv USING (corridor_id)
+            LEFT JOIN corridor_subdivision sd USING (corridor_id)
             CROSS JOIN LATERAL (
                 SELECT bool_or(ST_Intersects(a.geom, o.pt)) AS in_drive_area
                 FROM drive_time_areas a
@@ -430,15 +475,14 @@ def load_rows(
         farm = _farmland(r)
         cover = _landcover(r)
         privacy = _privacy(r)
+        cut = _subdivision(r)
         out.append(
             export.ExportRow(
                 **{
                     k: v
                     for k, v in r.items()
                     if k not in ("flow_flags", "geometry", "stretch_sfha_m")
-                    and not k.startswith(
-                        ("tp_", "tf_", "tr_", "dt_", "tb_", "tfm_", "tlc_", "pv_", "stretch_")
-                    )
+                    and not k.startswith(PREFIXES)
                 },
                 flow_flags=tuple(r["flow_flags"] or ()),
                 geometry=json.loads(r["geometry"]),
@@ -471,6 +515,10 @@ def load_rows(
                 landcover_flags=export.landcover_flags(turbine, cover) if flag_landcover else (),
                 privacy=privacy,
                 privacy_flags=export.privacy_flags(privacy) if flag_privacy else (),
+                subdivision=cut,
+                subdivision_flags=(
+                    export.subdivision_flags(turbine, cut) if flag_subdivision else ()
+                ),
             )
         )
     return out
@@ -496,6 +544,7 @@ def export_hydro(
         farm = farmland_info(conn)
         cover_year = landcover_year(conn)
         privacy = privacy_info(conn)
+        cuts = subdivision_info(conn)
         rows = load_rows(
             conn,
             score_run_id,
@@ -507,6 +556,7 @@ def export_hydro(
             flag_farmland=farm is not None,
             flag_landcover=cover_year is not None,
             flag_privacy=privacy is not None,
+            flag_subdivision=cuts is not None,
         )
     info = replace(
         info,
@@ -520,6 +570,7 @@ def export_hydro(
         farmland=farm,
         landcover_year=cover_year,
         privacy=privacy,
+        subdivision=cuts,
     )
     out_dir = out_root / aoi.key / f"run_{score_run_id}"
     return info, out_dir, export.write_exports(out_dir, info, rows)

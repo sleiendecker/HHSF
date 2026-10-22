@@ -552,3 +552,37 @@ The six 1 kW streams:
 | Bethel Creek (Marion) | buildable | 0 | 1 | 2,120 ft | 18 | 1,330 ft, 1,160 woods | 93 |
 | Marion's unnamed stream | turbine end | 4 | 27 | 645 ft | 117 | 970 ft, 420 woods | 51 |
 | Rogers Branch (Sequatchie) | turbine end | 4 | 22 | 640 ft | 66 | 590 ft, all woods | 56 |
+
+## Subdivision feasibility
+
+PART 22 adds FR-9: road frontage, buildable area, access feasibility and hydro retention, and a **Subdivision Feasibility Score**. Many turbine parcels are far bigger than a homestead (Big Creek's is 10,481 acres, and three of the six 1 kW streams sit on parcels of 1,355 acres or more), so you'd buy a piece, not the whole parcel. The question is whether a **homestead piece** holding the stretch, a house site and a driveway to a public road could be cut from the turbine parcel alone, without a neighbor's land or an easement. One simple cut per corridor, not the best one the parcel could give (D-18):
+
+- **House site:** privacy's home site, the turbine parcel's buildable ground (PART 17) nearest the turbine end; the turbine end itself where the parcel has none.
+- **Road frontage** (`road_frontage_ft`): public road (TIGER, as for buildability: every type but 4WD trails, private roads, parking lot roads and interstates) on the parcel or within **50 ft** of its edge. A road usually runs down the middle of a 40–60 ft right of way that the parcel stops at, and parcel lines and TIGER roads are both drawn to a few meters. A road that crosses the parcel counts its whole length inside.
+- **Hydro retention** (`stretch_on_parcel_pct`): how much of the stretch (the penstock route) is on the parcel, within the same 50 ft, so a stream that is the property line counts as on it.
+- **Access:** the turbine end, the house site and some of the frontage are on one part of the parcel (a parcel split by a road or a neighbor's strip has several), so a wire and a driveway can join them without crossing another parcel. `cut_driveway_ft` is the straight line from the house site to the nearest such frontage and `cut_wire_ft` from the turbine end to the house site; real ones wind around slopes and are longer.
+- **The piece** (`homestead_piece_acres`): a 100 ft strip along the stretch, the wire and the driveway, plus a 2-acre house lot, trimmed to the parcel and rounded up to **5 acres**, since Tennessee leaves tracts of 5 acres or more with no new road out of subdivision review (TCA 13-3-401). It's the least you'd need, not a proposed boundary; its outline is saved in `corridor_subdivision.piece`.
+- **`homestead_cut`** is yes when frontage is 50 ft or more, 90% or more of the stretch is on the parcel, there's buildable ground, and access holds. Empty when it can't tell (no roads loaded, or the parcel's buildable ground isn't computed).
+- **The score** (`subdivision_score`, 0–100): a quarter each for frontage (full at 50 ft), the share of the stretch on the parcel, buildable acres on the parcel (full at 2), and access (full for a driveway up to 1/4 mile, falling to none at a mile; none without reachable frontage). A part with no data is left out and the rest rescaled. **Not part of the overall score**: FR-7 doesn't list it.
+- **Flags** (`subdivision_flags`): `no_road_frontage`, `stretch_crosses_parcels` (under 90% on the parcel), `no_house_site` (no buildable ground), `access_crosses_parcels` (turbine end, house site and frontage on separate parts of the parcel, or the turbine end off it), `long_driveway` (over 1/4 mile), `no_roads_loaded`, `subdivision_not_computed`. Not a filter.
+
+Saved per corridor in `corridor_subdivision` (`hhsf analyze subdivision`, part of `make analyze`; settings in `config/subdivision.yaml`). Re-ingesting parcels deletes the rows of their corridors; `make analyze` computes them again, as it does after re-ingesting roads or re-running `analyze buildable`.
+
+**What it can't see:** TIGER doesn't say who maintains a road, so frontage on a private road TIGER calls local still counts, and a public road isn't proof of a right of way. Parcel lines are the assessor's, not a survey. Counties set their own frontage, lot shape and driveway rules (some want more than 50 ft, or no flag lots), a lender may want more, and the seller may not split at all. Steep ground between the road and the house site isn't checked: a short straight driveway can be an impossible one. Ask the county planning office before counting on a cut.
+
+### What it found (2026-10-22)
+
+Of the 4,919 ranked stretches, 4,779 have a turbine parcel. A homestead piece can be cut from 1,629 of them. 2,148 have 10% or more of their stretch on a neighbor's parcel (a 1,000 ft stretch often crosses a line), 1,700 have no buildable ground, 876 have no public road frontage, 68 have their turbine end, house site and road on separate parts of the parcel, and 1,509 have a driveway over 1/4 mile. Where there's frontage the median is 2,210 ft; the median driveway is 880 ft and the median score 75.
+
+The six 1 kW streams:
+
+| Stream | Turbine parcel | Road frontage | Stretch on parcel | House site | Driveway | Homestead cut | Score |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Big Creek (Grundy) | 10,481 ac | 19,210 ft | 100% | buildable, 1.1 mi from the turbine | 290 ft | yes (a 17-acre piece) | 100 |
+| Negro Den Creek (Grundy) | 1,901 ac | 2,180 ft | 100% | buildable, 1.7 mi from the turbine | 1.2 mi | yes, long driveway (28 acres) | 75 |
+| Elk River (Grundy, same parcel) | 1,901 ac | 2,180 ft | 100% | buildable, 3,620 ft from the turbine | 1.2 mi | yes, long driveway (17 acres) | 75 |
+| Bethel Creek (Marion) | 1,355 ac | none | 100% | buildable, 1,540 ft from the turbine | – | no: no public road frontage | 50 |
+| Marion's unnamed stream | 44 ac | 390 ft | 100% | turbine end (no buildable ground) | 1,480 ft | no: no house site | 74 |
+| Rogers Branch (Sequatchie) | 76 ac | none | 96% | turbine end (no buildable ground) | – | no: no frontage, no house site | 24 |
+
+Rogers Branch's nearest public road is 590 ft from the turbine end and Bethel Creek's 2,270 ft, but neither runs along their parcel: getting there means crossing a neighbor, so a sale would need an access easement.
