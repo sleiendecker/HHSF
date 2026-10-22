@@ -5,7 +5,7 @@ from dataclasses import replace
 
 import pytest
 
-from hhsf.analysis import export, scoring
+from hhsf.analysis import export, scoring, subdivision
 
 PROFILE = scoring.load_profile("hydro_v1")
 
@@ -801,3 +801,39 @@ def test_report_counts_privacy_and_shows_neighbors():
     assert "Privacy (FR-6) is measured at a home site" in report and "400 sq ft" in report
     assert "0 (nearest 2,953 ft)" in report
     assert "Privacy isn't computed" in export.render_report(INFO, ROWS)
+
+
+# --- Subdivision feasibility ----------------------------------------------------
+
+CUT = export.Subdivision(
+    score=81.25, homestead_cut=True, frontage_m=120.0, stretch_share=0.96, driveway_m=400.0,
+    wire_m=150.0, piece_acres=6.04, flags=(subdivision.LONG_DRIVEWAY,),
+)  # fmt: skip
+CUT_INFO = export.SubdivisionInfo(min_frontage_ft=50, min_stretch_share=0.9, computed="2026-10-22")
+
+
+def test_subdivision_flags_and_record():
+    assert export.subdivision_flags(PARCEL, CUT) == (subdivision.LONG_DRIVEWAY,)
+    assert export.subdivision_flags(PARCEL, None) == (export.SUBDIVISION_NOT_COMPUTED,)
+    assert export.subdivision_flags(None, None) == ()  # parcel_flags already say why
+    r = export.record(replace(ON_PARCEL, subdivision=CUT, subdivision_flags=CUT.flags))
+    assert r["subdivision_score"] == 81.2 and r["homestead_cut"] == "yes"
+    assert r["road_frontage_ft"] == 394 and r["stretch_on_parcel_pct"] == 96
+    assert r["cut_driveway_ft"] == 1312 and r["homestead_piece_acres"] == 6.0
+    assert r["subdivision_flags"] == "long_driveway"
+    assert export.record(ON_PARCEL)["homestead_cut"] is None
+
+
+def test_report_counts_homestead_cuts():
+    loaded = replace(INFO, subdivision=CUT_INFO)
+    rows = [
+        replace(ON_PARCEL, subdivision=CUT, subdivision_flags=CUT.flags),
+        row(2, rank=2, tier_rank=2, subdivision_flags=(export.SUBDIVISION_NOT_COMPUTED,)),
+    ]
+    report = export.render_report(loaded, rows)
+    assert "| A homestead piece can be cut | 1 |" in report
+    assert "| Driveway over 1/4 mile | 1 |" in report
+    assert "| Not computed | 1 |" in report
+    assert "yes (81)" in report  # the tier table's Homestead cut column
+    assert "Subdivision feasibility (FR-9) asks" in report and "90% or more" in report
+    assert "Subdivision feasibility isn't computed" in export.render_report(INFO, ROWS)

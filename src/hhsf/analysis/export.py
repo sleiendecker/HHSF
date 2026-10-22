@@ -16,7 +16,7 @@ from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
-from hhsf.analysis import scoring, stretch
+from hhsf.analysis import scoring, stretch, subdivision
 from hhsf.core import units
 from hhsf.ingest.roads import ROAD_LABELS
 
@@ -125,6 +125,14 @@ SHORTLIST_COLUMNS = [
     "home_public_road_ft",
     "road_woods_ft",
     "privacy_flags",
+    "subdivision_score",
+    "homestead_cut",
+    "road_frontage_ft",
+    "stretch_on_parcel_pct",
+    "cut_driveway_ft",
+    "cut_wire_ft",
+    "homestead_piece_acres",
+    "subdivision_flags",
     "explanation",
 ]
 ALL_CORRIDORS_COLUMNS = ["status", *SHORTLIST_COLUMNS]
@@ -184,6 +192,10 @@ OPEN_TO_ROAD = "open_to_road"
 OPEN_TO_ROAD_M, OPEN_TO_ROAD_WOODS_M = 500 / units.FT_PER_M, 100 / units.FT_PER_M
 BUILDINGS_ON_PARCEL = "buildings_on_parcel"  # the turbine parcel already has buildings
 PRIVACY_NOT_COMPUTED = "privacy_not_computed"  # `hhsf analyze privacy` hasn't run
+
+# subdivision_flags: hhsf.analysis.subdivision's flags, saved with each corridor, and this.
+# Not a filter, and not in the overall score.
+SUBDIVISION_NOT_COMPUTED = "subdivision_not_computed"  # `hhsf analyze subdivision` hasn't run
 
 
 @dataclass(frozen=True)
@@ -312,6 +324,30 @@ class PrivacyInfo:
 
 
 @dataclass(frozen=True)
+class Subdivision:
+    """Whether a homestead piece could be cut from the turbine parcel (FR-9,
+    hhsf.analysis.subdivision)."""
+
+    score: float | None  # 0-100; None: no part had data
+    homestead_cut: bool | None  # None: no roads loaded, or buildable ground not computed
+    frontage_m: float | None  # public road on or along the parcel; None: no roads loaded
+    stretch_share: float  # of the stretch on the parcel, 0-1
+    driveway_m: float | None  # straight, house site to that road; None: no frontage
+    wire_m: float  # straight, turbine end to house site
+    piece_acres: float
+    flags: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class SubdivisionInfo:
+    """The settings the homestead cuts were computed with (config/subdivision.yaml)."""
+
+    min_frontage_ft: float
+    min_stretch_share: float
+    computed: str  # date of the latest computation
+
+
+@dataclass(frozen=True)
 class FarmlandInfo:
     """The settings farmland was computed with (config/farmland.yaml)."""
 
@@ -371,6 +407,8 @@ class ExportRow:
     landcover_flags: tuple[str, ...] = ()
     privacy: Privacy | None = None  # None: not computed
     privacy_flags: tuple[str, ...] = ()
+    subdivision: Subdivision | None = None  # None: no turbine parcel, or not computed
+    subdivision_flags: tuple[str, ...] = ()
     overall_score: float | None = None  # FR-7; only for profiles with an overall section
     buildability_subscore: float | None = None  # None: no data, left out
     agriculture_subscore: float | None = None
@@ -407,6 +445,7 @@ class RunInfo:
     farmland: FarmlandInfo | None = None  # None: farmland never computed
     landcover_year: int | None = None  # NLCD year; None: land cover never computed
     privacy: PrivacyInfo | None = None  # None: privacy never computed
+    subdivision: SubdivisionInfo | None = None  # None: homestead cuts never computed
 
 
 # --- Rows ---------------------------------------------------------------------
@@ -543,6 +582,19 @@ def privacy_flags(p: Privacy | None) -> tuple[str, ...]:
     return tuple(flags)
 
 
+def subdivision_flags(turbine: Parcel | None, sd: Subdivision | None) -> tuple[str, ...]:
+    """What stands in the way of cutting a homestead piece from the turbine parcel."""
+    if turbine is None:
+        return ()
+    if sd is None:
+        return (SUBDIVISION_NOT_COMPUTED,)
+    return sd.flags
+
+
+def _yes_no(b: bool | None) -> str | None:
+    return None if b is None else "yes" if b else "no"
+
+
 def _ft(m: float | None) -> int | None:
     return None if m is None else round(units.m_to_ft(m))
 
@@ -559,6 +611,7 @@ def record(r: ExportRow) -> dict:
     f = r.turbine_farmland
     lc = r.turbine_landcover
     pv = r.privacy
+    sd = r.subdivision
     return {
         "status": r.status,
         "rank": r.rank,
@@ -646,6 +699,14 @@ def record(r: ExportRow) -> dict:
         "home_public_road_ft": pv and _ft(pv.public_road_m),
         "road_woods_ft": pv and _ft(pv.road_woods_m),
         "privacy_flags": "; ".join(r.privacy_flags),
+        "subdivision_score": sd and _round(sd.score, 1),
+        "homestead_cut": sd and _yes_no(sd.homestead_cut),
+        "road_frontage_ft": sd and _ft(sd.frontage_m),
+        "stretch_on_parcel_pct": sd and round(100 * sd.stretch_share),
+        "cut_driveway_ft": sd and _ft(sd.driveway_m),
+        "cut_wire_ft": sd and _ft(sd.wire_m),
+        "homestead_piece_acres": sd and round(sd.piece_acres, 1),
+        "subdivision_flags": "; ".join(r.subdivision_flags),
         "explanation": r.explanation.get("summary", ""),
     }
 
@@ -827,6 +888,7 @@ def caveats(info: RunInfo) -> list[str]:
         _farmland_caveat(info),
         _landcover_caveat(info),
         _privacy_caveat(info),
+        _subdivision_caveat(info),
         *_overall_caveat(info),
     ]
 
@@ -1019,6 +1081,40 @@ def _privacy_caveat(info: RunInfo) -> str:
     )
 
 
+def _subdivision_caveat(info: RunInfo) -> str:
+    sd = info.subdivision
+    if sd is None:
+        return (
+            "**Subdivision feasibility isn't computed**, so its columns are empty. Run `make "
+            "analyze` (or `uv run hhsf analyze subdivision`), then export again."
+        )
+    return (
+        "**Subdivision feasibility (FR-9) asks whether a homestead piece could be cut from "
+        "the turbine parcel** (D-18): a piece holding the stretch, a house site (the parcel's "
+        "buildable ground nearest the turbine end) and a driveway to a public road, all on "
+        "that one parcel. `homestead_cut` is yes when the parcel has "
+        f"`road_frontage_ft` of {sd.min_frontage_ft:,.0f} or more (TIGER public roads on it "
+        f"or within 50 ft of its edge), {100 * sd.min_stretch_share:.0f}% or more of the "
+        "stretch is on it (`stretch_on_parcel_pct`), it has buildable ground, and the turbine "
+        "end, house site and road frontage are on one part of it. `cut_driveway_ft` and "
+        "`cut_wire_ft` are straight lines (a winding drive is longer); "
+        "`homestead_piece_acres` is a 100 ft strip along the stretch, wire and driveway plus a "
+        "2-acre house lot, rounded up to 5 acres: Tennessee leaves tracts of 5 acres or more "
+        "with no new road out of subdivision review (TCA 13-3-401). `subdivision_score` "
+        "(0-100) gives a quarter each to frontage, the share of the stretch on the parcel, "
+        "buildable acres (up to 2) and access (full up to a 1/4-mile driveway, none at a "
+        "mile or with no reachable frontage); a part with no data is left out. It isn't in "
+        "the overall score: FR-7 doesn't list it. Flags `no_road_frontage`, "
+        "`stretch_crosses_parcels`, `no_house_site`, `access_crosses_parcels` (the turbine "
+        "end, house site and frontage are on separate parts of the parcel, or the turbine end "
+        "is off it) and `long_driveway` remove nothing. **Where the data runs out:** TIGER "
+        "doesn't say who maintains a road, so frontage on a private road that TIGER calls "
+        "local still counts; parcel lines are the assessor's, not a survey; county rules on "
+        "frontage, lot shape and driveways vary, and a seller may not split at all. Ask the "
+        "county planning office before counting on a cut."
+    )
+
+
 def _overall_caveat(info: RunInfo) -> list[str]:
     o = info.score_params.get("scoring_profile", {}).get("overall")
     if not o:
@@ -1122,6 +1218,15 @@ def _neighbors(r: ExportRow) -> str:
     return f"{p.buildings_quarter_mile} (nearest {units.m_to_ft(p.nearest_building_m):,.0f} ft)"
 
 
+def _cut(r: ExportRow) -> str:
+    """Whether a homestead piece can be cut, and the subdivision score."""
+    sd = r.subdivision
+    if sd is None:
+        return "–"
+    answer = {True: "yes", False: "no", None: "?"}[sd.homestead_cut]
+    return answer if sd.score is None else f"{answer} ({sd.score:.0f})"
+
+
 def tier_table(rows: list[ExportRow], tier: str) -> list[str]:
     if tier == scoring.HEAD_ONLY:
         header = [
@@ -1139,6 +1244,7 @@ def tier_table(rows: list[ExportRow], tier: str) -> list[str]:
             "Buildable (ac)",
             "Prime / cropland (ac)",
             "Buildings within 1/4 mi",
+            "Homestead cut (score)",
             "Public road (ft)",
             "Drive (min)",
             "NHDPlus ID",
@@ -1159,6 +1265,7 @@ def tier_table(rows: list[ExportRow], tier: str) -> list[str]:
                 _buildable(r),
                 _farmland(r),
                 _neighbors(r),
+                _cut(r),
                 _public_road(r),
                 _drive(r),
                 str(r.nhdplusid),
@@ -1183,6 +1290,7 @@ def tier_table(rows: list[ExportRow], tier: str) -> list[str]:
             "Buildable (ac)",
             "Prime / cropland (ac)",
             "Buildings within 1/4 mi",
+            "Homestead cut (score)",
             "Public road (ft)",
             "Drive (min)",
             "NHDPlus ID",
@@ -1205,6 +1313,7 @@ def tier_table(rows: list[ExportRow], tier: str) -> list[str]:
                 _buildable(r),
                 _farmland(r),
                 _neighbors(r),
+                _cut(r),
                 _public_road(r),
                 _drive(r),
                 str(r.nhdplusid),
@@ -1367,6 +1476,31 @@ def _privacy_counts(info: RunInfo, ranked: list[ExportRow]) -> list[str]:
     ]
 
 
+def _subdivision_counts(info: RunInfo, ranked: list[ExportRow]) -> list[str]:
+    if info.subdivision is None:
+        return []
+    found = [r.subdivision for r in ranked if r.subdivision]
+    n = Counter(f for r in ranked for f in r.subdivision_flags)
+    return [
+        *_table(
+            ["Homestead cut from the turbine parcel (ranked)", "Corridors"],
+            [
+                ["A homestead piece can be cut", str(sum(s.homestead_cut is True for s in found))],
+                ["No public road frontage", str(n[subdivision.NO_ROAD_FRONTAGE])],
+                ["Stretch crosses onto other parcels", str(n[subdivision.STRETCH_CROSSES_PARCELS])],
+                ["No buildable ground for a house", str(n[subdivision.NO_HOUSE_SITE])],
+                [
+                    "Turbine, house site and road on separate parts",
+                    str(n[subdivision.ACCESS_CROSSES_PARCELS]),
+                ],
+                ["Driveway over 1/4 mile", str(n[subdivision.LONG_DRIVEWAY])],
+                ["Not computed", str(n[SUBDIVISION_NOT_COMPUTED])],
+            ],
+        ),
+        "",
+    ]
+
+
 def _count(rows: list[ExportRow], in_area: bool) -> str:
     return str(sum(r.in_drive_area is in_area for r in rows))
 
@@ -1449,6 +1583,7 @@ def render_report(info: RunInfo, rows: list[ExportRow], top_n: int = 20) -> str:
         *_farmland_counts(info, ranked),
         *_landcover_counts(info, ranked),
         *_privacy_counts(info, ranked),
+        *_subdivision_counts(info, ranked),
         "## Caveats",
         "",
         *[f"- {c}" for c in caveats(info)],

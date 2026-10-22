@@ -434,6 +434,32 @@ function privacyText(p: Record<string, unknown>): string {
   return `${where}: ${count} within ¼ mi${half}${near}${road}${own}`;
 }
 
+// Whether a homestead piece could be cut from the turbine parcel (FR-9, migration 0019,
+// config/subdivision.yaml): the answer, the Subdivision Feasibility Score, and why not.
+const CUT_BLOCKERS: Record<string, string> = {
+  no_road_frontage: "no public road frontage",
+  stretch_crosses_parcels: "the stretch crosses onto other parcels",
+  no_house_site: "no buildable ground for a house",
+  access_crosses_parcels: "turbine, house site and road on separate parts of the parcel",
+  no_roads_loaded: "no roads loaded",
+};
+
+function subdivisionText(p: Record<string, unknown>): string {
+  if (typeof p.stretch_on_parcel_share !== "number") return "Not computed";
+  const answer =
+    p.homestead_cut === true ? "<b>A homestead piece can be cut</b>" : p.homestead_cut === false ? "No homestead cut" : "Can't tell";
+  const score = typeof p.subdivision_score === "number" ? ` (score ${fmt(p.subdivision_score)})` : "";
+  const flags = String(p.subdivision_flags ?? "").split(",").filter(Boolean);
+  const why = flags.map((f) => CUT_BLOCKERS[f]).filter(Boolean);
+  const facts = [
+    typeof p.road_frontage_m === "number" && p.road_frontage_m > 0 ? `${distance(p.road_frontage_m)} of road frontage` : "",
+    `${fmt(p.stretch_on_parcel_share * 100)}% of the stretch on the parcel`,
+    typeof p.cut_driveway_m === "number" ? `driveway ${distance(p.cut_driveway_m)}` : "",
+    typeof p.cut_piece_acres === "number" ? `a piece of about ${fmt(p.cut_piece_acres)} ac` : "",
+  ].filter(Boolean);
+  return `${answer}${score}${why.length ? `: ${why.join("; ")}` : ""}. ${facts.join(", ")}`;
+}
+
 export function scorePopupHtml(f: MapGeoJSONFeature): string {
   const p = f.properties as Record<string, unknown>;
   let factors: Factor[] = [];
@@ -465,6 +491,7 @@ export function scorePopupHtml(f: MapGeoJSONFeature): string {
         <dt>Farmland</dt><dd>${farmlandText(p)}</dd>
         <dt>Land cover</dt><dd>${landCoverText(p)}</dd>
         <dt>Privacy</dt><dd>${privacyText(p)}</dd>
+        <dt>Homestead cut</dt><dd>${subdivisionText(p)}</dd>
         <dt>Parcels crossed</dt><dd>${fmt(p.parcels_crossed)}</dd>
         <dt>Turbine flood zone</dt><dd>${floodText(p)}</dd>
         <dt>Stretch flooding</dt><dd>${stretchFloodText(p)}</dd>

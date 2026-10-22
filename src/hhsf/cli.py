@@ -24,6 +24,7 @@ from hhsf.analysis import (
     scoring,
     scoring_run,
     streamstats,
+    subdivision,
 )
 from hhsf.core import crs
 from hhsf.core.config import REPO_ROOT, data_source_settings, hydrography_source, load_aoi
@@ -533,6 +534,36 @@ def analyze_privacy(aoi: str = AOI_OPTION) -> None:
     typer.echo(
         f"Saved {len(results):,} corridors ({on_ground:,} home sites on buildable ground, the "
         f"rest at the turbine end): {alone:,} have no other building within 1/4 mile."
+    )
+
+
+@analyze_app.command("subdivision")
+@refreshes_map
+def analyze_subdivision(aoi: str = AOI_OPTION) -> None:
+    """Whether a homestead piece (the stretch, a house site and a driveway) could be cut
+    from each turbine parcel with public road frontage: FR-9's Subdivision Feasibility
+    Score (needs make ingest, analyze hydro and analyze buildable)."""
+    area = load_aoi(aoi)
+    settings = subdivision.load_settings()
+    with engine().connect() as conn:
+        hydro_run = buildable.latest_hydro_run(conn, area.key)
+        if hydro_run is None:
+            raise typer.BadParameter(f"No hydro run for {area.name}. Run `make analyze` first.")
+        sites = subdivision.load_sites(conn, hydro_run)
+    if not sites:
+        typer.echo(f"No corridors with a turbine parcel in hydro run {hydro_run}.")
+        return
+    typer.echo(
+        f"Homestead cuts from the turbine parcels of {len(sites):,} corridors of hydro run "
+        f"{hydro_run}..."
+    )
+    with engine().begin() as conn:
+        results = subdivision.run_subdivision(conn, area, sites, settings, typer.echo)
+    fronted = sum(subdivision.NO_ROAD_FRONTAGE not in r.flags for r in results)
+    cut = sum(bool(r.homestead_cut) for r in results)
+    typer.echo(
+        f"Saved {len(results):,} corridors: {fronted:,} turbine parcels have public road "
+        f"frontage; a homestead piece can be cut from {cut:,}."
     )
 
 

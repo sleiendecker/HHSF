@@ -172,6 +172,20 @@ Why: neighbors close by are what most homesteaders mean by privacy, so the 1/4-m
 
 What it does (2026-10-21): the six 1 kW streams keep their order. Their privacy: Negro Den Creek and the Elk River 100, Bethel Creek 93, Big Creek 85, Rogers Branch 56, Marion's unnamed stream 51, so each one's overall score rises 1–5 points. Low-flow stretches move an average of 66 places. `hydro_v5` is unchanged and still available.
 
+### D-18 · Subdivision feasibility (FR-9): **Default**
+
+PART 22 builds FR-9 ([ASSUMPTIONS.md](ASSUMPTIONS.md#subdivision-feasibility)): whether a homestead piece could be split off the turbine parcel, and a 0–100 Subdivision Feasibility Score. The defaults, all in `config/subdivision.yaml`:
+
+- **The piece:** the stretch, a house site and a driveway to a public road, all on the turbine parcel alone. The house site is privacy's home site (the buildable ground nearest the turbine end). Not the best piece the parcel could give: one simple, explainable cut, so big parcels aren't flattered.
+- **Can it be cut** (`homestead_cut`): public road frontage of **50 ft** or more (TIGER, on the parcel or within 50 ft of its edge); **90%** or more of the stretch on the parcel; buildable ground for the house; and the turbine end, the house site and the frontage on one part of the parcel, so the wire and driveway needn't cross a neighbor. Driveway and wire lengths are straight lines.
+- **The piece's size:** a 100 ft strip along the stretch, the wire and the driveway, plus a 2-acre house lot, trimmed to the parcel and rounded up to **5 acres**: Tennessee leaves tracts of 5 acres or more with no new road out of subdivision review (TCA 13-3-401).
+- **The score:** a quarter each for frontage (up to 50 ft), the share of the stretch on the parcel, buildable acres (up to 2), and access (full for a driveway up to 1/4 mile, none at a mile, or when the house site can't reach the frontage). A part with no data is left out.
+- **Not in the overall score.** FR-7 lists hydro, buildability, agriculture, privacy and logistics, not this; it's its own column and flags.
+
+Why: frontage and an undivided route from the road to the house to the turbine are what make a parcel splittable at all; 50 ft is the usual minimum for a flag lot where a county has no rule of its own. The 90% leaves room for a stretch that runs along the property line (both banks count within the 50 ft tolerance) or clips a corner. A piece of 5 acres or more skips the county's plat approval in Tennessee, which is the simplest kind of split a seller would agree to.
+
+What it does (2026-10-22): a piece can be cut from three of the six 1 kW streams' parcels: Big Creek (100), Negro Den Creek and the Elk River (one parcel, 75 each: a 1.2-mile driveway). Bethel Creek (50) and Rogers Branch (24) have no public road frontage; Marion's unnamed stream (74) has frontage but no buildable ground.
+
 ---
 
 ## To be measured on real data
@@ -248,6 +262,7 @@ Decisions that barely move the top 20 keep their default and stop being discusse
 
 | Date | Decision | Change |
 | --- | --- | --- |
+| 2026-10-22 | D-18 | New default (PART 22): subdivision feasibility (FR-9). A homestead piece can be cut with 50 ft of public road frontage, 90% of the stretch on the turbine parcel, buildable ground, and turbine end, house site and frontage on one part of the parcel; 0–100 score, a quarter each for frontage, stretch, buildable acres and driveway length. Not in the overall score |
 | 2026-10-21 | D-17 | New default (PART 21, profile `hydro_v6`): privacy gets its 10%: buildings within 1/4 mile of the home site 35%, the nearest 15%, density within 1 mile 20%, woods toward the nearest public road 20%, that road's distance 10% |
 | 2026-10-21 | D-16 | New default (PART 20, profile `hydro_v5`): the agriculture part counts class 1–3 cropland that's open now (NLCD 2021) at 30%, prime farmland 30%, cropland 20%, pasture 20% |
 | 2026-10-21 | D-15 | Owner: the FR-7 overall score (PART 19, profile `hydro_v4`) re-ranks each confidence tier; privacy is left out with the other weights rescaled until FR-6 is built. Default sub-score curves; missing data left out, never scored as zero |

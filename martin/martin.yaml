@@ -172,6 +172,10 @@ postgres:
     # turbine end): other buildings within 1/4 and 1/2 mile, buildings per sq mi within 1 mile,
     # the nearest one, buildings on the turbine parcel, the nearest public road and the woods
     # on the line to it (0018).
+    # subdivision_score is FR-9's Subdivision Feasibility Score (0019, not in the overall score):
+    # whether a homestead piece (homestead_cut) holding the stretch, a house site and a driveway
+    # could be cut from the turbine parcel, with its road_frontage_m, the share of the stretch on
+    # it, the driveway's length, the piece's acres, and what stands in the way (subdivision_flags).
     # `factors` is JSON text: each
     # factor's value, sub-score, weight and contribution, for the click popup.
     latest_hydro_scores:
@@ -248,3 +252,10 @@ postgres:
         parcel_buildings: int4
         home_public_road_m: float8
         road_woods_m: float8
+        subdivision_score: float8
+        homestead_cut: bool
+        road_frontage_m: float8
+        stretch_on_parcel_share: float8
+        cut_driveway_m: float8
+        cut_piece_acres: float8
+        subdivision_flags: text

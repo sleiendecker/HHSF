@@ -319,6 +319,10 @@ Six sites across 8,315 reaches. Rogers Branch and Marion's unnamed stream are st
 - **Rhea has no steep high-yield streams.** Its top entries are big basins (27–50 sq mi) near the Tennessee River with 12–52 ft of head, where StreamStats outlined the wrong watershed and the regional yield now fills in (before PART 13 they'd have been on the mean flow, at several kW). Its best plateau-edge stream, Yarborough Branch, makes 148 W.
 - **Bledsoe has nothing at 1 kW** on StreamStats or the regional yield, despite 503 StreamStats reaches. An earlier run made it look like 8 sites at 1.3–2.6 kW: StreamStats went down mid-run and 159 reaches fell back to the Whitwell gauge transfer (about 10× high). A bug kept the run from saying so; it's fixed ([ASSUMPTIONS.md](ASSUMPTIONS.md#streamstats), "Outages").
 
+## Subdivision feasibility (FR-9)
+
+`hhsf analyze subdivision` gives each corridor with a turbine parcel a 0–100 **Subdivision Feasibility Score**: whether a homestead piece holding the stretch, a house site and a driveway could be cut from that parcel (D-18, [ASSUMPTIONS.md](ASSUMPTIONS.md#subdivision-feasibility)). It's computed with the site data, not by `make score`, and **isn't part of the overall score**: FR-7 doesn't list it. It's a column (`subdivision_score`, with `homestead_cut` and `subdivision_flags`) in the exports and a line in the map popup.
+
 ## Not built yet
 
 - **The map colors stretches by hydro score**, not overall score; the popup shows both.

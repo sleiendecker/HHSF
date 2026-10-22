@@ -21,12 +21,13 @@ ingest:  ## Download and load boundary, streams, elevations, parcels, flood zone
 	@# The tile server measures each table's extent when it starts; the map opens on the counties' extent.
 	docker compose restart tiles
 
-analyze:  ## Find each stream's steepest stretch; compute head, firm flow and firm power, the turbine parcels' buildable ground, farmland and land cover, and each home site's privacy (needs make ingest)
+analyze:  ## Find each stream's steepest stretch; compute head, firm flow and firm power, the turbine parcels' buildable ground, farmland and land cover, each home site's privacy, and whether a homestead piece could be cut from the turbine parcel (needs make ingest)
 	uv run hhsf analyze hydro --aoi $(AOI)
 	uv run hhsf analyze buildable --aoi $(AOI)
 	uv run hhsf analyze farmland --aoi $(AOI)
 	uv run hhsf analyze landcover --aoi $(AOI)
 	uv run hhsf analyze privacy --aoi $(AOI)
+	uv run hhsf analyze subdivision --aoi $(AOI)
 
 routing:  ## Start the Valhalla drive-time service (the first start downloads OpenStreetMap and builds for 10-30 min)
 	docker compose up -d --wait routing
