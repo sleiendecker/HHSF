@@ -110,7 +110,14 @@ With `hydro_v6` (PART 21) privacy counts, and the 1 kW order still doesn't chang
 
 ### The parcel shortlist (PART 23)
 
-The map's list panel ranks **parcels**, not stretches, by the overall score across every county (`hhsf.analysis.shortlist`, rebuilt with the map layer). A parcel is its county plus its parcel ID; only ranked stretches count, and stretches with no turbine parcel aren't listed. Each parcel is represented by one stretch: the highest overall score **among its stretches in its best power group** (1 kW+, then head only, then low flow), not simply its highest overall score. Overall scores only compare within a tier (above), and on Big Creek's parcel two low-flow stretches score 59.8 and 59.6 against Big Creek's 58.9: taking the plain maximum would list that parcel as a 125 W low-flow site. Parcels are then ranked by that stretch's overall score alone, ignoring tiers, as the owner asked; ties break on hydro score, then power. With `hydro_v6` (2026-10-25), the 2,689 parcels put the five 1 kW+ parcels (six streams: Negro Den Creek and the Elk River share one) at #112, #145, #185, #666 and #861: the top of the list is low-flow parcels with good land, which is why the list shows the power group on every row and filters on it.
+The map's list panel ranks **parcels**, not stretches, across every county (`hhsf.analysis.shortlist`, rebuilt with the map layer). The owner's design is filter-then-rank: toggle filters (buildable land, drive time, power, parcel size, privacy, road access, flood, farmland, county, status) whittle the list down in the browser, and what's left is ranked by the **hydro score**, not the overall score. The overall score stays a secondary column and the last part of each parcel's card.
+
+- A parcel is its county plus its parcel ID; only ranked stretches count, and stretches with no turbine parcel aren't listed.
+- The hydro value is the overall score's **hydro part**: the hydro score for 1 kW+ stretches, the head sub-score for head-only ones, and for low-flow ones the hydro formula with the power curve extended below the target (0 W → 0, 1 kW → 50). That puts every group on one 0–100 scale, so a low-flow stream with a big drop can outrank a 1 kW one; the power group stays a badge and a filter.
+- Each parcel is represented by one stretch: the highest hydro value **among its stretches in its best power group** (1 kW+, then head only, then low flow), so a 1 kW stretch is never hidden behind a low-flow estimate on the same parcel (a 160 W stretch with 300 ft of drop scores higher than Big Creek's 1 kW at 41 ft).
+- Parcels are ranked by that value, then firm power, then net head.
+
+With `hydro_v6` (2026-10-25), the 2,689 parcels put the 1 kW+ parcels at #1 (Rogers Branch, 71), #2 (Marion's unnamed stream, 66), #3 (Negro Den Creek, 64; the Elk River is on the same parcel), #4 (Bethel Creek, 56) and #34 (Big Creek, 40: only 41 ft of head). Ticking "buildable land at least 5 acres" and "drive at most 60 minutes" leaves 334 parcels and none of the 1 kW+ ones: they're on steep, remote tracts.
 
 ## The explanation
 

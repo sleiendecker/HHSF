@@ -1,7 +1,8 @@
 """The parcel shortlist and its research status (PART 23).
 
 - `parcel_shortlist`: one row per turbine parcel across every analyzed county, from each
-  county's latest scoring run, ranked by the overall score (hhsf.analysis.shortlist). Keyed
+  county's latest scoring run, ranked by the hydro score (hhsf.analysis.shortlist), with
+  what the map app filters on (buildable acres, drive time, ...). Keyed
   on the parcel's own county and parcel ID: parcel IDs repeat across counties, and a
   stretch analyzed for one county can end on a parcel in the next. Rebuilt with the map's
   saved layer (`hhsf db refresh-map`, which every step that changes it runs).
@@ -34,7 +35,8 @@ LIST_COLUMNS = """
     s.privacy_subscore, s.logistics_subscore, s.power_group, s.tier,
     s.corridor_id, s.stream_name, s.firm_power_w, s.max_power_w, s.net_head_ft,
     s.stretches, s.acres, s.buildable_acres, s.drive_minutes, s.open_acres,
-    s.subdivision_score, s.flags, s.bbox,
+    s.open_cropland_acres, s.prime_acres, s.buildings_quarter_mile, s.road_frontage_ft,
+    s.public_road_ft, s.turbine_in_sfha, s.subdivision_score, s.flags, s.bbox,
     coalesce(r.status, 'new') AS status, r.note, r.updated_at AS status_updated_at
 """
 
@@ -47,9 +49,11 @@ def upgrade() -> None:
             parcel_id       TEXT NOT NULL,          -- the county's parcel ID
             gislink         TEXT NOT NULL,          -- parcels.gislink when it was built
             county_name     TEXT,
-            rank            INTEGER NOT NULL,       -- 1 = best overall score, every county
+            rank            INTEGER NOT NULL,       -- 1 = best hydro score, every county
             overall_score   DOUBLE PRECISION,       -- 0-100, FR-7, of its best stretch
-            hydro_subscore  DOUBLE PRECISION,       -- the five parts of it
+            -- The five parts of it. The hydro part is what the list ranks on: the hydro
+            -- score, or for head-only and low-flow stretches the overall score's stand-in.
+            hydro_subscore  DOUBLE PRECISION,
             buildability_subscore DOUBLE PRECISION,
             agriculture_subscore  DOUBLE PRECISION,
             privacy_subscore      DOUBLE PRECISION,
@@ -69,6 +73,12 @@ def upgrade() -> None:
             buildable_acres DOUBLE PRECISION,
             drive_minutes   DOUBLE PRECISION,       -- from downtown Chattanooga
             open_acres      DOUBLE PRECISION,       -- field, pasture, crops (NLCD 2021)
+            open_cropland_acres DOUBLE PRECISION,   -- of it, on class 1-3 soils
+            prime_acres     DOUBLE PRECISION,       -- prime + statewide-importance farmland
+            buildings_quarter_mile INTEGER,         -- other buildings near the home site
+            road_frontage_ft DOUBLE PRECISION,      -- public road on or along the parcel
+            public_road_ft  DOUBLE PRECISION,       -- turbine end to the nearest public road
+            turbine_in_sfha BOOLEAN,                -- in the 100-year floodplain; NULL: unmapped
             subdivision_score DOUBLE PRECISION,     -- 0-100, FR-9 (not in the overall score)
             flags           TEXT[] NOT NULL,        -- hhsf.analysis.shortlist
             checks          JSONB NOT NULL,         -- the "check on the visit" list

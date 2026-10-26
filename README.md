@@ -26,7 +26,7 @@ This is different from a real estate search. It starts from the terrain and wate
 | Hydro analysis: head over that stretch, reliable low flow (Q90 from USGS StreamStats, or, for streams too small for it, the typical StreamStats low flow per square mile of their river basin; the Whitwell stream gauge where StreamStats is down) and firm power, saved as a numbered run | |
 | Scoring and ranking: streams of 1 kW or more scored 0–100 on power and head with an explanation for each score, ranked by confidence; streams under 1 kW on a rough flow estimate listed last as "low flow" | |
 | Overall score (FR-7): hydro, buildability, agriculture, privacy and logistics combined 0–100, ranking each confidence tier, with each part explained, in the exports and the map popup | Coloring the map by overall score |
-| The shortlist: one row per turbine parcel across every county, ranked by overall score, with filters, a score breakdown, a "check on the visit" list, your research status and notes, and a CSV export, beside the map (see [Using the shortlist](#using-the-shortlist)) | |
+| The shortlist: one row per turbine parcel across every county beside the map, whittled down by filters (buildable land, drive time, power, parcel size, privacy, road access, flood, farmland) and ranked by hydro score, with a "check on the visit" list, your research status and notes, and a CSV export (see [Using the shortlist](#using-the-shortlist)) | |
 | Exports: the ranked shortlist as CSV and GeoJSON, every stream with the reason it was or wasn't listed, and a summary report for planning visits | Parcels for Hamilton County (Chattanooga) and other counties outside the state's parcel layer |
 | Parcels and owners: each stretch's turbine parcel (ID, acreage, owner) and every parcel it crosses, in the exports; property lines on the map. Owner names stay on this computer, never on the map | A minimum acreage filter (D-03 is open; small parcels are only flagged) |
 | Flood zones: FEMA's flood zone at each stretch's turbine end and how much of the stretch is in the 100-year floodplain, in the exports and the map popup; flood zones on the map | |
@@ -237,18 +237,34 @@ Untick **Show hydro scores** to go back to plain streams (bigger streams darker)
 
 ### Using the shortlist
 
-The panel on the right of the map is the list to work from: **parcels to look into, ranked by their overall score**, one row per turbine parcel across every analyzed county (about 2,700). The map's `#12` labels rank each county's streams on their own; this list has one rank across all of them.
+The panel on the right of the map is the list to work from: one row per turbine parcel (the parcel under the bottom of a stream's steepest stretch) across every analyzed county, about 2,700. **Tick filters to whittle it down; what's left is ranked by hydro score.** The map's `#12` labels rank each county's streams on their own; the list's `#` is the parcel's place in the filtered list, across all of them.
 
-![The shortlist beside the map: Big Creek's parcel selected, outlined on the map with its stretch in yellow, and its overall score broken into five parts](docs/images/shortlist.jpg)
+![The parcel list beside the map, filtered to 1 kW+ only: Negro Den Creek's parcel selected, outlined on the map with its stretch in yellow, its hydro score explained and the checks for a visit](docs/images/shortlist.jpg)
 
-- **What's in the overall score?** (top right of the list) explains the five parts and their weights. Hydro is 40%, so a parcel with great land and a 50 W stream can outrank a 1 kW site: the 1 kW+ parcels are around #110 to #860. The line under the title links to each of them, the **Power** column badges every row (1 kW+, head only, low flow), and the **Power** filter has **1 kW+ only**.
+- **Filters** (above the list). Each is off until ticked, and changing a threshold ticks it. The count shows how many parcels are left ("334 of 2,689 parcels"), and the browser remembers the filters. Hover a filter for what it measures.
+
+  | Filter | Passes when |
+  | --- | --- |
+  | 1 kW+ only | a stretch on the parcel makes 1 kW or more on the estimated dry-season flow |
+  | Power at least | the best stretch's firm power is at least that many watts |
+  | Buildable land at least | the parcel has that many acres sloped 15% or less, out of the 100-year floodplain, on septic-suitable soils |
+  | Drive at most | the drive from downtown Chattanooga is at most that many minutes |
+  | Parcel at least / at most | the parcel's acres are in range (the maximum hides huge timber and conservation tracts) |
+  | Buildings within ¼ mile at most | other buildings near the house site, a privacy measure |
+  | Has public road frontage | 50 ft or more of public road on or along the parcel |
+  | Public road within | the turbine end is that close to a public road (straight line) |
+  | Turbine end out of the 100-year floodplain | FEMA's map at the turbine end (unmapped counts as outside) |
+  | Prime farmland / Open cropland at least | acres of prime farmland, or of field, pasture or crops on cropland soils |
+  | County, Status | the parcel's county; your research status ("Not ruled out" hides the ruled-out ones) |
+
+  A parcel with no number for a ticked filter (not computed, no route) is left out.
+- **Ranking: the hydro score** (0–100: 70% firm power, 30% net head), highest first, ties to more power, then more head. Low-flow parcels are scored on the power curve extended below 1 kW (0 W → 0, 1 kW → 50), the same hydro part the overall score uses, so every parcel is on one scale; a low-flow stream with a big drop can rank above a 1 kW one. The **Power** badge on every row (1 kW+, head only, low flow) keeps that visible, and the line above the list links to the 1 kW+ parcels left. Click a column header to sort on it instead; click **Hydro** to go back. **How is it ranked?** (top right) explains all of this.
 - **Why** shows what stands out: the power (`1.3 kW`, or `60 W est.` for a low-flow estimate), buildable acres, the drive in minutes (red past an hour), open acres, "secluded".
-- **Filters**: power group, minimum power (W), maximum drive (minutes), minimum buildable acres, maximum parcel acres (to hide big timber and conservation tracts), county and status. Click a column header to sort; click again to reverse.
-- **Click a row** to zoom to the parcel, outline it (pink) and its best stretch (yellow), and open its card: the score broken into one bar per part (its 0–100 score, how much it counts and the points it adds; click a part for its reasons), and a **check on the visit** list (dry-season flow, the drop, deed and owner, septic soils, road access, flooding), with ⚠ where the data already points at a problem.
-- **Status and note**: mark a parcel New, Interested, Ruled out or Visited and add a note. They're saved in the database by county and parcel ID, so they survive reloads, re-runs and re-ingests, and everyone using the same map sees them. Filter on **Status** to see your picks.
-- **Export this list** downloads the rows you're looking at, filtered and sorted, as CSV. It has no owner names: for those, use `make export`.
+- **Click a row** to zoom to the parcel, outline it (pink) and its best stretch (yellow), and open its card: the hydro score and how it was reached, a **check on the visit** list (dry-season flow, the drop, deed and owner, septic soils, road access, flooding) with ⚠ where the data already points at a problem, and at the bottom the overall score (FR-7) broken into its five parts. The overall score is also a column, but it doesn't rank the list.
+- **Status and note**: mark a parcel New, Interested, Ruled out or Visited and add a note. They're saved in the database by county and parcel ID, so they survive reloads, re-runs and re-ingests, and everyone using the same map sees them.
+- **Export this list** downloads the parcels you're looking at, filtered and sorted, as CSV. It has no owner names: for those, use `make export`.
 
-A parcel is represented by its best stretch: the highest overall score among its stretches in its best power group, so a 1 kW stretch is never hidden behind a slightly higher-scoring low-flow one on the same parcel. Parcel IDs repeat across counties, so a parcel is its county plus its ID. The 140 or so stretches with no turbine parcel (they end outside the loaded counties) aren't listed.
+A parcel with several stretches is listed with its best one: the highest hydro score among its 1 kW+ stretches if it has any (then head-only, then low-flow), so a 1 kW stretch is never hidden behind a low-flow estimate on the same parcel. Parcel IDs repeat across counties, so a parcel is its county plus its ID. The 140 or so stretches with no turbine parcel (they end outside the loaded counties) aren't listed.
 
 The list is rebuilt with the map layer, by every step that changes it (`make score`, `make analyze`, ...). After upgrading to this version, run `uv run hhsf db refresh-map` once to fill it. It's served by [PostgREST](https://postgrest.org/) (`docker-compose.yml`, service `api`, port 3110) from the database's `api` schema, under a role that can read the list and set a status, and can't read owner names (migration 0020, `src/hhsf/analysis/shortlist.py`).
 

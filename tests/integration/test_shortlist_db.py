@@ -57,24 +57,24 @@ def test_list_is_ranked_and_every_parcel_starts_new(api):
     save(
         api,
         [
-            stretch("47153", "001", overall=50),
-            stretch("47115", "001", overall=70),
-            stretch("47115", "001", overall=20),
+            stretch("47153", "001", hydro=50),
+            stretch("47115", "001", hydro=70),
+            stretch("47115", "001", hydro=20),
         ],
     )
     assert listed(api) == [(1, "47115", "001", "new", None), (2, "47153", "001", "new", None)]
 
 
 def test_status_and_note_survive_a_rebuild(api):
-    save(api, [stretch("47153", "001", overall=50), stretch("47115", "001", overall=70)])
+    save(api, [stretch("47153", "001", hydro=50), stretch("47115", "001", hydro=70)])
     saved = set_research(api, "47153", "001", "interested", "  call the owner  ")
     assert (saved.status, saved.note) == ("interested", "call the owner")
     set_research(api, "47153", "001", "visited", "walked it")
     # A re-run: new scores, new ranks, one parcel gone. The status stays with the parcel.
-    save(api, [stretch("47153", "001", overall=90)])
+    save(api, [stretch("47153", "001", hydro=90)])
     assert listed(api) == [(1, "47153", "001", "visited", "walked it")]
     # And comes back with a parcel that drops out and returns.
-    save(api, [stretch("47153", "001", overall=90), stretch("47115", "001", overall=70)])
+    save(api, [stretch("47153", "001", hydro=90), stretch("47115", "001", hydro=70)])
     set_research(api, "47115", "001", "ruled_out", "")
     assert listed(api)[1] == (2, "47115", "001", "ruled_out", None)
 
@@ -126,6 +126,13 @@ def test_map_refresh_builds_the_shortlist(engine, site):  # noqa: F811
         ).all()
         detail = conn.execute(text("SELECT parcel_geom, stretch_geom FROM api.parcel_detail")).all()
         runs = conn.execute(text("SELECT profile, weights FROM api.score_runs")).all()
+        filtered_on = conn.execute(
+            text(
+                "SELECT hydro_subscore, buildable_acres, drive_minutes, prime_acres,"
+                " open_cropland_acres, buildings_quarter_mile, road_frontage_ft, public_road_ft,"
+                " turbine_in_sfha FROM api.parcels"
+            )
+        ).first()
     assert parcels >= 1 and len(rows) == parcels
     assert rows[0].rank == 1 and rows[0].stretches == 1
     assert rows[0].checks[0]["topic"] == "Dry-season flow"
@@ -133,3 +140,5 @@ def test_map_refresh_builds_the_shortlist(engine, site):  # noqa: F811
     assert detail[0].parcel_geom["type"] in ("Polygon", "MultiPolygon")
     assert detail[0].stretch_geom["type"] == "MultiLineString"
     assert runs == [("hydro_v6", PROFILE.overall.weights)]
+    # Farmland and privacy aren't analyzed in this fixture: served, but empty.
+    assert filtered_on.hydro_subscore is not None and filtered_on.road_frontage_ft is None

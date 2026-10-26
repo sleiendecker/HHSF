@@ -1,6 +1,6 @@
-// The parcel shortlist (PART 23): one row per turbine parcel, ranked by the overall score, from the
+// The parcel shortlist (PART 23): one row per turbine parcel, ranked by the hydro score, from the
 // PostgREST API (/api, docker-compose.yml service `api`; migration 0020). No owner names or addresses
-// ever come through it. Filtering, sorting and the CSV happen here, in the browser.
+// ever come through it. The filters that whittle it down, the sorting and the CSV happen here, in the browser.
 
 export type PowerGroup = "kw" | "head_only" | "low_flow";
 export type Status = "new" | "interested" | "ruled_out" | "visited";
@@ -9,9 +9,9 @@ export interface ParcelRow {
   county_geoid: string;
   parcel_id: string;
   county_name: string | null;
-  rank: number;
+  rank: number; // by hydro, every county
   overall_score: number | null;
-  hydro_subscore: number | null;
+  hydro_subscore: number | null; // what the list ranks on (see HYDRO_TEXT)
   buildability_subscore: number | null;
   agriculture_subscore: number | null;
   privacy_subscore: number | null;
@@ -28,6 +28,12 @@ export interface ParcelRow {
   buildable_acres: number | null;
   drive_minutes: number | null;
   open_acres: number | null;
+  open_cropland_acres: number | null;
+  prime_acres: number | null;
+  buildings_quarter_mile: number | null;
+  road_frontage_ft: number | null;
+  public_road_ft: number | null;
+  turbine_in_sfha: boolean | null;
   subdivision_score: number | null;
   flags: string[];
   bbox: [number, number, number, number];
@@ -234,37 +240,192 @@ export function badges(r: ParcelRow): { text: string; tone: "good" | "bad" | "pl
 
 // --- Filters and sorting ------------------------------------------------------------
 
-export interface Filters {
-  group: "" | PowerGroup;
-  minPowerW: number | null;
-  maxDriveMin: number | null;
-  minBuildableAc: number | null;
-  maxParcelAc: number | null;
-  county: string;
-  status: "" | Status | "open"; // open: everything not ruled out
+// How the hydro score ranks every parcel on one scale, for the list and its help.
+export const HYDRO_TEXT =
+  "The hydro score (0–100) is 70% firm power and 30% net head. 1 kW scores 50 and 3 kW 100; head scores 0 at " +
+  "10 ft and 100 at 200 ft. Under 1 kW (low flow) the power curve is extended down to 0 W → 0, as in the overall " +
+  "score's hydro part, so every parcel has a comparable score; head-only parcels (no flow estimate) score on " +
+  "head alone. Ties go to more power, then more head.";
+
+// A filter whittles the list down. Each is off until ticked; `value` is its threshold (or choice).
+interface FilterSpec {
+  id: string;
+  label: string;
+  unit?: string;
+  hint: string;
+  kind: "min" | "max" | "flag" | "choice";
+  value: number | string; // the default threshold
+  step?: number;
+  pass: (r: ParcelRow, value: number | string) => boolean;
 }
 
-export const NO_FILTERS: Filters = {
-  group: "",
-  minPowerW: null,
-  maxDriveMin: null,
-  minBuildableAc: null,
-  maxParcelAc: null,
-  county: "",
-  status: "",
-};
+const atLeast = (v: number | null, min: number | string) => v !== null && v >= Number(min);
+const atMost = (v: number | null, max: number | string) => v !== null && v <= Number(max);
 
-export function applyFilters(rows: ParcelRow[], f: Filters): ParcelRow[] {
-  return rows.filter(
-    (r) =>
-      (!f.group || r.power_group === f.group) &&
-      (f.minPowerW === null || (r.firm_power_w ?? 0) >= f.minPowerW) &&
-      (f.maxDriveMin === null || (r.drive_minutes !== null && r.drive_minutes <= f.maxDriveMin)) &&
-      (f.minBuildableAc === null || (r.buildable_acres ?? 0) >= f.minBuildableAc) &&
-      (f.maxParcelAc === null || (r.acres !== null && r.acres <= f.maxParcelAc)) &&
-      (!f.county || r.county_name === f.county) &&
-      (!f.status || (f.status === "open" ? r.status !== "ruled_out" : r.status === f.status)),
-  );
+export const FILTERS: FilterSpec[] = [
+  {
+    id: "kw",
+    label: "1 kW+ only",
+    kind: "flag",
+    value: 0,
+    hint: "Only parcels with a stretch making 1 kW or more on the estimated dry-season flow.",
+    pass: (r) => r.power_group === "kw",
+  },
+  {
+    id: "power",
+    label: "Power at least",
+    unit: "W",
+    kind: "min",
+    value: 500,
+    step: 50,
+    hint: "Firm power of the parcel's best stretch. Under 1 kW it's a regional estimate that can't see springs.",
+    pass: (r, v) => atLeast(r.firm_power_w, v),
+  },
+  {
+    id: "buildable",
+    label: "Buildable land at least",
+    unit: "ac",
+    kind: "min",
+    value: 5,
+    hint: "Ground on the parcel sloped 15% or less, outside the 100-year floodplain, on soils fit for a septic field.",
+    pass: (r, v) => atLeast(r.buildable_acres, v),
+  },
+  {
+    id: "drive",
+    label: "Drive at most",
+    unit: "min",
+    kind: "max",
+    value: 60,
+    step: 5,
+    hint: "By car from downtown Chattanooga to the turbine end, no traffic.",
+    pass: (r, v) => atMost(r.drive_minutes, v),
+  },
+  {
+    id: "minAcres",
+    label: "Parcel at least",
+    unit: "ac",
+    kind: "min",
+    value: 10,
+    hint: "Measured from the parcel outline.",
+    pass: (r, v) => atLeast(r.acres, v),
+  },
+  {
+    id: "maxAcres",
+    label: "Parcel at most",
+    unit: "ac",
+    kind: "max",
+    value: 1000,
+    step: 50,
+    hint: "Hides the huge timber and conservation tracts.",
+    pass: (r, v) => atMost(r.acres, v),
+  },
+  {
+    id: "privacy",
+    label: "Buildings within ¼ mile at most",
+    kind: "max",
+    value: 2,
+    hint: "Other buildings (400 sq ft or more, barns too) within 1/4 mile of the house site, not on the parcel.",
+    pass: (r, v) => atMost(r.buildings_quarter_mile, v),
+  },
+  {
+    id: "frontage",
+    label: "Has public road frontage",
+    kind: "flag",
+    value: 0,
+    hint: "At least 50 ft of public road on or along the parcel (Census roads), so a piece could be cut with access.",
+    pass: (r) => atLeast(r.road_frontage_ft, 50),
+  },
+  {
+    id: "road",
+    label: "Public road within",
+    unit: "ft",
+    kind: "max",
+    value: 1320,
+    step: 100,
+    hint: "Straight-line distance from the turbine end to the nearest public road.",
+    pass: (r, v) => atMost(r.public_road_ft, v),
+  },
+  {
+    id: "flood",
+    label: "Turbine end out of the 100-year floodplain",
+    kind: "flag",
+    value: 0,
+    hint: "FEMA's map at the turbine end. Small creeks are mostly unmapped; unmapped counts as outside.",
+    pass: (r) => r.turbine_in_sfha !== true,
+  },
+  {
+    id: "prime",
+    label: "Prime farmland at least",
+    unit: "ac",
+    kind: "min",
+    value: 5,
+    hint: "Prime farmland and farmland of statewide importance on the parcel (USDA soil survey), wooded or not.",
+    pass: (r, v) => atLeast(r.prime_acres, v),
+  },
+  {
+    id: "openCrop",
+    label: "Open cropland at least",
+    unit: "ac",
+    kind: "min",
+    value: 5,
+    hint: "Field, pasture or crops today (NLCD 2021) on cropland soils (class 1–3).",
+    pass: (r, v) => atLeast(r.open_cropland_acres, v),
+  },
+  {
+    id: "county",
+    label: "County",
+    kind: "choice",
+    value: "",
+    hint: "The parcel's own county.",
+    pass: (r, v) => !v || r.county_name === v,
+  },
+  {
+    id: "status",
+    label: "Status",
+    kind: "choice",
+    value: "open",
+    hint: "Your research status. Not ruled out: everything but Ruled out.",
+    pass: (r, v) => !v || (v === "open" ? r.status !== "ruled_out" : r.status === v),
+  },
+];
+
+export type Filters = Record<string, { on: boolean; value: number | string }>;
+
+export const DEFAULT_FILTERS: Filters = Object.fromEntries(FILTERS.map((f) => [f.id, { on: false, value: f.value }]));
+
+const FILTERS_KEY = "hhsf.shortlist.filters";
+
+// Remembered per browser. Storage can be blocked (private windows): then it starts from the defaults.
+export function savedFilters(): Filters {
+  try {
+    const saved = JSON.parse(localStorage.getItem(FILTERS_KEY) ?? "{}");
+    return Object.fromEntries(
+      FILTERS.map((f) => {
+        const s = saved[f.id];
+        const ok = s && typeof s.on === "boolean" && typeof s.value === typeof f.value;
+        return [f.id, ok ? { on: s.on, value: s.value } : DEFAULT_FILTERS[f.id]];
+      }),
+    );
+  } catch {
+    return DEFAULT_FILTERS;
+  }
+}
+
+export function saveFilters(filters: Filters) {
+  try {
+    localStorage.setItem(FILTERS_KEY, JSON.stringify(filters));
+  } catch {
+    // Not remembered.
+  }
+}
+
+export function activeFilters(filters: Filters): number {
+  return FILTERS.filter((f) => filters[f.id]?.on).length;
+}
+
+export function applyFilters(rows: ParcelRow[], filters: Filters): ParcelRow[] {
+  const on = FILTERS.filter((f) => filters[f.id]?.on);
+  return rows.filter((r) => on.every((f) => f.pass(r, filters[f.id].value)));
 }
 
 export type SortKey = keyof ParcelRow | "parcel";
@@ -284,7 +445,7 @@ function sortValue(r: ParcelRow, key: SortKey): number | string | null {
   return typeof v === "number" || typeof v === "string" ? v : null;
 }
 
-// Missing values sort last either way; ties keep the overall rank.
+// Missing values sort last either way; ties keep the hydro rank (then power, then head).
 export function sortRows(rows: ParcelRow[], s: Sort): ParcelRow[] {
   return [...rows].sort((a, b) => {
     const x = sortValue(a, s.key);
@@ -300,13 +461,13 @@ export function sortRows(rows: ParcelRow[], s: Sort): ParcelRow[] {
 // --- CSV --------------------------------------------------------------------------
 
 const CSV_COLUMNS: [string, (r: ParcelRow) => unknown][] = [
-  ["rank", (r) => r.rank],
+  ["hydro_rank", (r) => r.rank],
   ["county", (r) => r.county_name],
   ["parcel_id", (r) => r.parcel_id],
   ["status", (r) => STATUS_LABEL[r.status]],
   ["note", (r) => r.note],
+  ["hydro_score", (r) => r.hydro_subscore],
   ["overall_score", (r) => r.overall_score],
-  ["hydro", (r) => r.hydro_subscore],
   ["buildability", (r) => r.buildability_subscore],
   ["agriculture", (r) => r.agriculture_subscore],
   ["privacy", (r) => r.privacy_subscore],
@@ -321,6 +482,12 @@ const CSV_COLUMNS: [string, (r: ParcelRow) => unknown][] = [
   ["buildable_acres", (r) => r.buildable_acres],
   ["drive_minutes", (r) => r.drive_minutes],
   ["open_acres", (r) => r.open_acres],
+  ["open_cropland_acres", (r) => r.open_cropland_acres],
+  ["prime_acres", (r) => r.prime_acres],
+  ["buildings_quarter_mile", (r) => r.buildings_quarter_mile],
+  ["road_frontage_ft", (r) => r.road_frontage_ft],
+  ["public_road_ft", (r) => r.public_road_ft],
+  ["turbine_in_100yr_floodplain", (r) => (r.turbine_in_sfha === null ? "" : r.turbine_in_sfha ? "yes" : "no")],
   ["subdivision_score", (r) => r.subdivision_score],
   ["flags", (r) => r.flags.join(";")],
   ["lon", (r) => ((r.bbox[0] + r.bbox[2]) / 2).toFixed(5)],
@@ -334,14 +501,16 @@ function cell(value: unknown): string {
 }
 
 // No owner names: the API never has them.
-export function toCsv(rows: ParcelRow[]): string {
-  const lines = [CSV_COLUMNS.map(([name]) => name).join(",")];
-  for (const r of rows) lines.push(CSV_COLUMNS.map(([, get]) => cell(get(r))).join(","));
+// `position`: each row's place in the filtered list, by hydro.
+export function toCsv(rows: ParcelRow[], position: Map<string, number>): string {
+  const lines = ["position," + CSV_COLUMNS.map(([name]) => name).join(",")];
+  for (const r of rows)
+    lines.push([position.get(keyOf(r)), ...CSV_COLUMNS.map(([, get]) => get(r))].map(cell).join(","));
   return lines.join("\r\n") + "\r\n";
 }
 
-export function downloadCsv(rows: ParcelRow[]) {
-  const blob = new Blob([toCsv(rows)], { type: "text/csv;charset=utf-8" });
+export function downloadCsv(rows: ParcelRow[], position: Map<string, number>) {
+  const blob = new Blob([toCsv(rows, position)], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;

@@ -1,21 +1,25 @@
-"""The parcel shortlist (PART 23): one row per turbine parcel, ranked by the overall score.
+"""The parcel shortlist (PART 23): one row per turbine parcel, ranked by the hydro score.
 
 The scores are per stretch and per county: each county's latest score run ranks its own
 stretches, so the map shows a "#1" per county, and a big parcel can hold dozens of
-stretches. The owner wants one list: "look into these parcels, based on these scores".
+stretches. The owner wants one list of parcels, whittled down by filters (buildable land,
+drive time, ...) in the map app, with what's left "racked and stacked" on the hydro score.
 
 - One row per turbine parcel, keyed on the parcel's own county and parcel ID (parcel IDs
   repeat across counties; a stretch analyzed for one county can end on a parcel in the
   next, and two counties' runs can share a parcel). Only ranked stretches count.
-- Each parcel is represented by its best stretch: the highest overall score among the
-  stretches of its best power group (1 kW+, then head only, then low flow). Overall scores
-  only compare within a group (docs/SCORING.md), and the highest one on a parcel is often a
-  low-flow stretch with a slightly better spot: Big Creek's parcel has two low-flow stretches
-  scoring 59.8 and 59.6 above Big Creek's 1 kW stretch at 58.9, and would otherwise be
-  listed as low flow at 125 W.
-- Ranked by that overall score across every county, best first. Not by power group: the
-  group is a column, a badge and a filter, and the 1 kW+ parcels rank where their land puts
-  them.
+- The hydro value of a stretch is the hydro part of its overall score: the hydro score for
+  1 kW+ stretches, the head sub-score for head-only ones, and for low-flow ones the hydro
+  formula with the power curve extended below the target (0 W -> 0, 1 kW -> 50), so every
+  group is on one 0-100 scale (docs/SCORING.md, "The overall score").
+- Each parcel is represented by its best stretch: the highest hydro value among the
+  stretches of its best power group (1 kW+, then head only, then low flow), so a 1 kW
+  stretch is never listed behind a low-flow estimate on the same parcel (a 160 W stretch
+  with a big drop can score higher on the extended curve).
+- Parcels are ranked by that stretch's hydro value across every county, best first; ties
+  break on firm power, then net head. Not by power group: a low-flow parcel with a big drop
+  can rank above a 1 kW one, so the group stays a column, a badge and a filter. The overall
+  score is kept as a secondary column.
 
 Pure functions apart from `load` and `save`, so the grouping and ranking are unit-tested.
 No owner names or addresses: the list is served to the map app (migration 0020).
@@ -65,6 +69,7 @@ class Stretch:
     tier: str
     overall_score: float | None
     hydro_score: float | None
+    hydro_part: float | None = None  # see the module docstring; None: no overall score
     nhdplusid: int | None = None
     stream_name: str | None = None
     firm_power_w: float | None = None
@@ -85,6 +90,10 @@ class Stretch:
     turbine_in_sfha: bool | None = None
     stretch_sfha_m: float | None = None
     open_acres: float | None = None
+    open_cropland_acres: float | None = None
+    prime_acres: float | None = None  # prime and statewide-importance farmland
+    buildings_quarter_mile: int | None = None
+    road_frontage_m: float | None = None
     nearest_building_m: float | None = None
     parcel_buildings: int | None = None
     subdivision_score: float | None = None
@@ -97,6 +106,11 @@ class Stretch:
     @property
     def group(self) -> str:
         return TIER_GROUP[self.tier]
+
+    @property
+    def hydro(self) -> float | None:
+        """The 0-100 hydro value the list ranks on (the hydro score where there's no part)."""
+        return self.hydro_part if self.hydro_part is not None else self.hydro_score
 
 
 @dataclass(frozen=True)
@@ -116,35 +130,24 @@ class Entry:
         return self.best.county_geoid, self.best.parcel_id
 
 
-def _best_first(s: Stretch) -> tuple:
-    """Sort key within a parcel: best power group, then overall score, then hydro score."""
+def _hydro_order(s: Stretch) -> tuple:
+    """Best first on hydro: the hydro value, then firm power, then net head."""
     return (
-        GROUP_ORDER.index(s.group),
-        -(s.overall_score if s.overall_score is not None else -1),
-        -(s.hydro_score or 0),
-        s.corridor_id,
+        -(s.hydro if s.hydro is not None else -1),
+        -(s.firm_power_w if s.firm_power_w is not None else -1),
+        -(s.net_head_ft if s.net_head_ft is not None else -1),
     )
+
+
+def _best_first(s: Stretch) -> tuple:
+    """Sort key within a parcel: best power group, then hydro."""
+    return (GROUP_ORDER.index(s.group), *_hydro_order(s), s.corridor_id)
 
 
 def _rank_key(e: tuple[Stretch, list[Stretch]]) -> tuple:
-    """Across parcels: overall score only (ties: hydro score, power, then the key)."""
+    """Across parcels: hydro only, whatever the group (then the key, so it's stable)."""
     s = e[0]
-    return (
-        -(s.overall_score if s.overall_score is not None else -1),
-        -(s.hydro_score or 0),
-        -(s.firm_power_w or 0),
-        s.county_geoid,
-        s.parcel_id,
-    )
-
-
-def _union(boxes: list[tuple[float, float, float, float]]) -> tuple[float, float, float, float]:
-    return (
-        min(b[0] for b in boxes),
-        min(b[1] for b in boxes),
-        max(b[2] for b in boxes),
-        max(b[3] for b in boxes),
-    )
+    return (*_hydro_order(s), s.county_geoid, s.parcel_id)
 
 
 def build(stretches: list[Stretch], min_acres: float = 10) -> list[Entry]:
@@ -330,7 +333,10 @@ LOAD_SQL = """
            l.turbine_parcel_distance_m, l.turbine_buildable_acres AS buildable_acres,
            b.no_soil_acres, l.drive_minutes, l.in_drive_area, l.turbine_road_m,
            l.turbine_public_road_m, l.turbine_in_sfha, l.stretch_sfha_m,
-           l.turbine_open_acres AS open_acres, l.nearest_building_m, l.parcel_buildings,
+           l.turbine_open_acres AS open_acres,
+           l.turbine_open_cropland_acres AS open_cropland_acres,
+           l.turbine_prime_acres + coalesce(l.turbine_statewide_acres, 0) AS prime_acres,
+           l.buildings_quarter_mile, l.road_frontage_m, l.nearest_building_m, l.parcel_buildings,
            l.subdivision_score, l.subdivision_flags, l.flow_flags,
            h.explanation -> 'overall' AS overall,
            ARRAY[ST_XMin(e.box), ST_YMin(e.box), ST_XMax(e.box), ST_YMax(e.box)] AS bbox
@@ -356,10 +362,12 @@ def load(conn: Connection) -> list[Stretch]:
         row["subdivision_flags"] = _split(row["subdivision_flags"])
         row["flow_flags"] = _split(row["flow_flags"])
         row["bbox"] = tuple(row["bbox"])
+        parts = tuple(overall.get("parts", ()))
         out.append(
             Stretch(
                 **row,
-                parts=tuple(overall.get("parts", ())),
+                hydro_part=_part(parts, "hydro"),
+                parts=parts,
                 left_out=tuple(overall.get("left_out", ())),
             )
         )
@@ -396,19 +404,26 @@ INSERT_SQL = """
         overall_score, hydro_subscore, buildability_subscore, agriculture_subscore,
         privacy_subscore, logistics_subscore, power_group, tier, corridor_id, aoi_key,
         score_run_id, stream_name, firm_power_w, max_power_w, net_head_ft, stretches, acres,
-        deed_acres, buildable_acres, drive_minutes, open_acres, subdivision_score, flags,
-        checks, parts, bbox)
+        deed_acres, buildable_acres, drive_minutes, open_acres, open_cropland_acres,
+        prime_acres, buildings_quarter_mile, road_frontage_ft, public_road_ft, turbine_in_sfha,
+        subdivision_score, flags, checks, parts, bbox)
     VALUES (:county_geoid, :parcel_id, :gislink, :county_name, :rank, :overall_score,
         :hydro_subscore, :buildability_subscore, :agriculture_subscore, :privacy_subscore,
         :logistics_subscore, :power_group, :tier, :corridor_id, :aoi_key, :score_run_id,
         :stream_name, :firm_power_w, :max_power_w, :net_head_ft, :stretches, :acres,
-        :deed_acres, :buildable_acres, :drive_minutes, :open_acres, :subdivision_score,
-        :flags, CAST(:checks AS jsonb), CAST(:parts AS jsonb), :bbox)
+        :deed_acres, :buildable_acres, :drive_minutes, :open_acres, :open_cropland_acres,
+        :prime_acres, :buildings_quarter_mile, :road_frontage_ft, :public_road_ft,
+        :turbine_in_sfha, :subdivision_score, :flags, CAST(:checks AS jsonb),
+        CAST(:parts AS jsonb), :bbox)
 """
 
 
 def _r(value: float | None, digits: int = 1) -> float | None:
     return None if value is None else round(value, digits)
+
+
+def _r_ft(m: float | None) -> float | None:
+    return None if m is None else round(units.m_to_ft(m))
 
 
 def row(e: Entry) -> dict:
@@ -421,8 +436,8 @@ def row(e: Entry) -> dict:
         "county_name": s.county_name,
         "rank": e.rank,
         "overall_score": _r(s.overall_score),
-        # The hydro part is the hydro score, except for head-only and low-flow stretches.
-        "hydro_subscore": _r(_part(s.parts, "hydro")),
+        # What the list ranks on: the hydro part (see the module docstring).
+        "hydro_subscore": _r(s.hydro),
         "buildability_subscore": _r(s.buildability_subscore),
         "agriculture_subscore": _r(s.agriculture_subscore),
         "privacy_subscore": _r(s.privacy_subscore),
@@ -442,6 +457,12 @@ def row(e: Entry) -> dict:
         "buildable_acres": _r(s.buildable_acres),
         "drive_minutes": _r(s.drive_minutes),
         "open_acres": _r(s.open_acres),
+        "open_cropland_acres": _r(s.open_cropland_acres),
+        "prime_acres": _r(s.prime_acres),
+        "buildings_quarter_mile": s.buildings_quarter_mile,
+        "road_frontage_ft": _r_ft(s.road_frontage_m),
+        "public_road_ft": _r_ft(s.turbine_public_road_m),
+        "turbine_in_sfha": s.turbine_in_sfha,
         "subdivision_score": _r(s.subdivision_score),
         "flags": list(e.flags),
         "checks": json.dumps(list(e.checks)),

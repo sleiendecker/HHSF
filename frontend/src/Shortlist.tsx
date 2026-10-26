@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
+  DEFAULT_FILTERS,
+  FILTERS,
   FLAG_TEXT,
   GROUP_LABEL,
   GROUP_TITLE,
-  NO_FILTERS,
+  HYDRO_TEXT,
   PARTS,
   STATUSES,
   STATUS_LABEL,
+  activeFilters,
   applyFilters,
   badges,
   commonWeights,
@@ -17,7 +20,9 @@ import {
   keyOf,
   num,
   power,
+  saveFilters,
   saveResearch,
+  savedFilters,
   sortRows,
   type Filters,
   type ParcelDetail,
@@ -29,18 +34,20 @@ import {
 } from "./parcels";
 
 const ROW_HEIGHT = 30;
+const HYDRO_SORT: Sort = { key: "hydro_subscore", desc: true };
 
 interface Column {
   key: SortKey;
   label: string;
   title: string;
-  render: (r: ParcelRow) => ReactNode;
+  // `position`: the row's place in the filtered list, by hydro.
+  render: (r: ParcelRow, position: number | undefined) => ReactNode;
   className?: string;
   desc?: boolean; // first click sorts high to low
 }
 
 const COLUMNS: Column[] = [
-  { key: "rank", label: "#", title: "Rank by overall score, every county", render: (r) => r.rank, className: "num" },
+  { key: "rank", label: "#", title: "Place in this list, by hydro score", render: (_, i) => i, className: "num" },
   {
     key: "status",
     label: "Status",
@@ -58,7 +65,14 @@ const COLUMNS: Column[] = [
     ),
     className: "parcel",
   },
-  { key: "overall_score", label: "Overall", title: "Overall score, 0–100", render: (r) => num(r.overall_score), className: "num strong", desc: true },
+  {
+    key: "hydro_subscore",
+    label: "Hydro",
+    title: "Hydro score, 0–100: 70% power, 30% head (what the list is ranked on)",
+    render: (r) => num(r.hydro_subscore),
+    className: "num strong",
+    desc: true,
+  },
   {
     key: "power_group",
     label: "Power",
@@ -73,22 +87,14 @@ const COLUMNS: Column[] = [
   { key: "firm_power_w", label: "W", title: "Firm power of the best stretch, W", render: (r) => num(r.firm_power_w), className: "num", desc: true },
   { key: "net_head_ft", label: "Head", title: "Net head of the best stretch, ft", render: (r) => num(r.net_head_ft), className: "num", desc: true },
   { key: "stream_name", label: "Stream", title: "Best stream", render: (r) => r.stream_name ?? <span className="muted">unnamed</span>, className: "stream" },
-  ...PARTS.map(
-    (p): Column => ({
-      key: p.column,
-      label: p.label.slice(0, 1),
-      title: `${p.label} part of the overall score, 0–100`,
-      render: (r) => num(r[p.column] as number | null),
-      className: "num part",
-      desc: true,
-    }),
-  ),
-  { key: "stretches", label: "Str.", title: "Stretches on the parcel", render: (r) => r.stretches, className: "num", desc: true },
-  { key: "acres", label: "Acres", title: "Parcel acres", render: (r) => num(r.acres), className: "num", desc: true },
   { key: "buildable_acres", label: "Build ac", title: "Buildable acres", render: (r) => num(r.buildable_acres), className: "num", desc: true },
   { key: "drive_minutes", label: "Min", title: "Drive from downtown Chattanooga, minutes", render: (r) => num(r.drive_minutes), className: "num" },
-  { key: "open_acres", label: "Open ac", title: "Open acres (field, pasture, crops)", render: (r) => num(r.open_acres), className: "num", desc: true },
-  { key: "subdivision_score", label: "Split", title: "Subdivision feasibility, 0–100 (not in the overall score)", render: (r) => num(r.subdivision_score), className: "num", desc: true },
+  { key: "acres", label: "Acres", title: "Parcel acres", render: (r) => num(r.acres), className: "num", desc: true },
+  { key: "buildings_quarter_mile", label: "Bldgs", title: "Other buildings within 1/4 mile of the house site", render: (r) => num(r.buildings_quarter_mile), className: "num" },
+  { key: "open_cropland_acres", label: "Open crop ac", title: "Open cropland acres (field, pasture or crops on class 1–3 soils)", render: (r) => num(r.open_cropland_acres), className: "num", desc: true },
+  { key: "stretches", label: "Str.", title: "Stretches on the parcel", render: (r) => r.stretches, className: "num", desc: true },
+  { key: "overall_score", label: "Overall", title: "Overall score, 0–100 (FR-7; not the ranking)", render: (r) => num(r.overall_score), className: "num secondary", desc: true },
+  { key: "subdivision_score", label: "Split", title: "Subdivision feasibility, 0–100", render: (r) => num(r.subdivision_score), className: "num secondary", desc: true },
 ];
 
 function Badges({ row }: { row: ParcelRow }) {
@@ -103,29 +109,68 @@ function Badges({ row }: { row: ParcelRow }) {
   );
 }
 
-function NumberFilter(props: { label: string; value: number | null; onChange: (v: number | null) => void; step?: number }) {
+function FilterBar(props: { filters: Filters; counties: string[]; onChange: (f: Filters) => void }) {
+  const { filters } = props;
+  const set = (id: string, patch: Partial<Filters[string]>) =>
+    props.onChange({ ...filters, [id]: { ...filters[id], ...patch } });
   return (
-    <label className="filter">
-      {props.label}
-      <input
-        type="number"
-        min={0}
-        step={props.step ?? 1}
-        value={props.value ?? ""}
-        onChange={(e) => props.onChange(e.target.value === "" ? null : Number(e.target.value))}
-      />
-    </label>
+    <div className="filters">
+      {FILTERS.map((f) => {
+        const state = filters[f.id];
+        const choices: [string, string][] =
+          f.id === "county"
+            ? [["", "All"], ...props.counties.map((c): [string, string] => [c, c])]
+            : f.id === "status"
+              ? [["open", "Not ruled out"], ...STATUSES.map((s): [string, string] => [s, STATUS_LABEL[s]])]
+              : [];
+        return (
+          <div key={f.id} className={`filter${state.on ? " on" : ""}`} title={f.hint}>
+            <label>
+              <input type="checkbox" checked={state.on} onChange={(e) => set(f.id, { on: e.target.checked })} />
+              {f.label}
+            </label>
+            {(f.kind === "min" || f.kind === "max") && (
+              <span className="threshold">
+                <input
+                  type="number"
+                  min={0}
+                  step={f.step ?? 1}
+                  value={state.value}
+                  aria-label={`${f.label} (${f.unit ?? "count"})`}
+                  // Changing the threshold turns the filter on.
+                  onChange={(e) => e.target.value !== "" && set(f.id, { value: Number(e.target.value), on: true })}
+                />
+                {f.unit}
+              </span>
+            )}
+            {f.kind === "choice" && (
+              <select
+                value={String(state.value)}
+                aria-label={f.label}
+                onChange={(e) => set(f.id, { value: e.target.value, on: true })}
+              >
+                {choices.map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
 export function Shortlist(props: { onSelect: (detail: ParcelDetail | null, row: ParcelRow | null) => void }) {
   const [rows, setRows] = useState<ParcelRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [filters, setFilters] = useState<Filters>(NO_FILTERS);
-  const [sort, setSort] = useState<Sort>({ key: "rank", desc: false });
+  const [filters, setFilters] = useState<Filters>(savedFilters);
+  const [sort, setSort] = useState<Sort>(HYDRO_SORT);
   const [selected, setSelected] = useState<string | null>(null);
   const [detail, setDetail] = useState<ParcelDetail | null>(null);
-  const [explain, setExplain] = useState(false);
+  const [help, setHelp] = useState(false);
   const [runs, setRuns] = useState<ScoreRun[]>([]);
   const [scrollTop, setScrollTop] = useState(0);
   const [height, setHeight] = useState(400);
@@ -140,6 +185,8 @@ export function Shortlist(props: { onSelect: (detail: ParcelDetail | null, row: 
       .catch(() => setRuns([]));
   }, []);
 
+  useEffect(() => saveFilters(filters), [filters]);
+
   useEffect(() => {
     const el = body.current;
     if (!el) return;
@@ -152,9 +199,14 @@ export function Shortlist(props: { onSelect: (detail: ParcelDetail | null, row: 
     () => [...new Set((rows ?? []).map((r) => r.county_name ?? ""))].filter(Boolean).sort(),
     [rows],
   );
-  const shown = useMemo(() => sortRows(applyFilters(rows ?? [], filters), sort), [rows, filters, sort]);
-  const kwRows = useMemo(() => (rows ?? []).filter((r) => r.power_group === "kw"), [rows]);
-  const set = (patch: Partial<Filters>) => setFilters({ ...filters, ...patch });
+  const passing = useMemo(() => applyFilters(rows ?? [], filters), [rows, filters]);
+  // Each passing parcel's place by hydro (the stored rank is the hydro order across every county).
+  const position = useMemo(
+    () => new Map([...passing].sort((a, b) => a.rank - b.rank).map((r, i) => [keyOf(r), i + 1])),
+    [passing],
+  );
+  const shown = useMemo(() => sortRows(passing, sort), [passing, sort]);
+  const kwRows = useMemo(() => passing.filter((r) => r.power_group === "kw").sort((a, b) => a.rank - b.rank), [passing]);
 
   // Keep the selected row in view, also once the detail card has taken its share of the height.
   useEffect(() => {
@@ -181,7 +233,6 @@ export function Shortlist(props: { onSelect: (detail: ParcelDetail | null, row: 
     }
   }
 
-
   function updated(r: ParcelRow, status: Status, note: string | null) {
     setRows((all) => (all ?? []).map((x) => (keyOf(x) === keyOf(r) ? { ...x, status, note } : x)));
     setDetail((d) => (d && keyOf(d) === keyOf(r) ? { ...d, status, note } : d));
@@ -195,11 +246,11 @@ export function Shortlist(props: { onSelect: (detail: ParcelDetail | null, row: 
   if (error && !rows)
     return (
       <div className="shortlist-message">
-        <strong>The shortlist didn't load.</strong> {error}. Start the API with <code>make up</code>; if the list is
+        <strong>The parcel list didn't load.</strong> {error}. Start the API with <code>make up</code>; if the list is
         empty, run <code>uv run hhsf db refresh-map</code>.
       </div>
     );
-  if (!rows) return <div className="shortlist-message">Loading the shortlist…</div>;
+  if (!rows) return <div className="shortlist-message">Loading the parcel list…</div>;
   if (rows.length === 0)
     return (
       <div className="shortlist-message">
@@ -211,86 +262,60 @@ export function Shortlist(props: { onSelect: (detail: ParcelDetail | null, row: 
   const first = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - 10);
   const last = Math.min(shown.length, Math.ceil((scrollTop + height) / ROW_HEIGHT) + 10);
   const selectedRow = rows.find((r) => keyOf(r) === selected) ?? null;
+  const active = activeFilters(filters);
 
   return (
     <div className="shortlist">
       <div className="shortlist-head">
         <div className="title-row">
           <h2>Parcels to look into</h2>
-          <button className="link" onClick={() => setExplain(true)}>
-            What's in the overall score?
+          <button className="link" onClick={() => setHelp(true)}>
+            How is it ranked?
           </button>
         </div>
-        <p className="muted">
-          {rows.length.toLocaleString()} turbine parcels in {counties.length} counties, ranked by overall score. 1 kW+
-          parcels rank{" "}
-          {kwRows.map((r, i) => (
-            <span key={keyOf(r)}>
-              {i > 0 && ", "}
-              <button
-                className="link"
-                onClick={() => select(r)}
-              >
-                #{r.rank}
-              </button>
-            </span>
-          ))}
-          : land and access can outweigh power.
-        </p>
-        <div className="filters">
-          <label className="filter">
-            Power
-            <select value={filters.group} onChange={(e) => set({ group: e.target.value as Filters["group"] })}>
-              <option value="">Any</option>
-              <option value="kw">1 kW+ only</option>
-              <option value="head_only">Head only</option>
-              <option value="low_flow">Low flow</option>
-            </select>
-          </label>
-          <NumberFilter label="Min W" value={filters.minPowerW} step={50} onChange={(v) => set({ minPowerW: v })} />
-          <NumberFilter label="Max min" value={filters.maxDriveMin} step={5} onChange={(v) => set({ maxDriveMin: v })} />
-          <NumberFilter label="Min build ac" value={filters.minBuildableAc} onChange={(v) => set({ minBuildableAc: v })} />
-          <NumberFilter label="Max acres" value={filters.maxParcelAc} step={50} onChange={(v) => set({ maxParcelAc: v })} />
-          <label className="filter">
-            County
-            <select value={filters.county} onChange={(e) => set({ county: e.target.value })}>
-              <option value="">All</option>
-              {counties.map((c) => (
-                <option key={c}>{c}</option>
-              ))}
-            </select>
-          </label>
-          <label className="filter">
-            Status
-            <select value={filters.status} onChange={(e) => set({ status: e.target.value as Filters["status"] })}>
-              <option value="">Any</option>
-              <option value="open">Not ruled out</option>
-              {STATUSES.map((s) => (
-                <option key={s} value={s}>
-                  {STATUS_LABEL[s]}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-        <div className="title-row">
-          <span className="muted">
-            Showing {shown.length.toLocaleString()} of {rows.length.toLocaleString()}
-            {JSON.stringify(filters) !== JSON.stringify(NO_FILTERS) && (
+        <FilterBar filters={filters} counties={counties} onChange={setFilters} />
+        <div className="title-row count-row">
+          <span>
+            <strong>
+              {passing.length.toLocaleString()} of {rows.length.toLocaleString()} parcels
+            </strong>
+            {active > 0 && (
               <>
                 {" · "}
-                <button className="link" onClick={() => setFilters(NO_FILTERS)}>
-                  clear filters
+                <button className="link" onClick={() => setFilters(DEFAULT_FILTERS)}>
+                  clear {active} filter{active > 1 ? "s" : ""}
                 </button>
               </>
             )}
+            <span className="muted">
+              {" "}
+              · ranked by hydro score
+              {kwRows.length > 0 && (
+                <>
+                  ; 1 kW+ at{" "}
+                  {kwRows.map((r, i) => (
+                    <span key={keyOf(r)}>
+                      {i > 0 && ", "}
+                      <button className="link" onClick={() => select(r)}>
+                        #{position.get(keyOf(r))}
+                      </button>
+                    </span>
+                  ))}
+                </>
+              )}
+            </span>
           </span>
-          <button className="small" onClick={() => downloadCsv(shown)} title="The rows shown, as CSV. No owner names.">
+          <button
+            className="small"
+            onClick={() => downloadCsv(shown, position)}
+            title="The parcels shown, as CSV. No owner names."
+          >
             Export this list
           </button>
         </div>
       </div>
       <div className="table-wrap" ref={body} onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}>
+        {shown.length === 0 && <p className="shortlist-message">No parcel passes every filter. Untick one or loosen it.</p>}
         <table className="table">
           <thead>
             <tr>
@@ -318,7 +343,7 @@ export function Shortlist(props: { onSelect: (detail: ParcelDetail | null, row: 
               >
                 {COLUMNS.map((c) => (
                   <td key={c.key} className={c.className}>
-                    {c.render(r)}
+                    {c.render(r, position.get(keyOf(r)))}
                   </td>
                 ))}
               </tr>
@@ -330,6 +355,7 @@ export function Shortlist(props: { onSelect: (detail: ParcelDetail | null, row: 
       {selectedRow && (
         <DetailCard
           row={selectedRow}
+          position={position.get(keyOf(selectedRow))}
           detail={detail}
           onClose={() => {
             setSelected(null);
@@ -339,13 +365,14 @@ export function Shortlist(props: { onSelect: (detail: ParcelDetail | null, row: 
           onSaved={updated}
         />
       )}
-      {explain && <Explainer runs={runs} onClose={() => setExplain(false)} />}
+      {help && <Help runs={runs} onClose={() => setHelp(false)} />}
     </div>
   );
 }
 
 function DetailCard(props: {
   row: ParcelRow;
+  position: number | undefined;
   detail: ParcelDetail | null;
   onClose: () => void;
   onSaved: (r: ParcelRow, status: Status, note: string | null) => void;
@@ -366,11 +393,13 @@ function DetailCard(props: {
     }
   }
 
+  const hydro = detail?.parts.parts.find((p) => p.part === "hydro");
   return (
     <div className="detail">
       <div className="title-row">
         <h3>
-          #{row.rank} · {row.county_name} parcel {row.parcel_id}
+          {props.position ? `#${props.position} · ` : ""}
+          {row.county_name} parcel {row.parcel_id}
         </h3>
         <button className="close" onClick={props.onClose} aria-label="Close">
           ×
@@ -383,7 +412,8 @@ function DetailCard(props: {
         {row.stream_name ?? "Unnamed stream"}: {power(row.firm_power_w)} firm, {num(row.net_head_ft)} ft net head
         {row.stretches > 1 && ` (best of ${row.stretches} stretches on the parcel; up to ${power(row.max_power_w)})`}.{" "}
         {num(row.acres)} acres{detail?.deed_acres ? ` (deed ${num(detail.deed_acres)})` : ""}, {num(row.buildable_acres)}{" "}
-        buildable, {num(row.open_acres)} open; {num(row.drive_minutes)} min from downtown Chattanooga.
+        buildable, {num(row.open_acres)} open; {num(row.drive_minutes)} min from downtown Chattanooga. #{row.rank} of every
+        parcel by hydro.
       </p>
 
       <div className="research">
@@ -408,13 +438,30 @@ function DetailCard(props: {
       </div>
 
       <h4>
-        Overall score {num(row.overall_score, 1)} <span className="muted">of 100</span>
+        Hydro score {num(row.hydro_subscore, 1)} <span className="muted">of 100</span>
       </h4>
+      <div className="breakdown">
+        <div className="bar">
+          <div className="fill hydro" style={{ width: `${Math.max(0, Math.min(100, row.hydro_subscore ?? 0))}%` }} />
+        </div>
+        {hydro && (
+          <ul>
+            {hydro.factors.map((f) => (
+              <li key={f.factor}>
+                {f.reason} <span className="muted">(counts {num(f.weight * 100)}%)</span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {row.power_group === "low_flow" && (
+          <p className="muted">Under 1 kW: scored on the power curve extended below the target (0 W → 0, 1 kW → 50).</p>
+        )}
+      </div>
+
       {!detail ? (
         <p className="muted">Loading…</p>
       ) : (
         <>
-          <Breakdown detail={detail} />
           <h4>Check on the visit</h4>
           <ul className="checks">
             {detail.checks.map((c) => (
@@ -426,6 +473,14 @@ function DetailCard(props: {
           {row.flags.length > 0 && (
             <p className="flags muted">Flags: {row.flags.map((f) => FLAG_TEXT[f] ?? f).join(" · ")}</p>
           )}
+          <details className="overall">
+            <summary>
+              <h4>
+                Overall score {num(row.overall_score, 1)} <span className="muted">of 100 (not the ranking)</span>
+              </h4>
+            </summary>
+            <Breakdown detail={detail} />
+          </details>
         </>
       )}
     </div>
@@ -472,72 +527,53 @@ function Breakdown({ detail }: { detail: ParcelDetail }) {
         );
       })}
       <p className="muted sum">
-        The points add up to the overall score: {parts.map((x) => num(x.contribution, 1)).join(" + ")} ={" "}
-        {num(detail.overall_score, 1)}. Click a part for its reasons.
+        The FR-7 score: {parts.map((x) => num(x.contribution, 1)).join(" + ")} = {num(detail.overall_score, 1)}. Click a
+        part for its reasons.
       </p>
     </div>
   );
 }
 
-function Explainer({ runs, onClose }: { runs: ScoreRun[]; onClose: () => void }) {
+function Help({ runs, onClose }: { runs: ScoreRun[]; onClose: () => void }) {
   const weights = commonWeights(runs);
-  const weight = (key: string, fallback: number) => (weights ? (weights[key] ?? 0) : fallback);
-  const profiles = [...new Set(runs.map((r) => r.profile))].join(", ");
-  const scored = runs
-    .map((r) => r.finished_at)
-    .filter((t): t is string => !!t)
-    .sort()
-    .pop();
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="What's in the overall score?">
+      <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="How is it ranked?">
         <div className="title-row">
-          <h3>What's in the overall score?</h3>
+          <h3>How the list works</h3>
           <button className="close" onClick={onClose} aria-label="Close">
             ×
           </button>
         </div>
         <p>
-          Each parcel's best stretch of stream gets a score from 0 to 100 for five things, and the overall score is
-          their weighted sum (FR-7). Every score is on a fixed scale, not relative to the other parcels.
+          One row per turbine parcel (the parcel under the bottom of a stream's steepest stretch), across every analyzed
+          county. Tick filters to whittle it down; what's left is ranked by <strong>hydro score</strong>.
+        </p>
+        <p>
+          <strong>Hydro score.</strong> {HYDRO_TEXT} A parcel with several stretches is listed with its best one, taking
+          1 kW+ stretches first.
         </p>
         <table className="explain">
           <tbody>
-            {PARTS.map((p) => (
-              <tr key={p.key}>
-                <th>
-                  {p.label} <span className="muted">{num(weight(p.key, p.weight) * 100)}%</span>
-                </th>
-                <td>{p.what}</td>
+            {FILTERS.map((f) => (
+              <tr key={f.id}>
+                <th>{f.label}</th>
+                <td>{f.hint}</td>
               </tr>
             ))}
           </tbody>
         </table>
-        <p>
-          <strong>Why the 1 kW+ parcels aren't at the top.</strong> Hydro is {num(weight("hydro", 0.4) * 100)}% of the
-          score; the rest is land and access. A parcel whose stream makes only 50 W can have great buildable ground, farmland, privacy and a short
-          drive, and outscore a 1 kW site on a steep, wooded tract. The power group column and the "1 kW+ only" filter
-          keep that visible. Low-flow power is a regional estimate for a typical basin and can't see springs.
+        <p className="muted">
+          A parcel with no number for a ticked filter (not computed, no route) is left out. Filters are remembered in
+          this browser. Click a column header to sort on it instead; click Hydro to go back.
         </p>
-        <p>
-          <strong>Missing data is left out, not counted as zero.</strong> If a part has no data, the other parts' weights
-          are scaled up to fill in. A measured nothing (no buildable ground) is a zero.
+        <p className="muted">
+          The overall score (FR-7) is still shown, but doesn't rank the list: it weighs hydro
+          {weights
+            ? ` ${num(weights.hydro * 100)}%, buildability ${num(weights.buildability * 100)}%, agriculture ${num(weights.agriculture * 100)}%, privacy ${num(weights.privacy * 100)}% and logistics ${num(weights.logistics * 100)}%`
+            : ", buildability, agriculture, privacy and logistics"}
+          . Its breakdown is at the bottom of each parcel's card (docs/SCORING.md, "The overall score").
         </p>
-        <p>
-          <strong>One row per parcel.</strong> A parcel is represented by its best stretch: the highest overall score
-          among its stretches in its best power group, so a 1 kW stretch is never hidden behind a slightly higher low-flow
-          one. Subdivision feasibility is shown but isn't in the score.
-        </p>
-        {runs.length > 0 && (
-          <p className="muted">
-            {weights
-              ? `These weights are the ones the latest score runs used`
-              : `The counties were scored with different weights; each parcel's card shows its own`}{" "}
-            (profile {profiles}
-            {scored && `, scored ${new Date(scored).toLocaleDateString()}`}).
-          </p>
-        )}
-        <p className="muted">The full curves and weights: docs/SCORING.md, "The overall score".</p>
       </div>
     </div>
   );
