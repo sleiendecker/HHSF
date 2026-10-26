@@ -40,6 +40,24 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  api:
+    # PostgREST (PART 23): the parcel shortlist and its research status for the map app, from
+    # the `api` schema (migration 0020). It logs in as hhsf_api and works as web_anon, which can
+    # read the shortlist and set a parcel's status, and nothing else: no owner names.
+    image: postgrest/postgrest:v12.2.3
+    environment:
+      PGRST_DB_URI: postgres://hhsf_api:hhsf_api@db:5432/hhsf
+      PGRST_DB_SCHEMAS: api
+      PGRST_DB_ANON_ROLE: web_anon
+      PGRST_DB_MAX_ROWS: 10000
+      PGRST_OPENAPI_MODE: disabled
+    ports:
+      - "127.0.0.1:3110:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
   routing:
     # Valhalla, the drive-time engine (PART 16). Not started by `make up`: run `make routing`.
     # The first start downloads OpenStreetMap for Tennessee, Georgia and Alabama (~0.7 GB)
@@ -70,7 +88,7 @@ services:
       start_period: 1h
 
   web:
-    # The built map and a proxy to the tile server, for running on a server (`make serve`).
+    # The built map and a proxy to the tile server and the API, for running on a server (`make serve`).
     # Not started by `make up`; `make web` is the development version. Rebuild after
     # pulling frontend changes: `make serve` does.
     profiles: [serve]
@@ -79,6 +97,7 @@ services:
       - "${HHSF_WEB_ADDR:-127.0.0.1:8080}:80"
     depends_on:
       - tiles
+      - api
     restart: unless-stopped
 
 volumes:

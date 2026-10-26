@@ -30,5 +30,10 @@ def record_source(conn: Connection, source: DataSource) -> None:
 
 def refresh_map(conn: Connection) -> None:
     """Rebuild the map's saved scores layer (latest_hydro_scores, migration 0017) from
-    the live view. CONCURRENTLY: the map keeps serving the old rows while it runs."""
+    the live view, then the parcel shortlist from it (migration 0020). CONCURRENTLY: the
+    map keeps serving the old rows while it runs."""
+    from hhsf.analysis import shortlist  # it imports the analysis modules, which import this
+    from hhsf.core.config import min_homestead_acres
+
     conn.execute(text("REFRESH MATERIALIZED VIEW CONCURRENTLY latest_hydro_scores"))
+    shortlist.refresh(conn, min_homestead_acres())

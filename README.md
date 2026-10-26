@@ -26,6 +26,7 @@ This is different from a real estate search. It starts from the terrain and wate
 | Hydro analysis: head over that stretch, reliable low flow (Q90 from USGS StreamStats, or, for streams too small for it, the typical StreamStats low flow per square mile of their river basin; the Whitwell stream gauge where StreamStats is down) and firm power, saved as a numbered run | |
 | Scoring and ranking: streams of 1 kW or more scored 0–100 on power and head with an explanation for each score, ranked by confidence; streams under 1 kW on a rough flow estimate listed last as "low flow" | |
 | Overall score (FR-7): hydro, buildability, agriculture, privacy and logistics combined 0–100, ranking each confidence tier, with each part explained, in the exports and the map popup | Coloring the map by overall score |
+| The shortlist: one row per turbine parcel across every county beside the map, whittled down by filters (buildable land, drive time, power, parcel size, privacy, road access, flood, farmland) and ranked by hydro score, with a "check on the visit" list, your research status and notes, and a CSV export (see [Using the shortlist](#using-the-shortlist)) | |
 | Exports: the ranked shortlist as CSV and GeoJSON, every stream with the reason it was or wasn't listed, and a summary report for planning visits | Parcels for Hamilton County (Chattanooga) and other counties outside the state's parcel layer |
 | Parcels and owners: each stretch's turbine parcel (ID, acreage, owner) and every parcel it crosses, in the exports; property lines on the map. Owner names stay on this computer, never on the map | A minimum acreage filter (D-03 is open; small parcels are only flagged) |
 | Flood zones: FEMA's flood zone at each stretch's turbine end and how much of the stretch is in the 100-year floodplain, in the exports and the map popup; flood zones on the map | |
@@ -79,7 +80,7 @@ Public data services ──▶ hhsf (Python) ──▶ PostGIS database ──�
 | Disk | ~2 GB free | Docker images plus one county of data. The full regional version will need far more (see [site-selection.md](site-selection.md)). |
 | RAM | 8 GB+ | |
 | Network | Internet access | To download data and basemap tiles |
-| Free ports | 5433, 3100, 5173 | Database, tile server, map app |
+| Free ports | 5433, 3100, 3110, 5173 | Database, tile server, shortlist API, map app |
 
 ## Getting started
 
@@ -103,7 +104,7 @@ make setup
 make up
 ```
 
-This starts PostGIS and Martin in Docker and creates the database tables. Data is kept between restarts.
+This starts PostGIS, Martin and the shortlist API (PostgREST) in Docker and creates the database tables. Data is kept between restarts.
 
 ### 4. Load data
 
@@ -234,6 +235,39 @@ Click a stretch to see its score and why: how many points power and head each ad
 
 Untick **Show hydro scores** to go back to plain streams (bigger streams darker), where a click shows elevation drop, length, slope, drainage area and estimated mean flow.
 
+### Using the shortlist
+
+The panel on the right of the map is the list to work from: one row per turbine parcel (the parcel under the bottom of a stream's steepest stretch) across every analyzed county, about 2,700. **Tick filters to whittle it down; what's left is ranked by hydro score.** The map's `#12` labels rank each county's streams on their own; the list's `#` is the parcel's place in the filtered list, across all of them.
+
+![The parcel list beside the map, filtered to 1 kW+ only: Negro Den Creek's parcel selected, outlined on the map with its stretch in yellow, its hydro score explained and the checks for a visit](docs/images/shortlist.jpg)
+
+- **Filters** (above the list). Each is off until ticked, and changing a threshold ticks it. The count shows how many parcels are left ("334 of 2,689 parcels"), and the browser remembers the filters. Hover a filter for what it measures.
+
+  | Filter | Passes when |
+  | --- | --- |
+  | 1 kW+ only | a stretch on the parcel makes 1 kW or more on the estimated dry-season flow |
+  | Power at least | the best stretch's firm power is at least that many watts |
+  | Buildable land at least | the parcel has that many acres sloped 15% or less, out of the 100-year floodplain, on septic-suitable soils |
+  | Drive at most | the drive from downtown Chattanooga is at most that many minutes |
+  | Parcel at least / at most | the parcel's acres are in range (the maximum hides huge timber and conservation tracts) |
+  | Buildings within ¼ mile at most | other buildings near the house site, a privacy measure |
+  | Has public road frontage | 50 ft or more of public road on or along the parcel |
+  | Public road within | the turbine end is that close to a public road (straight line) |
+  | Turbine end out of the 100-year floodplain | FEMA's map at the turbine end (unmapped counts as outside) |
+  | Prime farmland / Open cropland at least | acres of prime farmland, or of field, pasture or crops on cropland soils |
+  | County, Status | the parcel's county; your research status ("Not ruled out" hides the ruled-out ones) |
+
+  A parcel with no number for a ticked filter (not computed, no route) is left out.
+- **Ranking: the hydro score** (0–100: 70% firm power, 30% net head), highest first, ties to more power, then more head. Low-flow parcels are scored on the power curve extended below 1 kW (0 W → 0, 1 kW → 50), the same hydro part the overall score uses, so every parcel is on one scale; a low-flow stream with a big drop can rank above a 1 kW one. The **Power** badge on every row (1 kW+, head only, low flow) keeps that visible, and the line above the list links to the 1 kW+ parcels left. Click a column header to sort on it instead; click **Hydro** to go back. **How is it ranked?** (top right) explains all of this.
+- **Why** shows what stands out: the power (`1.3 kW`, or `60 W est.` for a low-flow estimate), buildable acres, the drive in minutes (red past an hour), open acres, "secluded".
+- **Click a row** to zoom to the parcel, outline it (pink) and its best stretch (yellow), and open its card: the hydro score and how it was reached, a **check on the visit** list (dry-season flow, the drop, deed and owner, septic soils, road access, flooding) with ⚠ where the data already points at a problem, and at the bottom the overall score (FR-7) broken into its five parts. The overall score is also a column, but it doesn't rank the list.
+- **Status and note**: mark a parcel New, Interested, Ruled out or Visited and add a note. They're saved in the database by county and parcel ID, so they survive reloads, re-runs and re-ingests, and everyone using the same map sees them.
+- **Export this list** downloads the parcels you're looking at, filtered and sorted, as CSV. It has no owner names: for those, use `make export`.
+
+A parcel with several stretches is listed with its best one: the highest hydro score among its 1 kW+ stretches if it has any (then head-only, then low-flow), so a 1 kW stretch is never hidden behind a low-flow estimate on the same parcel. Parcel IDs repeat across counties, so a parcel is its county plus its ID. The 140 or so stretches with no turbine parcel (they end outside the loaded counties) aren't listed.
+
+The list is rebuilt with the map layer, by every step that changes it (`make score`, `make analyze`, ...). After upgrading to this version, run `uv run hhsf db refresh-map` once to fill it. It's served by [PostgREST](https://postgrest.org/) (`docker-compose.yml`, service `api`, port 3110) from the database's `api` schema, under a role that can read the list and set a status, and can't read owner names (migration 0020, `src/hhsf/analysis/shortlist.py`).
+
 ### Stopping
 
 ```bash
@@ -273,10 +307,10 @@ The server needs Docker with Compose, uv and make (Node isn't needed: the map is
    make up        # applies any migrations newer than the backup
    ```
 
-3. **Start the map:** `make serve`. It builds the map and serves it, with the map tiles, on <http://127.0.0.1:8080> (set `HHSF_WEB_ADDR` to change the address). It restarts with Docker.
+3. **Start the map:** `make serve`. It builds the map and serves it, with the map tiles and the shortlist API, on <http://127.0.0.1:8080> (set `HHSF_WEB_ADDR` to change the address). It restarts with Docker.
 4. **Reach it privately.** With Tailscale on the server, `tailscale serve --bg 8080` serves it over HTTPS on your tailnet only.
 
-To re-run steps on the server too (ingest, analysis, drive times), also copy `data/raw/` (downloaded source files, ~1.4 GB), `data/cache/` (StreamStats answers, which took about 11 hours to collect) and `data/valhalla/` (the drive-time road graph, ~3.3 GB, 5–30 minutes to rebuild). After pulling new code: `make up` for migrations, then `make serve` to rebuild the map.
+To re-run steps on the server too (ingest, analysis, drive times), also copy `data/raw/` (downloaded source files, ~1.4 GB), `data/cache/` (StreamStats answers, which took about 11 hours to collect) and `data/valhalla/` (the drive-time road graph, ~3.3 GB, 5–30 minutes to rebuild). After pulling new code: `make up` for migrations, then `make serve` to rebuild the map. Anyone who can open the map can also change a parcel's research status and note.
 
 ## Usage
 
@@ -285,7 +319,7 @@ Run `make` to list all commands.
 | Command | What it does |
 | --- | --- |
 | `make setup` | Install Python and Node dependencies |
-| `make up` | Start the database and tile server, apply migrations |
+| `make up` | Start the database, tile server and shortlist API, apply migrations |
 | `make ingest` | Download and load data for the default area |
 | `make ingest AOI=<key>` | Same, for another area defined in `config/aoi/` |
 | `uv run hhsf ingest hydrography --source service` | Reload streams from the USGS web service instead of the file download |
@@ -358,7 +392,7 @@ hydro-homestead/
 ├── docs/SCORING.md          # How corridors are scored and ranked
 ├── docs/images/             # Screenshots for this README
 ├── Makefile                 # Common commands
-├── docker-compose.yml       # PostGIS + Martin, and Valhalla (drive times)
+├── docker-compose.yml       # PostGIS + Martin + PostgREST (the shortlist), and Valhalla (drive times)
 ├── pyproject.toml           # Python dependencies and tool settings
 ├── alembic.ini
 ├── config/
@@ -377,7 +411,7 @@ hydro-homestead/
 │   └── analysis/            # Hydro calculations, StreamStats and Valhalla clients, scoring, runs, exports
 ├── migrations/versions/     # Database table definitions
 ├── martin/martin.yaml       # Which tables the tile server publishes
-├── frontend/                # React + MapLibre map app (src/scores.ts: score colors and popup; src/basemaps.ts and BasemapControl.ts: light, satellite and topo maps)
+├── frontend/                # React + MapLibre map app (src/scores.ts: score colors and popup; src/basemaps.ts and BasemapControl.ts: light, satellite and topo maps; Shortlist.tsx and parcels.ts: the parcel list)
 ├── tests/
 │   ├── unit/                # Fast, no Docker needed
 │   ├── integration/         # Starts a throwaway PostGIS in Docker
@@ -467,7 +501,7 @@ uv run pytest --cov=hhsf.analysis --cov-report=term-missing
 
 | Problem | Fix |
 | --- | --- |
-| `make up` fails with "port is already allocated" | Run `docker compose ls`. If it lists a project other than `hydro-homestead`, that's a second copy of this stack started from another folder (older checkouts named it after the folder): stop it with `docker compose -p <name> down`. Otherwise another program is using 5433 or 3100: change the left-hand port in `docker-compose.yml`, and for 5433 also set `DATABASE_URL` in `.env`. |
+| `make up` fails with "port is already allocated" | Run `docker compose ls`. If it lists a project other than `hydro-homestead`, that's a second copy of this stack started from another folder (older checkouts named it after the folder): stop it with `docker compose -p <name> down`. Otherwise another program is using 5433, 3100 or 3110: change the left-hand port in `docker-compose.yml`, and for 5433 also set `DATABASE_URL` in `.env`. |
 | `make up` fails with "Can't locate revision" | The shared database was migrated by a newer branch than the one checked out (all checkouts and worktrees share one database). Run `make up` from that newer branch, or wait until it's merged and pull `main`. Don't delete the database to get past it; that loses every run. |
 | `make up` fails with "Cannot connect to the Docker daemon" | Start Docker Desktop or OrbStack. |
 | `make ingest` fails during a download | Run it again. Partial downloads are never reused; finished files in `data/raw/nhdplus_hr_bulk/` are. |
@@ -487,6 +521,7 @@ uv run pytest --cov=hhsf.analysis --cov-report=term-missing
 | `make export` leaves the buildable columns empty | Run `uv run hhsf ingest soils --aoi <key>` for every county, then `uv run hhsf analyze buildable --aoi <key>` (or `make analyze`), then export again. Re-ingesting parcels deletes their buildable ground; run the buildable step again after. |
 | **Show FEMA flood zones** shades nothing | Zoom in past zoom 10, and check <http://localhost:3100/catalog> lists `flood_zones`; if not, run `make up`. Small creeks often have no flood zone at all: FEMA didn't study them. |
 | **Show property lines** draws nothing | Zoom in past zoom 12 (about 1:150,000), and check <http://localhost:3100/catalog> lists `parcels`; if not, run `make up`. |
+| The parcel list says it didn't load, or is empty | Run `make up` (it starts the API) and check <http://localhost:3110/parcels?limit=1> answers. An empty list: `uv run hhsf db refresh-map`. If the API was running before `make up` added its tables, `docker compose restart api`. |
 | The map shows no streams | Check `make ingest` finished, and that <http://localhost:3100/catalog> lists `streams`. |
 | Popups say "ranked #N overall" instead of naming the county | The county was loaded before the map knew which AOI it belongs to. Run `uv run hhsf ingest boundary --aoi <key>` for each county, then refresh. |
 | The map or a popup shows numbers from before the last step | The map's scores layer is saved and rebuilt at the end of each step; if a step was interrupted, run `uv run hhsf db refresh-map`, then refresh the page. |
