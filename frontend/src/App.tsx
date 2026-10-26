@@ -5,6 +5,8 @@ import { LIGHT_STYLE, addBasemapLayers, saveBasemap, savedBasemap, showBasemap }
 import { Collapsible } from "./Collapsible";
 import { Legend } from "./Legend";
 import { CFS_TO_GPM, SCORE_LAYERS, scorePopupHtml } from "./scores";
+import { Shortlist } from "./Shortlist";
+import type { ParcelDetail, ParcelRow } from "./parcels";
 
 const TILES = `${window.location.origin}/tiles`;
 
@@ -27,11 +29,12 @@ function streamWidth(extra = 0): ExpressionSpecification {
 
 // Zoom to every loaded county. Martin works out a table's extent when it starts
 // (`make ingest` restarts it), and reports the whole world for an empty table.
-async function fitToCounties(map: maplibregl.Map) {
+// `skip`: a parcel was picked in the list while this loaded; stay on it.
+async function fitToCounties(map: maplibregl.Map, skip: () => boolean) {
   try {
     const response = await fetch(`${TILES}/counties`);
     const { bounds } = await response.json();
-    if (!Array.isArray(bounds) || bounds[2] - bounds[0] > 10) return;
+    if (!Array.isArray(bounds) || bounds[2] - bounds[0] > 10 || skip()) return;
     map.fitBounds(bounds as [number, number, number, number], { padding: 40, duration: 0 });
   } catch {
     // No tile server yet: stay on the start view.
@@ -93,6 +96,23 @@ const NLCD_WMS =
   "&request=GetMap&layers=NLCD_2021_Land_Cover_L48&styles=&format=image/png&transparent=true" +
   "&crs=EPSG:3857&width=256&height=256&bbox={bbox-epsg-3857}";
 const NLCD_COLORS = { pasture: "#dcd939", crops: "#ab6c28", grassland: "#dfdfc2", forest: "#68ab5f", developed: "#eb0000" };
+// The parcel picked in the shortlist and its best stretch, drawn on top of everything.
+const SELECTED_PARCEL_COLOR = "#e11d74";
+const SELECTED_STRETCH_COLOR = "#ffd60a";
+const EMPTY: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
+
+function asData(geometry: GeoJSON.Geometry | null | undefined): GeoJSON.FeatureCollection {
+  return geometry ? { type: "FeatureCollection", features: [{ type: "Feature", geometry, properties: {} }] } : EMPTY;
+}
+
+// Remembered per browser, like the panels.
+function savedListOpen(): boolean {
+  try {
+    return localStorage.getItem("hhsf.list") !== "closed";
+  } catch {
+    return true;
+  }
+}
 
 // Scores and plain streams are the same lines, so only one set shows at a time.
 function setScoresVisible(map: maplibregl.Map, visible: boolean) {
@@ -100,6 +120,8 @@ function setScoresVisible(map: maplibregl.Map, visible: boolean) {
   for (const layer of SCORE_LAYERS) map.setLayoutProperty(layer.id, "visibility", show(visible));
   for (const layer of ["streams-halo", "streams"]) map.setLayoutProperty(layer, "visibility", show(!visible));
 }
+
+const ROUND_LINE = { "line-cap": "round", "line-join": "round" } as const;
 
 export function App() {
   const container = useRef<HTMLDivElement>(null);
@@ -125,6 +147,9 @@ export function App() {
   const [showLandCover, setShowLandCover] = useState(false);
   const showLandCoverRef = useRef(showLandCover);
   const [zoom, setZoom] = useState(10);
+  const [listOpen, setListOpen] = useState(savedListOpen);
+  const picked = useRef(false);
+  const selectedParcel = useRef<ParcelDetail | null>(null);
 
   useEffect(() => {
     const map = new maplibregl.Map({
@@ -143,7 +168,7 @@ export function App() {
     map.addControl(new maplibregl.ScaleControl({ unit: "imperial" }));
 
     map.on("load", () => {
-      fitToCounties(map);
+      fitToCounties(map, () => picked.current);
       addBasemapLayers(map);
       map.addSource("counties", { type: "vector", tiles: [`${TILES}/counties/{z}/{x}/{y}`] });
       map.addSource("streams", { type: "vector", tiles: [`${TILES}/streams/{z}/{x}/{y}`] });
@@ -402,6 +427,43 @@ export function App() {
 
       // Every perennial stream has a scored corridor, so the scores replace the streams layer when shown.
       for (const layer of SCORE_LAYERS) map.addLayer(layer);
+
+      // The shortlist's selected parcel and its best stretch, over the scores.
+      // A parcel picked before the map loaded is drawn now.
+      map.addSource("selected-parcel", { type: "geojson", data: asData(selectedParcel.current?.parcel_geom) });
+      map.addSource("selected-stretch", { type: "geojson", data: asData(selectedParcel.current?.stretch_geom) });
+      map.addLayer({
+        id: "selected-parcel-fill",
+        type: "fill",
+        source: "selected-parcel",
+        paint: { "fill-color": SELECTED_PARCEL_COLOR, "fill-opacity": 0.08 },
+      });
+      map.addLayer({
+        id: "selected-parcel-casing",
+        type: "line",
+        source: "selected-parcel",
+        paint: { "line-color": "#fff", "line-width": 5, "line-opacity": 0.8 },
+      });
+      map.addLayer({
+        id: "selected-parcel-outline",
+        type: "line",
+        source: "selected-parcel",
+        paint: { "line-color": SELECTED_PARCEL_COLOR, "line-width": 2.5 },
+      });
+      map.addLayer({
+        id: "selected-stretch-casing",
+        type: "line",
+        source: "selected-stretch",
+        layout: ROUND_LINE,
+        paint: { "line-color": "#111", "line-width": 10 },
+      });
+      map.addLayer({
+        id: "selected-stretch",
+        type: "line",
+        source: "selected-stretch",
+        layout: ROUND_LINE,
+        paint: { "line-color": SELECTED_STRETCH_COLOR, "line-width": 6 },
+      });
       setScoresVisible(map, showScoresRef.current);
       showBasemap(map, basemaps.value);
 
@@ -425,6 +487,33 @@ export function App() {
 
     return () => map.remove();
   }, []);
+
+  // Resize the map when the list opens or closes beside it.
+  useEffect(() => {
+    mapRef.current?.resize();
+    try {
+      localStorage.setItem("hhsf.list", listOpen ? "open" : "closed");
+    } catch {
+      // Not remembered.
+    }
+  }, [listOpen]);
+
+  function showParcel(detail: ParcelDetail | null, row: ParcelRow | null) {
+    const map = mapRef.current;
+    selectedParcel.current = detail;
+    if (!map) return;
+    // Not there until the map has loaded (it draws selectedParcel then); the zoom below works before that.
+    (map.getSource("selected-parcel") as maplibregl.GeoJSONSource | undefined)?.setData(asData(detail?.parcel_geom));
+    (map.getSource("selected-stretch") as maplibregl.GeoJSONSource | undefined)?.setData(asData(detail?.stretch_geom));
+    if (row && !detail) {
+      picked.current = true;
+      const [w, s, e, n] = row.bbox;
+      // Keep it clear of the controls panel on the left, when there's room beside it.
+      const wide = map.getContainer().clientWidth > 640;
+      const padding = wide ? { top: 50, bottom: 50, left: 300, right: 60 } : 30;
+      map.fitBounds([w, s, e, n], { padding, maxZoom: 15, duration: 800 });
+    }
+  }
 
   useEffect(() => {
     showParcelsRef.current = showParcels;
@@ -488,8 +577,20 @@ export function App() {
   }, [showScores]);
 
   return (
-    <>
+    <div className={listOpen ? "app with-list" : "app"}>
       <div ref={container} className="map" />
+      {listOpen ? (
+        <div className="list-panel">
+          <button className="list-toggle" onClick={() => setListOpen(false)} title="Hide the parcel list">
+            ›
+          </button>
+          <Shortlist onSelect={showParcel} />
+        </div>
+      ) : (
+        <button className="list-open" onClick={() => setListOpen(true)}>
+          Parcel list
+        </button>
+      )}
       <div className="sidebar">
         <Collapsible id="panel" className="panel" title={<h1>Hydro Homestead Site Finder</h1>}>
           <p>
@@ -607,6 +708,6 @@ export function App() {
         </Collapsible>
         {showScores && <Legend />}
       </div>
-    </>
+    </div>
   );
 }

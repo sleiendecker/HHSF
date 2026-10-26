@@ -108,6 +108,10 @@ With `hydro_v5` (the same day, PART 20) the 1 kW order doesn't change: all six p
 
 With `hydro_v6` (PART 21) privacy counts, and the 1 kW order still doesn't change: Big Creek 59 (privacy 85), Negro Den Creek 57 and the Elk River 53 (one parcel, privacy 100: nothing within 1/2 mile), Bethel Creek 56 (93), Marion's unnamed stream 44 (51: 4 buildings within 1/4 mile, 117 per square mile around it), Rogers Branch 47 (56: its home site is the turbine end, 640 ft from the nearest house). The low-flow tiers reorder (an average of 66 places): in Sequatchie, Kell Branch drops from #4 to #31 (privacy 27) and Easterly Branch rises from #9 to #7; in Marion an unnamed stream drops from #6 to #43 and Sulphur Branch rises from #7 to #5; Grundy's top 5 stay put and its #6–10 swap places. The median privacy part across ranked corridors is 72.
 
+### The parcel shortlist (PART 23)
+
+The map's list panel ranks **parcels**, not stretches, by the overall score across every county (`hhsf.analysis.shortlist`, rebuilt with the map layer). A parcel is its county plus its parcel ID; only ranked stretches count, and stretches with no turbine parcel aren't listed. Each parcel is represented by one stretch: the highest overall score **among its stretches in its best power group** (1 kW+, then head only, then low flow), not simply its highest overall score. Overall scores only compare within a tier (above), and on Big Creek's parcel two low-flow stretches score 59.8 and 59.6 against Big Creek's 58.9: taking the plain maximum would list that parcel as a 125 W low-flow site. Parcels are then ranked by that stretch's overall score alone, ignoring tiers, as the owner asked; ties break on hydro score, then power. With `hydro_v6` (2026-10-25), the 2,689 parcels put the five 1 kW+ parcels (six streams: Negro Den Creek and the Elk River share one) at #112, #145, #185, #666 and #861: the top of the list is low-flow parcels with good land, which is why the list shows the power group on every row and filters on it.
+
 ## The explanation
 
 Every `hydro_scores` row has an `explanation` (JSON) with the profile version, status, tier, a one-line summary, and one entry per factor:

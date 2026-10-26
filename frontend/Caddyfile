@@ -1,4 +1,4 @@
-# Serves the built map and forwards /tiles/ to Martin, as Vite's dev server does
+# Serves the built map and forwards /tiles/ to Martin and /api/ to PostgREST, as Vite's dev server does
 # (vite.config.ts). Plain HTTP on port 80 inside the container: put Tailscale Serve or
 # another private HTTPS proxy in front of it, never the open internet (the tiles carry
 # no owner names, but the database behind them does).
@@ -8,6 +8,11 @@
 	# /tiles/streams/10/270/400 -> tiles:3000/streams/10/270/400
 	handle_path /tiles/* {
 		reverse_proxy tiles:3000
+	}
+
+	# /api/parcels -> api:3000/parcels (PostgREST: the parcel shortlist, no owner names)
+	handle_path /api/* {
+		reverse_proxy api:3000
 	}
 
 	handle {

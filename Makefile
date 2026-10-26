@@ -11,10 +11,10 @@ setup:  ## Install Python and frontend dependencies
 	uv sync
 	cd frontend && npm install
 
-up:  ## Start the database, apply migrations, start the tile server
+up:  ## Start the database, apply migrations, start the tile server and the shortlist API
 	docker compose up -d --wait db
 	uv run hhsf db upgrade
-	docker compose up -d tiles
+	docker compose up -d tiles api
 
 ingest:  ## Download and load boundary, streams, elevations, parcels, flood zones, roads, soils and buildings for an AOI (default: sequatchie_tn)
 	uv run hhsf ingest all --aoi $(AOI)
