@@ -612,6 +612,11 @@ button.close {
   color: #444;
 }
 
+.tip {
+  text-decoration: underline dotted;
+  cursor: help;
+}
+
 .why-badge.good {
   background: #e7f4ea;
   color: #1d5e2e;

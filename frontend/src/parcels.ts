@@ -222,15 +222,28 @@ export function power(w: number | null): string {
   return w >= 1000 ? `${(w / 1000).toFixed(1)} kW` : `${Math.round(w)} W`;
 }
 
+// What "buildable" means, for every place the list shows it. Keep in step with config/buildability.yaml
+// (min_patch_acres, max_slope_pct, septic_excluded) and the floodplain rule in hhsf.analysis.buildable.
+export const BUILDABLE_TEXT =
+  "Buildable: patches of ½ acre or more, sloped 15% or less, outside the 100-year floodplain, on soils rated " +
+  "OK for a septic field. A screen, not a perc test.";
+
+export interface Badge {
+  text: string;
+  tone: "good" | "bad" | "plain";
+  title?: string;
+}
+
 // Short "why" badges: what stands out about the parcel, good or bad.
-export function badges(r: ParcelRow): { text: string; tone: "good" | "bad" | "plain" }[] {
-  const out: { text: string; tone: "good" | "bad" | "plain" }[] = [];
+export function badges(r: ParcelRow): Badge[] {
+  const out: Badge[] = [];
   if (r.power_group === "kw") out.push({ text: power(r.firm_power_w), tone: "good" });
   else if (r.power_group === "low_flow") out.push({ text: `${power(r.firm_power_w)} est.`, tone: "plain" });
   else out.push({ text: `${num(r.net_head_ft)} ft drop`, tone: "plain" });
   if (r.buildable_acres !== null) {
-    if (r.buildable_acres >= 5) out.push({ text: `${num(r.buildable_acres)} buildable ac`, tone: "good" });
-    else if (r.buildable_acres === 0) out.push({ text: "no buildable ground", tone: "bad" });
+    if (r.buildable_acres >= 5)
+      out.push({ text: `${num(r.buildable_acres)} buildable ac`, tone: "good", title: BUILDABLE_TEXT });
+    else if (r.buildable_acres === 0) out.push({ text: "no buildable ground", tone: "bad", title: BUILDABLE_TEXT });
   }
   if (r.drive_minutes !== null) out.push({ text: `${num(r.drive_minutes)} min`, tone: r.drive_minutes <= 60 ? "good" : "bad" });
   if (r.open_acres !== null && r.open_acres >= 5) out.push({ text: `${num(r.open_acres)} open ac`, tone: "good" });
@@ -287,7 +300,7 @@ export const FILTERS: FilterSpec[] = [
     unit: "ac",
     kind: "min",
     value: 5,
-    hint: "Ground on the parcel sloped 15% or less, outside the 100-year floodplain, on soils fit for a septic field.",
+    hint: BUILDABLE_TEXT,
     pass: (r, v) => atLeast(r.buildable_acres, v),
   },
   {

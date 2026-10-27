@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   DEFAULT_FILTERS,
+  BUILDABLE_TEXT,
   FILTERS,
   FLAG_TEXT,
   GROUP_LABEL,
@@ -87,7 +88,7 @@ const COLUMNS: Column[] = [
   { key: "firm_power_w", label: "W", title: "Firm power of the best stretch, W", render: (r) => num(r.firm_power_w), className: "num", desc: true },
   { key: "net_head_ft", label: "Head", title: "Net head of the best stretch, ft", render: (r) => num(r.net_head_ft), className: "num", desc: true },
   { key: "stream_name", label: "Stream", title: "Best stream", render: (r) => r.stream_name ?? <span className="muted">unnamed</span>, className: "stream" },
-  { key: "buildable_acres", label: "Build ac", title: "Buildable acres", render: (r) => num(r.buildable_acres), className: "num", desc: true },
+  { key: "buildable_acres", label: "Build ac", title: BUILDABLE_TEXT, render: (r) => num(r.buildable_acres), className: "num", desc: true },
   { key: "drive_minutes", label: "Min", title: "Drive from downtown Chattanooga, minutes", render: (r) => num(r.drive_minutes), className: "num" },
   { key: "acres", label: "Acres", title: "Parcel acres", render: (r) => num(r.acres), className: "num", desc: true },
   { key: "buildings_quarter_mile", label: "Bldgs", title: "Other buildings within 1/4 mile of the house site", render: (r) => num(r.buildings_quarter_mile), className: "num" },
@@ -101,7 +102,7 @@ function Badges({ row }: { row: ParcelRow }) {
   return (
     <>
       {badges(row).map((b) => (
-        <span key={b.text} className={`why-badge ${b.tone}`}>
+        <span key={b.text} className={`why-badge ${b.tone}`} title={b.title}>
           {b.text}
         </span>
       ))}
@@ -411,8 +412,11 @@ function DetailCard(props: {
         </span>{" "}
         {row.stream_name ?? "Unnamed stream"}: {power(row.firm_power_w)} firm, {num(row.net_head_ft)} ft net head
         {row.stretches > 1 && ` (best of ${row.stretches} stretches on the parcel; up to ${power(row.max_power_w)})`}.{" "}
-        {num(row.acres)} acres{detail?.deed_acres ? ` (deed ${num(detail.deed_acres)})` : ""}, {num(row.buildable_acres)}{" "}
-        buildable, {num(row.open_acres)} open; {num(row.drive_minutes)} min from downtown Chattanooga. #{row.rank} of every
+        {num(row.acres)} acres{detail?.deed_acres ? ` (deed ${num(detail.deed_acres)})` : ""},{" "}
+        <span className="tip" title={BUILDABLE_TEXT}>
+          {num(row.buildable_acres)} buildable
+        </span>
+        , {num(row.open_acres)} open; {num(row.drive_minutes)} min from downtown Chattanooga. #{row.rank} of every
         parcel by hydro.
       </p>
 
