@@ -174,3 +174,47 @@ def test_unknown_parcel_source_is_refused():
     aoi = load_aoi("sequatchie_tn").model_copy(update={"parcel_source": "ga_parcels"})
     with pytest.raises(ValueError, match="no parcel source 'ga_parcels'"):
         parcels.source(aoi)
+
+
+def county_feature(geom=None, **props):
+    return {
+        "type": "Feature",
+        "properties": props,
+        "geometry": mapping(geom or box(-85.1, 34.9, -85.09, 34.91)),
+    }
+
+
+def test_catoosa_parcel_is_keyed_on_county_and_parcel_number():
+    parcel, owner = parcels.parse_catoosa_feature(
+        county_feature(FID=1, Parcel_No="00010001"), "13047"
+    )
+    assert (parcel.gislink, parcel.parcel_id) == ("13047:00010001", "00010001")
+    assert (parcel.county_name, parcel.deed_acres, parcel.tpad_url) == ("Catoosa", None, None)
+    assert (owner.owner, owner.owner2, owner.property_address) == (None, None, None)
+    with pytest.raises(ValueError, match="parcel number"):
+        parcels.parse_catoosa_feature(county_feature(FID=2, Parcel_No=" "), "13047")
+
+
+def test_whitfield_owner_and_street_address_go_to_the_owner_record():
+    parcel, owner = parcels.parse_whitfield_feature(
+        county_feature(
+            OBJECTID_1=6,
+            PARCEL_FUL="27-275-03-000",
+            lastname="DOE  JANE",
+            house_no=120,
+            extension=" ",
+            stdirect="N",
+            street_nam="RIDGE",
+            sttype="RD",
+        ),
+        "13313",
+    )
+    assert parcel.gislink == "13313:27-275-03-000" and parcel.county_name == "Whitfield"
+    assert (owner.owner, owner.property_address) == ("DOE JANE", "120 N RIDGE RD")
+    assert not any(k.startswith("owner") or "address" in k for k in parcel.__dict__)
+
+
+def test_georgia_sources_page_on_their_own_id_fields():
+    assert parcels.source(load_aoi("catoosa_ga")).order_by == "FID"
+    assert parcels.source(load_aoi("whitfield_ga")).order_by == "OBJECTID_1"
+    assert parcels.source(load_aoi("hamilton_tn")).order_by == "OBJECTID"

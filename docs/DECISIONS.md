@@ -58,7 +58,7 @@ Candidates from the plan: Hamilton, Sequatchie, Marion, Bledsoe, Rhea (TN); poss
 - **Decided (owner, 2026-10-20: "whatever is in the reqs"): flagged only, for now.** The requirements put drive time in the **Logistics** score (10% of the overall score, FR-7) and road access in the **Buildability** score (20%, FR-4), not in the hydro score. Neither exists yet: buildability also needs slope and septic soils, and the overall score also needs agriculture and privacy. So drive time and road distance stay columns and flags (`outside_drive_area`, `nearest_road_not_public`), and nothing is dropped or re-ranked on them. The 1-hour area decides which counties to load, not which streams to keep: dropping stretches outside it would remove four of the six 1 kW streams over an edge that assumes no traffic and a placeholder origin. When the overall score is built, drive time becomes its Logistics part and road distance part of Buildability.
 - **Built (PART 19, 2026-10-21):** the overall score now uses drive time as its Logistics part and the nearest public road as part of Buildability, ranking corridors within each confidence tier (D-15). Still not a filter.
 - **Built (PART 24, 2026-10-27):** Bradley (TN parcel layer) and Hamilton (the county's own `Live_Parcels` service) are analyzed. Neither has a 1 kW stream: Bradley lists 933 parcels (696 within 60 minutes, best hydro score 16), Hamilton 1,324 (1,154 within 60 minutes, best 53, all low-flow estimates). The shortlist now holds 4,947 parcels.
-- **Open (owner):** which counties to add next. The biggest unanalyzed shares are the north Georgia counties (need Georgia parcel and flood sources, and D-19 and D-20). Counties with under ~10% inside may not be worth a full ingest.
+- **Open (owner):** which counties to add next. Catoosa and Whitfield, GA are loaded (PART 25) but wait on D-19 and D-20. Walker and Dade, GA have no free parcel source found (only qPublic viewers and paid data). Counties with under ~10% inside may not be worth a full ingest.
 
 ### D-03 · Minimum acreage, budget, privacy weight: **Owner** (not needed until parcels are added)
 
@@ -67,6 +67,30 @@ Candidates from the plan: Hamilton, Sequatchie, Marion, Bledsoe, Rhea (TN); poss
 - Privacy weight in the overall score (spec says 10%): placeholder **10%** (used since `hydro_v6`, D-17)
 
 Parcels are loaded now (PART 14). Until this is decided, the 10-acre placeholder (`config/parcels.yaml`) only **flags** small turbine parcels in the exports (`parcel_under_min_acres`); nothing is filtered or re-ranked.
+
+**Decision:** _\_\_\_\__
+
+---
+
+### D-19 · Low flow in Georgia: **Owner** (open)
+
+PART 25 loads Catoosa and Whitfield counties, GA (100% and 77% inside the 1-hour drive), but can't analyze them yet: every flow estimate here comes from **Tennessee** StreamStats (the Q90 flow-duration equations of SIR 2009-5159, D-04), and Georgia has none. Georgia's StreamStats serves only peak-flow and general flow statistics through the services this tool uses (checked 2026-10-27); USGS's north Georgia low-flow equations ([SIR 2017-5001](https://pubs.usgs.gov/publication/sir20175001)) give 7Q10 and 1Q10, not Q90, and aren't served that way. So a Georgia stream has no StreamStats low flow at all.
+
+Options, with what each means for the map and list:
+
+- **A. Tennessee's regional yield across the line** (recommended). Use the D-09 regional yield (the median StreamStats Q90 per sq mi of the Tennessee streams in the same HUC8) for every Georgia stream, big or small, marked low confidence. It's the method the small Tennessee basins already use, and the basins straddle the line: South and West Chickamauga Creek (Catoosa) are in HUC8 06020001 with Hamilton's and Bradley's streams; the Conasauga (Whitfield) is 03150101, where Bradley's 27 StreamStats reaches give 0.144 cfs/sq mi. Basins with no Tennessee streams (e.g. the Oostanaula side of Whitfield) would get no estimate. Needs a small change: today the yield is the median of the same run's StreamStats reaches, and a Georgia run has none, so it would read other runs' reaches in that HUC8. Every Georgia corridor would be low confidence or low flow, never medium.
+- **B. Georgia gauges, scaled by drainage area** (as the Whitwell gauge was): South Chickamauga Creek at Ringgold (03566700) and West Chickamauga Creek near Lakeview (03567340) in Catoosa; the Conasauga River at Tilton (02387000), Coahulla Creek, Mill Creek at Dalton and others in Whitfield. Measured Q90s, but big-river gauges overstate small streams (Whitwell ran about 10x StreamStats). Best used to **check** option A, not replace it.
+- **C. Georgia's own 7Q10 equations** (SIR 2017-5001: drainage area, mean annual precipitation, relief ratio), computed locally. Official Georgia numbers, but a different statistic: 7Q10 is the lowest 7-day flow of a 10-year drought, well below Q90, so Georgia sites would look worse than Tennessee ones for the same water. Mixing statistics would break the comparison the list ranks on.
+
+**Decision:** _\_\_\_\__ (until then, `make analyze` isn't run for the Georgia AOIs; their streams, parcels, flood zones, roads, soils and buildings are loaded)
+
+### D-20 · Septic rating in Georgia: **Owner** (open)
+
+Buildable ground (D-13) counts soils the **Tennessee** septic rating (`septic_tn`) doesn't call Very limited. Georgia's soil surveys have no Tennessee rating, only NRCS's national one (`septic_national`), and it's much stricter: in the five Tennessee counties it accepts 157,000 of the 347,000 acres the Tennessee rating accepts (45%), and in Catoosa and Whitfield it calls 84% of the ground Very limited.
+
+- **A. The national rating for Georgia** (`septic_rating: septic_national` per AOI): honest, but Georgia parcels would show roughly half the buildable acres a Tennessee parcel with the same ground would, which feeds the Buildability part and the list's buildable filter.
+- **B. Count national "Very limited" too in Georgia** (slope and floodplain only): comparable in spirit to Tennessee's looser rule, but counts ground the national rating rejects.
+- **C. Leave Georgia's buildable ground at slope and floodplain, flagged** `septic_not_rated`: no septic screen at all, said so on every row.
 
 **Decision:** _\_\_\_\__
 
@@ -264,6 +288,7 @@ Decisions that barely move the top 20 keep their default and stop being discusse
 | Date | Decision | Change |
 | --- | --- | --- |
 | 2026-10-27 | D-02 | Added Bradley and Hamilton (PART 24); Hamilton's parcels from the county's own map service. No 1 kW stream in either |
+| 2026-10-27 | D-19, D-20 | New, open (PART 25): how to estimate low flow in Georgia, which has no StreamStats Q90, and which septic rating counts there. Catoosa and Whitfield are loaded but not analyzed until decided |
 | 2026-10-22 | D-18 | New default (PART 22): subdivision feasibility (FR-9). A homestead piece can be cut with 50 ft of public road frontage, 90% of the stretch on the turbine parcel, buildable ground, and turbine end, house site and frontage on one part of the parcel; 0–100 score, a quarter each for frontage, stretch, buildable acres and driveway length. Not in the overall score |
 | 2026-10-21 | D-17 | New default (PART 21, profile `hydro_v6`): privacy gets its 10%: buildings within 1/4 mile of the home site 35%, the nearest 15%, density within 1 mile 20%, woods toward the nearest public road 20%, that road's distance 10% |
 | 2026-10-21 | D-16 | New default (PART 20, profile `hydro_v5`): the agriculture part counts class 1–3 cropland that's open now (NLCD 2021) at 30%, prime farmland 30%, cropland 20%, pasture 20% |
