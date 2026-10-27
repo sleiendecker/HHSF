@@ -60,8 +60,13 @@ class Settings(BaseModel):
         return v
 
 
-def load_settings(path: Path = CONFIG_DIR / "buildability.yaml") -> Settings:
-    return Settings.model_validate(yaml.safe_load(path.read_text()))
+def load_settings(
+    path: Path = CONFIG_DIR / "buildability.yaml", state: str | None = None
+) -> Settings:
+    """The thresholds, with the `states` entry for `state` (a FIPS code) laid over them."""
+    raw = yaml.safe_load(path.read_text())
+    overrides = raw.pop("states", None) or {}
+    return Settings.model_validate({**raw, **overrides.get(state, {})})
 
 
 @dataclass(frozen=True)

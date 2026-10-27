@@ -6,3 +6,8 @@ county_geoid: "13047"   # state FIPS 13 + county FIPS 047
 buffer_m: 500
 # The county's zoning layer: unincorporated parcels, no owner names (data_sources.yaml).
 parcel_source: catoosa_parcels
+
+# No StreamStats low flows in Georgia: every stream gets the regional yield of its basin,
+# from the Tennessee streams of the Valley and Ridge next door (D-19).
+streamstats: false
+yield_from: [hamilton_tn, bradley_tn]

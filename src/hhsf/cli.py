@@ -322,6 +322,9 @@ def analyze_hydro(
                 f"{area.key}` (or `make ingest`) first, or pass --no-terrain."
             )
     source = service = gauge = None
+    if use_streamstats and not area.streamstats:
+        use_streamstats = False
+        typer.echo(f"No StreamStats low flows for {area.name} (D-19): regional yield only.")
     if use_streamstats:
         service = streamstats.load_service_config()
         source = streamstats.StreamStats(assumptions.streamstats, service)
@@ -337,15 +340,32 @@ def analyze_hydro(
                 f"Gauge {r['site_no']}: Q90 {r['q90_cfs']:.1f} cfs from {r['approved_days']} days "
                 f"({r['period'][0]} to {r['period'][1]}), {r['drainage_area_sqmi']:g} sq mi."
             )
-    huc8s = None
+    huc8s = borrowed = None
     if use_regional_yield:
         with engine().connect() as conn:
             county = hydrography.county_area(conn, area)
-        huc8s = basins.load_basins(area, county)
+            huc8s = basins.load_basins(area, county)
+            if area.yield_from:
+                borrowed = run.borrowed_yields(conn, area.yield_from, huc8s)
         typer.echo(f"Regional yield basins (HUC8): {', '.join(huc8s.polygons)}.")
+        if area.yield_from:
+            lent = ", ".join(f"{b} {len(ys)}" for b, ys in sorted(borrowed.items())) or "none"
+            typer.echo(
+                f"  StreamStats reaches lent by {', '.join(area.yield_from)} (D-19): {lent}."
+            )
     typer.echo(f"Analyzing perennial streams in {area.name}...")
     run_id, summary = run.run_hydro(
-        engine(), area, source, service, limit, typer.echo, gauge, dem, assumptions, huc8s
+        engine(),
+        area,
+        source,
+        service,
+        limit,
+        typer.echo,
+        gauge,
+        dem,
+        assumptions,
+        huc8s,
+        borrowed,
     )
     typer.echo(f"Run {run_id} saved {summary['reaches']} hydro corridors.")
     if dem is not None:
@@ -411,7 +431,7 @@ def analyze_buildable(aoi: str = AOI_OPTION) -> None:
     """Buildable ground on each corridor's turbine parcel: gentle slope, out of the
     100-year floodplain, septic-suitable soils (needs make ingest and analyze hydro)."""
     area = load_aoi(aoi)
-    settings = buildable.load_settings()
+    settings = buildable.load_settings(state=area.county_geoid[:2])
     with engine().connect() as conn:
         hydro_run = buildable.latest_hydro_run(conn, area.key)
         if hydro_run is None:

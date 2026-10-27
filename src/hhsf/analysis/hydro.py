@@ -24,6 +24,8 @@ FLOW_METHOD_STREAMSTATS = "streamstats_q90"
 FLOW_METHOD_EROM = "nhdplus_erom"
 FLOW_METHOD_GAUGE = "gauge_drainage_area_ratio"
 FLOW_METHOD_REGIONAL = "regional_streamstats_yield"
+# A regional yield pooled with another county's StreamStats reaches (D-19: Georgia).
+REGIONAL_YIELD_BORROWED = "regional_yield_borrowed"
 
 
 class StreamStatsSettings(BaseModel):

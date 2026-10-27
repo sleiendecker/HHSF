@@ -20,6 +20,13 @@ def test_settings_come_from_the_repo_config():
     assert "Very limited" in s.septic_excluded and s.min_patch_acres == 0.5
 
 
+def test_georgia_counts_very_limited_soils_on_the_national_rating():
+    s = buildable.load_settings(state="13")
+    assert s.septic_rating == "septic_national" and s.septic_excluded == ["Not rated"]
+    assert s.max_slope_pct == 15 and s.min_patch_acres == 0.5
+    assert buildable.load_settings(state="47").septic_rating == "septic_tn"
+
+
 def test_settings_reject_an_unknown_septic_rating():
     with pytest.raises(ValidationError):
         buildable.Settings(**{**SETTINGS.model_dump(), "septic_rating": "septic_moon"})

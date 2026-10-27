@@ -16,6 +16,15 @@ septic_excluded:
   - Very limited
   - Not rated  # water, rock outcrop, pits, urban land: no septic rating at all
 
+# By state FIPS code, where the soil survey has no Tennessee rating. Georgia (D-20): the
+# national rating calls about twice as much ground Very limited as Tennessee's does, so
+# only unrated ground is ruled out there, and the parcels are flagged septic_not_screened.
+states:
+  "13":
+    septic_rating: septic_national
+    septic_excluded:
+      - Not rated
+
 # Smallest patch of ground that counts, in acres: room for a house, a conventional drain
 # field with its replacement area, and a driveway turnaround. Gentle, dry, septic-suitable
 # patches smaller than this (a few 10 m cells on a bench) are left out.

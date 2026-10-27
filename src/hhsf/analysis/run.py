@@ -33,7 +33,7 @@ from hhsf.analysis.streamstats import (
     ServiceUnavailable,
 )
 from hhsf.analysis.stretch import CorridorHead, Stretch
-from hhsf.core import crs
+from hhsf.core import crs, units
 from hhsf.core.config import AOI, REPO_ROOT, load_data_source
 from hhsf.core.db import record_source
 from hhsf.ingest import terrain
@@ -267,8 +267,44 @@ def analyze_reaches(
     return corridors
 
 
+def borrowed_yields(
+    conn: Connection, aoi_keys: list[str], basins: Basins
+) -> dict[str, list[float]]:
+    """D-19: the StreamStats yields of other AOIs' latest hydro runs, keyed by HUC8.
+
+    For a county StreamStats has no low-flow equations for (Georgia): the reaches of
+    `aoi_keys` that drain to one of `basins` lend their medium-confidence Q90 per square
+    mile, the same yields fill_regional_yield pools from a county's own run.
+    """
+    rows = conn.execute(
+        text(
+            """
+            SELECT c.firm_flow_cfs, c.drainage_area_sqkm, ST_AsBinary(s.geom)
+            FROM hydro_corridors c JOIN streams s USING (stream_id)
+            WHERE c.run_id IN (
+                SELECT max(run_id) FROM analysis_runs
+                WHERE analysis = 'hydro' AND status = 'finished' AND aoi_key = ANY(:aois)
+                GROUP BY aoi_key
+            )
+              AND c.flow_method = :method AND c.flow_confidence = 'medium'
+              AND c.firm_flow_cfs IS NOT NULL AND c.drainage_area_sqkm > 0
+            """
+        ),
+        {"aois": aoi_keys, "method": hydro.FLOW_METHOD_STREAMSTATS},
+    ).all()
+    yields: dict[str, list[float]] = defaultdict(list)
+    for q, area, geom in rows:
+        huc8 = basins.huc8_of(wkb.loads(bytes(geom)))
+        if huc8 is not None:
+            yields[huc8].append(q / units.sqkm_to_sqmi(area))
+    return dict(yields)
+
+
 def fill_regional_yield(
-    corridors: list[Corridor], basins: Basins, a: hydro.HydroAssumptions
+    corridors: list[Corridor],
+    basins: Basins,
+    a: hydro.HydroAssumptions,
+    borrowed: dict[str, list[float]] | None = None,
 ) -> dict[str, dict]:
     """D-09: give basins too small for StreamStats their basin's typical Q90.
 
@@ -279,6 +315,8 @@ def fill_regional_yield(
     drainage area times the median yield of its HUC8 (or of the HUC6/HUC4 if the
     HUC8 has too few), and its power is recomputed. Where no yield is found it
     keeps what it had. Returns the yields used, per basin, for the run summary.
+    `borrowed`: other counties' yields by HUC8 (borrowed_yields), pooled with this
+    run's; the flows they fill are flagged `regional_yield_borrowed`.
     """
     huc8s = [basins.huc8_of(c.reach.geom) for c in corridors]
     yields: dict[str, list[float]] = defaultdict(list)
@@ -286,6 +324,8 @@ def fill_regional_yield(
         y = hydro.streamstats_yield(c.flow, c.reach.drainage_area_sqkm)
         if y is not None and huc8 is not None:
             yields[huc8].append(y)
+    for huc8, ys in (borrowed or {}).items():
+        yields[huc8].extend(ys)
     used: dict[str, dict] = {}
     for c, huc8 in zip(corridors, huc8s, strict=True):
         if not hydro.regional_yield_applies(c.flow) or huc8 is None:
@@ -295,6 +335,9 @@ def fill_regional_yield(
             continue
         value, basin, n = found
         c.flow = hydro.regional_flow(c.flow, c.reach.drainage_area_sqkm, value, basin)
+        if any(b.startswith(basin) for b in borrowed or {}):
+            flags = [*c.flow.flags, hydro.REGIONAL_YIELD_BORROWED]
+            c.flow = dataclasses.replace(c.flow, flags=flags)
         c.power = hydro.firm_power(c.flow, c.head, a)
         entry = used.setdefault(
             basin, {"yield_cfs_per_sqmi": value, "streamstats_reaches": n, "reaches_filled": 0}
@@ -458,6 +501,7 @@ def run_hydro(
     dem: Path | None = None,
     assumptions: hydro.HydroAssumptions | None = None,
     basins: Basins | None = None,
+    borrowed: dict[str, list[float]] | None = None,
 ) -> tuple[int, dict]:
     """Analyze every perennial reach in the AOI and save one run. Returns (run_id, summary).
 
@@ -465,6 +509,7 @@ def run_hydro(
     steepest stretch; None treats each whole reach as one corridor.
     `basins`: the HUC8s the AOI drains to, for the regional-yield fallback on
     basins too small for StreamStats (D-09); None leaves those without a flow.
+    `borrowed`: other counties' StreamStats yields for it, by HUC8 (D-19).
     """
     a = assumptions or hydro.load_assumptions()
     with eng.begin() as conn:
@@ -486,7 +531,9 @@ def run_hydro(
             covered = sum(gauge.covers(r.geom) for r in reaches)
             echo(f"  {covered} of {len(reaches)} reaches drain to gauge {gauge.reference.site_no}")
         corridors = analyze_reaches(reaches, a, source, service, echo, gauge, heads)
-        regional = fill_regional_yield(corridors, basins, a) if basins is not None else None
+        regional = (
+            fill_regional_yield(corridors, basins, a, borrowed) if basins is not None else None
+        )
         summary = summarize(corridors, a)
         if regional is not None:
             summary["regional_yield"] = regional

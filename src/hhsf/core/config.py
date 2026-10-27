@@ -33,6 +33,11 @@ class AOI(BaseModel):
     # Where the county's parcels come from: a data_sources.yaml key that
     # hhsf.ingest.parcels knows. Most Tennessee counties are in the state's layer.
     parcel_source: str = "tn_parcels"
+    # Ask StreamStats for low flows. Georgia has no low-flow equations in it (D-19).
+    streamstats: bool = True
+    # AOIs whose latest hydro run lends its StreamStats yields to this county's regional
+    # yield (D-09), basin by basin: for a county StreamStats can't answer for (D-19).
+    yield_from: list[str] = []
 
 
 class DataSource(BaseModel):

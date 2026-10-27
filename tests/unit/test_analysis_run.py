@@ -296,3 +296,39 @@ def test_mean_flow_fallback_switches_to_the_regional_yield():
     assert fallback.flow.firm_flow_cfs == pytest.approx(0.8)  # same area as the median reach
     assert fallback.flow.flags == ["streamstats_disabled", "regional_yield_basin:06030001"]
     assert used["06030001"]["reaches_filled"] == 1
+
+
+def test_borrowed_yields_fill_a_county_with_no_streamstats_and_are_flagged():
+    # Georgia (D-19): no StreamStats at all, so every reach is on the mean flow.
+    fallback = run.analyze_reach(reach(i=1), ASSUMPTIONS, None)
+    small = run.analyze_reach(reach(da_sqkm=SMALL_SQKM, i=2), ASSUMPTIONS, None)
+    lent = [q / units.sqkm_to_sqmi(BIG_SQKM) for q in (0.6, 0.8, 1.0)]
+    used = run.fill_regional_yield(
+        [fallback, small], basins(("06020001", EAST)), ASSUMPTIONS, {"06020001": lent}
+    )
+    assert fallback.flow.method == small.flow.method == hydro.FLOW_METHOD_REGIONAL
+    assert fallback.flow.firm_flow_cfs == pytest.approx(0.8)
+    assert fallback.flow.flags == [
+        "streamstats_disabled",
+        "regional_yield_basin:06020001",
+        hydro.REGIONAL_YIELD_BORROWED,
+    ]
+    assert hydro.REGIONAL_YIELD_BORROWED in small.flow.flags
+    assert used["06020001"] == {
+        "yield_cfs_per_sqmi": lent[1],
+        "streamstats_reaches": 3,
+        "reaches_filled": 2,
+    }
+
+
+def test_borrowed_yields_of_another_basin_leave_the_flag_off():
+    big = [
+        run.analyze_reach(reach(i=i), ASSUMPTIONS, Source(estimate(value_cfs=q)))
+        for i, q in enumerate([0.6, 0.8, 1.0], 1)
+    ]
+    small = run.analyze_reach(reach(da_sqkm=SMALL_SQKM, i=4), ASSUMPTIONS, Source())
+    run.fill_regional_yield(
+        [*big, small], basins(("06020001", EAST)), ASSUMPTIONS, {"03150101": [0.5] * 3}
+    )
+    assert small.flow.method == hydro.FLOW_METHOD_REGIONAL
+    assert hydro.REGIONAL_YIELD_BORROWED not in small.flow.flags

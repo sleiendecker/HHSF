@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 
 from sqlalchemy import Connection, text
 
-from hhsf.analysis import export, subdivision
+from hhsf.analysis import export, hydro, subdivision
 from hhsf.core import units
 
 KW = "kw"
@@ -46,12 +46,15 @@ LOW_CONFIDENCE_FLOW = "low_confidence_flow"  # 1 kW+ on a rough flow estimate
 NO_FLOW_ESTIMATE = "no_flow_estimate"  # head only
 DEED_ACRES_DIFFER = "deed_acres_differ"  # the deed and the outline disagree by over 25%
 DEED_ACRES_TOLERANCE = 0.25
+# Georgia (D-20): the buildable acres don't rule out soils Very limited for septic.
+SEPTIC_NOT_SCREENED = "septic_not_screened"
 # Flow flags worth repeating; the regional-yield basin is in every low-flow row.
 FLOW_FLAGS = {
     "streamstats_drainage_area_mismatch",
     "streamstats_pour_point_moved",
     "missing_drainage_area",
     "below_regression_min_drainage_area",
+    hydro.REGIONAL_YIELD_BORROWED,
 }
 
 
@@ -83,6 +86,7 @@ class Stretch:
     turbine_parcel_distance_m: float | None = None
     buildable_acres: float | None = None
     no_soil_acres: float | None = None
+    septic_screened: bool | None = None  # False: Very limited soils counted (D-20)
     drive_minutes: float | None = None
     in_drive_area: bool | None = None
     turbine_road_m: float | None = None
@@ -214,6 +218,8 @@ def flags(s: Stretch, min_acres: float = 10) -> tuple[str, ...]:
         out.append(export.NO_BUILDABLE_GROUND)
     if s.no_soil_acres is not None and s.no_soil_acres >= 0.5:
         out.append(export.SOILS_NOT_LOADED)
+    if s.septic_screened is False:
+        out.append(SEPTIC_NOT_SCREENED)
     if s.nearest_building_m is not None and s.nearest_building_m <= export.NEIGHBOR_CLOSE_M:
         out.append(export.NEIGHBOR_CLOSE)
     if s.parcel_buildings:
@@ -236,12 +242,17 @@ def checks(s: Stretch, fl: tuple[str, ...]) -> tuple[dict, ...]:
     def add(topic: str, warn: bool, what: str) -> None:
         out.append({"topic": topic, "warn": warn, "text": what})
 
+    borrowed = (
+        " It's borrowed from Tennessee streams in the same basin, across the state line."
+        if hydro.REGIONAL_YIELD_BORROWED in fl
+        else ""
+    )
     if s.group == LOW_FLOW:
         add(
             "Dry-season flow",
             True,
             "The power is a regional estimate for a typical basin this size, and it can't see "
-            "springs. Gauge the flow in late summer or early fall, at its lowest.",
+            f"springs.{borrowed} Gauge the flow in late summer or early fall, at its lowest.",
         )
     elif s.group == HEAD_ONLY:
         add("Dry-season flow", True, "No flow estimate. Measure the flow in late summer or fall.")
@@ -249,8 +260,8 @@ def checks(s: Stretch, fl: tuple[str, ...]) -> tuple[dict, ...]:
         add(
             "Dry-season flow",
             s.tier == "low" or any(f in FLOW_FLAGS for f in fl),
-            "1 kW or more on the estimated low flow (the flow 90% of days beat). Measure it in "
-            "late summer or fall to confirm.",
+            "1 kW or more on the estimated low flow (the flow 90% of days beat)."
+            f"{borrowed} Measure it in late summer or fall to confirm.",
         )
     head = f"{s.net_head_ft:,.0f} ft" if s.net_head_ft is not None else "The"
     add(
@@ -280,6 +291,15 @@ def checks(s: Stretch, fl: tuple[str, ...]) -> tuple[dict, ...]:
             True,
             "No buildable ground found on the parcel (gentle, dry, soils fit for septic). "
             "Look for a house site and ask about a perc test.",
+        )
+    elif SEPTIC_NOT_SCREENED in fl:
+        acres = f"{s.buildable_acres:,.0f}" if s.buildable_acres is not None else "Some"
+        add(
+            "Septic soils",
+            True,
+            f"{acres} gentle acres out of the floodplain, but not screened for septic: "
+            "Georgia's soil survey has only the national rating, which rules out about twice "
+            "the ground Tennessee's does. Ask for a perc test early.",
         )
     elif export.SOILS_NOT_LOADED in fl:
         add(
@@ -331,7 +351,8 @@ LOAD_SQL = """
            l.agriculture_subscore, l.privacy_subscore, l.logistics_subscore,
            l.turbine_parcel_acres AS acres, l.turbine_parcel_deed_acres AS deed_acres,
            l.turbine_parcel_distance_m, l.turbine_buildable_acres AS buildable_acres,
-           b.no_soil_acres, l.drive_minutes, l.in_drive_area, l.turbine_road_m,
+           b.no_soil_acres, 'Very limited' = ANY(b.septic_excluded) AS septic_screened,
+           l.drive_minutes, l.in_drive_area, l.turbine_road_m,
            l.turbine_public_road_m, l.turbine_in_sfha, l.stretch_sfha_m,
            l.turbine_open_acres AS open_acres,
            l.turbine_open_cropland_acres AS open_cropland_acres,
