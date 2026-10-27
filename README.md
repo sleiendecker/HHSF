@@ -15,7 +15,7 @@ This is different from a real estate search. It starts from the terrain and wate
 
 ## Status
 
-**v0.1, in progress.** Analyzed so far: Sequatchie County, TN (the default), its neighbors Marion, Bledsoe, Grundy and Rhea, and Hamilton (Chattanooga) and Bradley, part of the 1-hour drive region around Chattanooga (D-02). Hamilton and Bradley have no 1 kW stream; their best are low-flow estimates. Six streams across the five counties reach 1 kW; see [docs/SCORING.md](docs/SCORING.md#five-counties-part-13-profile-hydro_v3-2026-10-20).
+**v0.1, in progress.** Analyzed so far: Sequatchie County, TN (the default), its neighbors Marion, Bledsoe, Grundy and Rhea, Hamilton (Chattanooga) and Bradley, and Catoosa and Whitfield, GA, part of the 1-hour drive region around Chattanooga (D-02). Hamilton, Bradley and the Georgia counties have no 1 kW stream; their best are low-flow estimates. Georgia's low flows are borrowed from Tennessee's StreamStats streams in the same basins (D-19), and its buildable ground isn't screened for septic (D-20). Six streams across the five counties reach 1 kW; see [docs/SCORING.md](docs/SCORING.md#five-counties-part-13-profile-hydro_v3-2026-10-20).
 
 | Works now | Not built yet |
 | --- | --- |
@@ -30,7 +30,7 @@ This is different from a real estate search. It starts from the terrain and wate
 | Exports: the ranked shortlist as CSV and GeoJSON, every stream with the reason it was or wasn't listed, and a summary report for planning visits | Parcels for other counties outside the state's parcel layer (Hamilton has its own loader) |
 | Parcels and owners: each stretch's turbine parcel (ID, acreage, owner) and every parcel it crosses, in the exports; property lines on the map. Owner names stay on this computer, never on the map | A minimum acreage filter (D-03 is open; small parcels are only flagged) |
 | Flood zones: FEMA's flood zone at each stretch's turbine end and how much of the stretch is in the 100-year floodplain, in the exports and the map popup; flood zones on the map | |
-| Roads and drive time: the 1-hour drive area from downtown Chattanooga (the search region, D-02) and the counties it touches; each stretch's nearest road and its type, the nearest public road, and the drive from Chattanooga, in the exports and the map popup; roads and the drive area on the map | The 13 other counties the 1-hour area touches (north Georgia next) |
+| Roads and drive time: the 1-hour drive area from downtown Chattanooga (the search region, D-02) and the counties it touches; each stretch's nearest road and its type, the nearest public road, and the drive from Chattanooga, in the exports and the map popup; roads and the drive area on the map | The 11 other counties the 1-hour area touches (Walker and Dade, GA have no free parcel source) |
 | Buildable ground: on each stretch's turbine parcel, how many acres are gently sloped (15% or less), outside the 100-year floodplain and on soils fit for a septic field (USDA soil survey), and how far the nearest of it is from the turbine end, in the exports and the map popup; that ground and the soils' septic ratings on the map | |
 | Farmland: on each stretch's turbine parcel, acres of prime farmland and of cropland (land capability class 1–3), wet ground, and how much pasture its soils could grow (USDA soil survey), in the exports and the map popup; farmland soils on the map | |
 | Land cover: on each stretch's turbine parcel, acres of open land (field, pasture, crops), forest and built-up land, the open land on good farmland soils, and tree canopy (USGS NLCD 2021), in the exports and the map popup; land cover on the map | Newer land cover than 2021 |
@@ -126,7 +126,7 @@ make analyze AOI=marion_tn
 make score AOI=marion_tn
 ```
 
-Keys: `marion_tn`, `bledsoe_tn`, `grundy_tn`, `rhea_tn`, `bradley_tn`, `hamilton_tn`. Hamilton isn't in the state's parcel layer; its parcels come from the county's own map service (`parcel_source: hamilton_parcels` in its AOI file, about 163,000 parcels, a few minutes). They need two more river-basin files than Sequatchie (Upper Tennessee `0601`: 486 MB, Middle Tennessee-Elk `0603`: 152 MB). A new county's first `make analyze` takes 30 minutes to a couple of hours while StreamStats answers, longer if it keeps dropping out. The map shows every county you've scored, each ranked on its own.
+Keys: `marion_tn`, `bledsoe_tn`, `grundy_tn`, `rhea_tn`, `bradley_tn`, `hamilton_tn`, `catoosa_ga`, `whitfield_ga`. Analyze the Georgia counties after Hamilton and Bradley: they borrow those runs' low flows (`yield_from` in their AOI files), and ask StreamStats nothing, so their `make analyze` takes minutes. Hamilton isn't in the state's parcel layer; its parcels come from the county's own map service (`parcel_source: hamilton_parcels` in its AOI file, about 163,000 parcels, a few minutes). They need two more river-basin files than Sequatchie (Upper Tennessee `0601`: 486 MB, Middle Tennessee-Elk `0603`: 152 MB). A new county's first `make analyze` takes 30 minutes to a couple of hours while StreamStats answers, longer if it keeps dropping out. The map shows every county you've scored, each ranked on its own.
 
 <details>
 <summary>Using the USGS web service instead of the file download</summary>
@@ -237,7 +237,7 @@ Untick **Show hydro scores** to go back to plain streams (bigger streams darker)
 
 ### Using the shortlist
 
-The panel on the right of the map is the list to work from: one row per turbine parcel (the parcel under the bottom of a stream's steepest stretch) across every analyzed county, about 4,900. **Tick filters to whittle it down; what's left is ranked by hydro score.** The map's `#12` labels rank each county's streams on their own; the list's `#` is the parcel's place in the filtered list, across all of them.
+The panel on the right of the map is the list to work from: one row per turbine parcel (the parcel under the bottom of a stream's steepest stretch) across every analyzed county, about 5,000. **Tick filters to whittle it down; what's left is ranked by hydro score.** The map's `#12` labels rank each county's streams on their own; the list's `#` is the parcel's place in the filtered list, across all of them.
 
 ![The parcel list beside the map, filtered to 1 kW+ only: Negro Den Creek's parcel selected, outlined on the map with its stretch in yellow, its hydro score explained and the checks for a visit](docs/images/shortlist.jpg)
 

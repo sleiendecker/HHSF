@@ -100,6 +100,13 @@ def run(engine, dem):  # noqa: F811
         return buildable.run_buildable(conn, AREA, targets, dem, SETTINGS, echo=lambda _: None)
 
 
+def test_parcels_are_grouped_by_their_own_state(engine, site):  # noqa: F811
+    with engine.connect() as conn:
+        targets = buildable.turbine_parcels(conn, buildable.latest_hydro_run(conn, AREA.key))
+        groups = buildable.by_state(conn, targets)
+    assert list(groups) == ["99"] and groups["99"] == targets
+
+
 def test_soils_keep_their_ratings_and_source(engine, site):  # noqa: F811
     with engine.connect() as conn:
         rows = conn.execute(

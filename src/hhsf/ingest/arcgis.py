@@ -64,13 +64,14 @@ def query_geojson(url: str, params: dict[str, Any], cache_dir: Path) -> list[dic
 
 
 def query_geojson_paged(
-    url: str, params: dict[str, Any], cache_dir: Path, page_size: int
+    url: str, params: dict[str, Any], cache_dir: Path, page_size: int, order_by: str = "OBJECTID"
 ) -> Iterator[list[dict[str, Any]]]:
     """Features from an attribute query (e.g. one county's parcels), page by page.
 
     For hosted ArcGIS Online layers, which page cheaply by OBJECTID. (The USGS
     services don't, see above: use query_geojson_tiled there.) Yields each page as
-    it arrives; each page is cached on its own, so a failed run resumes.
+    it arrives; each page is cached on its own, so a failed run resumes. `order_by`: the
+    layer's object ID field (some county layers call it FID or OBJECTID_1).
     """
     offset = 0
     while True:
@@ -78,7 +79,7 @@ def query_geojson_paged(
             url,
             {
                 **params,
-                "orderByFields": "OBJECTID",
+                "orderByFields": order_by,
                 "resultOffset": offset,
                 "resultRecordCount": page_size,
             },

@@ -189,6 +189,7 @@ export const FLAG_TEXT: Record<string, string> = {
   streamstats_drainage_area_mismatch: "StreamStats outlined a different basin",
   streamstats_pour_point_moved: "StreamStats asked a little way upstream",
   below_regression_min_drainage_area: "Basin smaller than the low-flow equations allow",
+  regional_yield_borrowed: "Low flow borrowed from Tennessee streams",
   missing_drainage_area: "No drainage area",
   turbine_outside_parcel: "Turbine end in a gap between parcels",
   parcel_under_min_acres: "Parcel under 10 acres",
@@ -200,6 +201,7 @@ export const FLAG_TEXT: Record<string, string> = {
   nearest_road_not_public: "Nearest road is a trail or private",
   no_buildable_ground: "No buildable ground",
   soils_not_loaded: "Part of the parcel has no soil survey",
+  septic_not_screened: "Not screened for septic (Georgia)",
   neighbor_within_660_ft: "A building within 660 ft",
   buildings_on_parcel: "Buildings on the parcel",
   no_road_frontage: "No public road frontage",
@@ -226,7 +228,7 @@ export function power(w: number | null): string {
 // (min_patch_acres, max_slope_pct, septic_excluded) and the floodplain rule in hhsf.analysis.buildable.
 export const BUILDABLE_TEXT =
   "Buildable: patches of ½ acre or more, sloped 15% or less, outside the 100-year floodplain, on soils rated " +
-  "OK for a septic field. A screen, not a perc test.";
+  "OK for a septic field (in Georgia, not screened for septic). A screen, not a perc test.";
 
 export interface Badge {
   text: string;

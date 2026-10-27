@@ -322,6 +322,9 @@ def analyze_hydro(
                 f"{area.key}` (or `make ingest`) first, or pass --no-terrain."
             )
     source = service = gauge = None
+    if use_streamstats and not area.streamstats:
+        use_streamstats = False
+        typer.echo(f"No StreamStats low flows for {area.name} (D-19): regional yield only.")
     if use_streamstats:
         service = streamstats.load_service_config()
         source = streamstats.StreamStats(assumptions.streamstats, service)
@@ -337,15 +340,32 @@ def analyze_hydro(
                 f"Gauge {r['site_no']}: Q90 {r['q90_cfs']:.1f} cfs from {r['approved_days']} days "
                 f"({r['period'][0]} to {r['period'][1]}), {r['drainage_area_sqmi']:g} sq mi."
             )
-    huc8s = None
+    huc8s = borrowed = None
     if use_regional_yield:
         with engine().connect() as conn:
             county = hydrography.county_area(conn, area)
-        huc8s = basins.load_basins(area, county)
+            huc8s = basins.load_basins(area, county)
+            if area.yield_from:
+                borrowed = run.borrowed_yields(conn, area.yield_from, huc8s)
         typer.echo(f"Regional yield basins (HUC8): {', '.join(huc8s.polygons)}.")
+        if area.yield_from:
+            lent = ", ".join(f"{b} {len(ys)}" for b, ys in sorted(borrowed.items())) or "none"
+            typer.echo(
+                f"  StreamStats reaches lent by {', '.join(area.yield_from)} (D-19): {lent}."
+            )
     typer.echo(f"Analyzing perennial streams in {area.name}...")
     run_id, summary = run.run_hydro(
-        engine(), area, source, service, limit, typer.echo, gauge, dem, assumptions, huc8s
+        engine(),
+        area,
+        source,
+        service,
+        limit,
+        typer.echo,
+        gauge,
+        dem,
+        assumptions,
+        huc8s,
+        borrowed,
     )
     typer.echo(f"Run {run_id} saved {summary['reaches']} hydro corridors.")
     if dem is not None:
@@ -411,12 +431,12 @@ def analyze_buildable(aoi: str = AOI_OPTION) -> None:
     """Buildable ground on each corridor's turbine parcel: gentle slope, out of the
     100-year floodplain, septic-suitable soils (needs make ingest and analyze hydro)."""
     area = load_aoi(aoi)
-    settings = buildable.load_settings()
     with engine().connect() as conn:
         hydro_run = buildable.latest_hydro_run(conn, area.key)
         if hydro_run is None:
             raise typer.BadParameter(f"No hydro run for {area.name}. Run `make analyze` first.")
         targets = buildable.turbine_parcels(conn, hydro_run)
+        groups = buildable.by_state(conn, targets)
         reaches = run.load_reaches(conn, area)
     if not targets:
         typer.echo(f"No turbine parcels for hydro run {hydro_run}: are parcels loaded?")
@@ -424,15 +444,20 @@ def analyze_buildable(aoi: str = AOI_OPTION) -> None:
     # The elevation model was saved for the streams; big parcels can reach past it.
     needed = buildable.bounds_of([*(r.geom for r in reaches), *(g for _, g in targets)])
     dem, source = terrain.fetch_dem(area.key, needed, echo=typer.echo)
-    typer.echo(
-        f"Buildable ground on {len(targets):,} turbine parcels of hydro run {hydro_run} "
-        f"(slope up to {settings.max_slope_pct:g}%, outside the 100-year floodplain, "
-        f"{settings.septic_rating} not {' or '.join(settings.septic_excluded)}, "
-        f"patches of {settings.min_patch_acres:g} acres or more)..."
-    )
+    results = []
     with engine().begin() as conn:
         record_source(conn, source)
-        results = buildable.run_buildable(conn, area, targets, dem, settings, typer.echo)
+        # Each parcel takes its own state's septic rating (D-20).
+        for state, group in groups.items():
+            settings = buildable.load_settings(state=state)
+            typer.echo(
+                f"Buildable ground on {len(group):,} turbine parcels (state {state}) of hydro "
+                f"run {hydro_run} (slope up to {settings.max_slope_pct:g}%, outside the "
+                f"100-year floodplain, {settings.septic_rating} not "
+                f"{' or '.join(settings.septic_excluded)}, patches of "
+                f"{settings.min_patch_acres:g} acres or more)..."
+            )
+            results += buildable.run_buildable(conn, area, group, dem, settings, typer.echo)
     none = sum(r.buildable_acres == 0 for r in results)
     typer.echo(
         f"Saved {len(results):,} parcels: {sum(r.buildable_acres for r in results):,.0f} "

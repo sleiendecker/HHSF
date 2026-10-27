@@ -2,7 +2,7 @@
 
 import json
 
-from hhsf.analysis import export, shortlist, subdivision
+from hhsf.analysis import export, hydro, shortlist, subdivision
 from hhsf.analysis.shortlist import Stretch
 
 _ids = iter(range(1, 10_000))
@@ -187,3 +187,20 @@ def test_row_carries_what_the_filters_need_in_feet():
     assert (r["road_frontage_ft"], r["public_road_ft"]) == (328, 1320)
     assert (r["buildings_quarter_mile"], r["turbine_in_sfha"]) == (3, False)
     assert (r["prime_acres"], r["open_cropland_acres"]) == (12.3, None)
+
+
+def test_georgia_parcels_say_septic_and_low_flow_need_checking():
+    s = stretch(
+        county="13313",
+        septic_screened=False,
+        flow_flags=("regional_yield_basin:03150101", hydro.REGIONAL_YIELD_BORROWED),
+    )
+    [e] = shortlist.build([s])
+    assert hydro.REGIONAL_YIELD_BORROWED in e.flags
+    assert shortlist.SEPTIC_NOT_SCREENED in e.flags
+    checks = {c["topic"]: c for c in e.checks}
+    assert checks["Septic soils"]["warn"]
+    assert "not screened for septic" in checks["Septic soils"]["text"]
+    assert "across the state line" in checks["Dry-season flow"]["text"]
+    [tn] = shortlist.build([stretch(septic_screened=True)])
+    assert shortlist.SEPTIC_NOT_SCREENED not in tn.flags

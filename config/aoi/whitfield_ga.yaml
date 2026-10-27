@@ -1,0 +1,12 @@
+# Area of interest: Whitfield County, GA (see sequatchie_tn.yaml for what each field means).
+# 77% of it is inside the 1-hour drive from downtown Chattanooga (D-02).
+key: whitfield_ga
+name: Whitfield County, GA
+county_geoid: "13313"   # state FIPS 13 + county FIPS 313
+buffer_m: 500
+parcel_source: whitfield_parcels
+
+# No StreamStats low flows in Georgia: every stream gets the regional yield of its basin,
+# from the Tennessee streams of the Valley and Ridge next door (D-19).
+streamstats: false
+yield_from: [hamilton_tn, bradley_tn]

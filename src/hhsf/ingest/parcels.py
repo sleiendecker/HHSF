@@ -1,5 +1,6 @@
 """Property parcels and their owners, from the Tennessee Comptroller's statewide layer or,
-for a county that keeps its own (Hamilton), the county's layer (AOI `parcel_source`).
+for a county that keeps its own (Hamilton; the Georgia counties), the county's layer (AOI
+`parcel_source`).
 
 One query per county returns both the parcel outlines and the owner names. They
 are split on the way in: outlines go to `parcels` (served as map tiles), owner
@@ -28,6 +29,8 @@ from hhsf.ingest.arcgis import query_geojson_paged
 
 SOURCE_KEY = "tn_parcels"
 HAMILTON_SOURCE_KEY = "hamilton_parcels"
+CATOOSA_SOURCE_KEY = "catoosa_parcels"
+WHITFIELD_SOURCE_KEY = "whitfield_parcels"
 TN_STATE_FIPS = "47"
 
 FIELDS = [
@@ -61,6 +64,26 @@ HAMILTON_FIELDS = [
     "OWNERNAME1",
     "OWNERNAME2",
     "ADDRESS",
+]
+
+
+# Catoosa County, GA: the county's zoning layer, one outline per parcel of unincorporated
+# Catoosa (Ringgold and Fort Oglethorpe zone their own), with the parcel number. No owner
+# names in it: those stay empty.
+CATOOSA_FIELDS = ["FID", "Parcel_No"]
+
+# Whitfield County, GA: the county GIS's Parcels layer. `lastname` is the owner as the tax
+# digest writes it; the rest of the owner's mailing address isn't read.
+WHITFIELD_FIELDS = [
+    "OBJECTID_1",
+    "PARCEL_FUL",
+    # Personal information: only ever saved to parcel_owners.
+    "lastname",
+    "house_no",
+    "extension",
+    "stdirect",
+    "street_nam",
+    "sttype",
 ]
 
 
@@ -193,6 +216,59 @@ def parse_hamilton_feature(
     return parcel, owner
 
 
+def _county_record(
+    feature: dict[str, Any],
+    county_geoid: str,
+    county_name: str,
+    parcel_id: Any,
+    owner: Any = None,
+    address: Any = None,
+) -> tuple[ParcelRecord, OwnerRecord]:
+    """A county layer with its own parcel numbers, which aren't unique across counties:
+    the key is the county FIPS code and the parcel number, e.g. '13047:00010001'."""
+    pid = _clean(parcel_id)
+    if pid is None:
+        raise ValueError(f"{county_name} parcel without a parcel number")
+    gislink = f"{county_geoid}:{pid}"
+    geom = as_multipolygon(shape(feature["geometry"]))
+    parcel = ParcelRecord(
+        gislink=gislink,
+        parcel_id=pid,
+        county_geoid=county_geoid,
+        county_name=county_name,
+        acres=units.sqkm_to_acres(crs.area_m2(geom) / 1e6),
+        deed_acres=None,
+        parcel_type=None,
+        tpad_url=None,
+        geom=geom,
+    )
+    return parcel, OwnerRecord(gislink, _clean(owner), None, _clean(address))
+
+
+def parse_catoosa_feature(
+    feature: dict[str, Any], county_geoid: str
+) -> tuple[ParcelRecord, OwnerRecord]:
+    return _county_record(feature, county_geoid, "Catoosa", feature["properties"].get("Parcel_No"))
+
+
+def parse_whitfield_feature(
+    feature: dict[str, Any], county_geoid: str
+) -> tuple[ParcelRecord, OwnerRecord]:
+    p = feature["properties"]
+    number = p.get("house_no")
+    street = [
+        str(number) if number else None,
+        p.get("extension"),
+        p.get("stdirect"),
+        p.get("street_nam"),
+        p.get("sttype"),
+    ]
+    address = " ".join(s for s in (_clean(x) for x in street) if s)
+    return _county_record(
+        feature, county_geoid, "Whitfield", p.get("PARCEL_FUL"), p.get("lastname"), address
+    )
+
+
 @dataclass(frozen=True)
 class Source:
     """A parcel layer: its data_sources.yaml key, fields, county filter and reader."""
@@ -201,6 +277,7 @@ class Source:
     fields: list[str]
     where: Callable[[AOI], str]
     parse: Callable[[dict[str, Any], str], tuple[ParcelRecord, OwnerRecord]]
+    order_by: str = "OBJECTID"  # the layer's object ID field, for paging
 
 
 SOURCES = {
@@ -213,6 +290,20 @@ SOURCES = {
     # The whole layer is the county; a handful of right-of-way pieces have no GISLINK.
     HAMILTON_SOURCE_KEY: Source(
         HAMILTON_SOURCE_KEY, HAMILTON_FIELDS, lambda aoi: "GISLINK<>' '", parse_hamilton_feature
+    ),
+    CATOOSA_SOURCE_KEY: Source(
+        CATOOSA_SOURCE_KEY,
+        CATOOSA_FIELDS,
+        lambda aoi: "Parcel_No IS NOT NULL AND Parcel_No<>''",
+        parse_catoosa_feature,
+        "FID",
+    ),
+    WHITFIELD_SOURCE_KEY: Source(
+        WHITFIELD_SOURCE_KEY,
+        WHITFIELD_FIELDS,
+        lambda aoi: "PARCEL_FUL IS NOT NULL AND PARCEL_FUL<>''",
+        parse_whitfield_feature,
+        "OBJECTID_1",
     ),
 }
 
@@ -269,6 +360,7 @@ def fetch_parcels(
         },
         folder,
         settings.get("page_size", 2000),
+        src.order_by,
     )
     pairs = []
     for features in pages:
