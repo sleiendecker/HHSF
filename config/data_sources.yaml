@@ -191,6 +191,22 @@ usgs_national_map_basemaps:
       use: not used yet; a plain terrain option if topo is too busy (same URL pattern)
       attribution: "USGS The National Map: 3D Elevation Program"
 
+hamilton_parcels:
+  description: >-
+    Hamilton County, TN GIS parcel boundaries (Live_Parcels map service, layer 0), for
+    the county the state layer leaves out. Same GISLINK keys as the state layer. The
+    layer holds the owner names, so `hhsf ingest parcels` saves those to parcel_owners
+    only, as for the state layer.
+  url: https://mapsdev.hamiltontn.gov/hcwa03/rest/services/Live_Parcels/MapServer/0/query
+  item: https://gismaps.hamiltontn.gov/hcgis
+  license: >-
+    Public map service of Hamilton County GIS (the one its map viewer reads). No terms of use
+    published with it (checked 2026-10-26); treat it like the state layer: no warranty, not
+    legal descriptions, owner names kept in local exports only.
+  version: Live_Parcels (checked 2026-10-26)
+  # The service returns at most 1,000 features a query.
+  page_size: 1000
+
 tn_parcels:
   description: >-
     Tennessee Comptroller of the Treasury statewide parcel boundaries ("Tennessee Property

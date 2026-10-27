@@ -1,0 +1,10 @@
+# Area of interest: Hamilton County, TN (see sequatchie_tn.yaml for what each field means).
+# Chattanooga's county: 85% of it is inside the 1-hour drive from downtown (D-02).
+key: hamilton_tn
+name: Hamilton County, TN
+county_geoid: "47065"   # state FIPS 47 + county FIPS 065
+buffer_m: 500
+# Hamilton keeps its own parcels; the state layer leaves it out (data_sources.yaml).
+parcel_source: hamilton_parcels
+# No reference gauge: the county drains to the Tennessee River directly (Chickamauga and
+# Nickajack lakes), not the Sequatchie. Small basins use the regional yield (D-09).

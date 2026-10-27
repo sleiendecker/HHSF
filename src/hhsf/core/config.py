@@ -30,6 +30,9 @@ class AOI(BaseModel):
     # NHDPlus HR regions covering the county. Looked up from WBD when not listed.
     huc4: list[str] = []
     reference_gauge: ReferenceGauge | None = None
+    # Where the county's parcels come from: a data_sources.yaml key that
+    # hhsf.ingest.parcels knows. Most Tennessee counties are in the state's layer.
+    parcel_source: str = "tn_parcels"
 
 
 class DataSource(BaseModel):

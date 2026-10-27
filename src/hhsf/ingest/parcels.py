@@ -1,4 +1,5 @@
-"""Property parcels and their owners from the Tennessee Comptroller's statewide layer.
+"""Property parcels and their owners, from the Tennessee Comptroller's statewide layer or,
+for a county that keeps its own (Hamilton), the county's layer (AOI `parcel_source`).
 
 One query per county returns both the parcel outlines and the owner names. They
 are split on the way in: outlines go to `parcels` (served as map tiles), owner
@@ -26,6 +27,7 @@ from hhsf.core.db import record_source
 from hhsf.ingest.arcgis import query_geojson_paged
 
 SOURCE_KEY = "tn_parcels"
+HAMILTON_SOURCE_KEY = "hamilton_parcels"
 TN_STATE_FIPS = "47"
 
 FIELDS = [
@@ -42,6 +44,22 @@ FIELDS = [
     # Personal information: only ever saved to parcel_owners.
     "OWNER",
     "OWNER2",
+    "ADDRESS",
+]
+
+# Hamilton County's own layer (Live_Parcels): the same GISLINK keys as the state's, with
+# its own field names. No deed acres (CALCACRES is the county's own measure of the
+# outline) and no Comptroller link: Hamilton isn't in the Comptroller's system.
+HAMILTON_FIELDS = [
+    "OBJECTID",
+    "PARCEL_TYP",
+    "GISLINK",
+    "MAP",
+    "GROUP_",
+    "PARCEL",
+    # Personal information: only ever saved to parcel_owners.
+    "OWNERNAME1",
+    "OWNERNAME2",
     "ADDRESS",
 ]
 
@@ -137,6 +155,76 @@ def parse_feature(feature: dict[str, Any], county_geoid: str) -> tuple[ParcelRec
     return parcel, owner
 
 
+def state_parcel_number(parcel: Any) -> str | None:
+    """'002' as the state layer writes it, '002.00'; '003.01' stays as it is."""
+    p = _clean(parcel)
+    return p if p is None or "." in p else f"{p}.00"
+
+
+def parse_hamilton_feature(
+    feature: dict[str, Any], county_geoid: str
+) -> tuple[ParcelRecord, OwnerRecord]:
+    """One feature of Hamilton County's layer, in the same records as the state's."""
+    props = feature["properties"]
+    gislink = _clean(props.get("GISLINK"))
+    if gislink is None:
+        raise ValueError(f"Parcel without a GISLINK (OBJECTID {props.get('OBJECTID')})")
+    geom = as_multipolygon(shape(feature["geometry"]))
+    parcel_type = props.get("PARCEL_TYP")
+    parcel = ParcelRecord(
+        gislink=gislink,
+        parcel_id=parcel_label(
+            props.get("MAP"), props.get("GROUP_"), state_parcel_number(props.get("PARCEL"))
+        ),
+        county_geoid=county_geoid,
+        county_name="Hamilton",
+        acres=units.sqkm_to_acres(crs.area_m2(geom) / 1e6),
+        deed_acres=None,
+        parcel_type=int(parcel_type) if parcel_type is not None else None,
+        tpad_url=None,
+        geom=geom,
+    )
+    owner = OwnerRecord(
+        gislink=gislink,
+        owner=_clean(props.get("OWNERNAME1")),
+        owner2=_clean(props.get("OWNERNAME2")),
+        property_address=_clean(props.get("ADDRESS")),
+    )
+    return parcel, owner
+
+
+@dataclass(frozen=True)
+class Source:
+    """A parcel layer: its data_sources.yaml key, fields, county filter and reader."""
+
+    key: str
+    fields: list[str]
+    where: Callable[[AOI], str]
+    parse: Callable[[dict[str, Any], str], tuple[ParcelRecord, OwnerRecord]]
+
+
+SOURCES = {
+    SOURCE_KEY: Source(
+        SOURCE_KEY,
+        FIELDS,
+        lambda aoi: f"COUNTY_ID={county_number(aoi.county_geoid)}",
+        parse_feature,
+    ),
+    # The whole layer is the county; a handful of right-of-way pieces have no GISLINK.
+    HAMILTON_SOURCE_KEY: Source(
+        HAMILTON_SOURCE_KEY, HAMILTON_FIELDS, lambda aoi: "GISLINK<>' '", parse_hamilton_feature
+    ),
+}
+
+
+def source(aoi: AOI) -> Source:
+    if aoi.parcel_source not in SOURCES:
+        raise ValueError(
+            f"{aoi.key}: no parcel source '{aoi.parcel_source}'. Known: {', '.join(SOURCES)}"
+        )
+    return SOURCES[aoi.parcel_source]
+
+
 def merge_duplicates(
     pairs: Iterable[tuple[ParcelRecord, OwnerRecord]],
 ) -> list[tuple[ParcelRecord, OwnerRecord]]:
@@ -157,7 +245,7 @@ def merge_duplicates(
 
 
 def cache_dir(aoi: AOI):
-    return DATA_DIR / "raw" / SOURCE_KEY / aoi.key
+    return DATA_DIR / "raw" / aoi.parcel_source / aoi.key
 
 
 def fetch_parcels(
@@ -168,24 +256,23 @@ def fetch_parcels(
     The cache holds owner names too; data/ is never committed. `refresh` drops the
     cache first, to pick up the monthly update.
     """
-    settings = data_source_settings(SOURCE_KEY)
+    src = source(aoi)
+    settings = data_source_settings(src.key)
     folder = cache_dir(aoi)
     if refresh and folder.exists():
         shutil.rmtree(folder)
     pages = query_geojson_paged(
         settings["url"],
         {
-            "where": f"COUNTY_ID={county_number(aoi.county_geoid)}",
-            "outFields": ",".join(FIELDS),
+            "where": src.where(aoi),
+            "outFields": ",".join(src.fields),
         },
         folder,
         settings.get("page_size", 2000),
     )
     pairs = []
     for features in pages:
-        pairs += [
-            parse_feature(f, aoi.county_geoid) for f in features if f.get("geometry") is not None
-        ]
+        pairs += [src.parse(f, aoi.county_geoid) for f in features if f.get("geometry") is not None]
         if features:
             echo(f"  {len(pairs):,} parcels so far")
     return merge_duplicates(pairs)
@@ -197,7 +284,8 @@ def load_parcels(
     """Replace the county's parcels and owners. Returns the number of parcels."""
     if not records:
         raise RuntimeError(f"The parcel layer returned no parcels for {aoi.name}.")
-    record_source(conn, load_data_source(SOURCE_KEY))
+    key = source(aoi).key
+    record_source(conn, load_data_source(key))
     conn.execute(text("DELETE FROM parcels WHERE county_geoid = :g"), {"g": aoi.county_geoid})
     conn.execute(
         text(
@@ -212,7 +300,7 @@ def load_parcels(
             {
                 **{k: v for k, v in p.__dict__.items() if k != "geom"},
                 "wkb": p.geom.wkb,
-                "source_key": SOURCE_KEY,
+                "source_key": key,
             }
             for p, _ in records
         ],
