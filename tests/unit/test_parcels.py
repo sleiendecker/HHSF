@@ -117,3 +117,60 @@ def test_paged_query_follows_offsets_and_caches_each_page(tmp_path, monkeypatch)
     # A second run reads the cache.
     list(arcgis.query_geojson_paged("http://x", {"where": "1=1"}, tmp_path, 2))
     assert calls == [0, 2, 4]
+
+
+def hamilton_feature(gislink="033014K A 00101", geom=None, **props):
+    values = {
+        "OBJECTID": 7,
+        "PARCEL_TYP": 1,
+        "GISLINK": gislink,
+        "MAP": "014K",
+        "GROUP_": "A",
+        "PARCEL": "001.01",
+        "OWNERNAME1": "DOE  JANE",
+        "OWNERNAME2": " ",
+        "ADDRESS": "200  RIDGE RD",
+    }
+    return {
+        "type": "Feature",
+        "properties": {**values, **props},
+        "geometry": mapping(geom or box(-85.2, 35.1, -85.19, 35.11)),
+    }
+
+
+def test_each_aoi_has_a_known_parcel_source():
+    assert load_aoi("sequatchie_tn").parcel_source == parcels.SOURCE_KEY
+    hamilton = load_aoi("hamilton_tn")
+    assert parcels.source(hamilton).key == parcels.HAMILTON_SOURCE_KEY
+    assert parcels.cache_dir(hamilton).parts[-2:] == ("hamilton_parcels", "hamilton_tn")
+
+
+def test_hamilton_feature_reads_like_the_state_layer():
+    parcel, owner = parcels.parse_hamilton_feature(hamilton_feature(), "47065")
+    assert parcel.gislink == "033014K A 00101"
+    assert parcel.parcel_id == "014K A 001.01"
+    assert (parcel.county_name, parcel.county_geoid) == ("Hamilton", "47065")
+    assert parcel.deed_acres is None and parcel.tpad_url is None and parcel.parcel_type == 1
+    assert 230 < parcel.acres < 270  # measured from the outline: 0.01 x 0.01 degrees
+    assert (owner.owner, owner.owner2, owner.property_address) == ("DOE JANE", None, "200 RIDGE RD")
+    assert not any(k.startswith("owner") or "address" in k for k in parcel.__dict__)
+
+
+def test_hamilton_whole_parcel_number_gets_the_state_decimals():
+    parcel, _ = parcels.parse_hamilton_feature(
+        hamilton_feature("033001    00200", MAP="001", GROUP_=" ", PARCEL="002"), "47065"
+    )
+    assert parcel.parcel_id == "001 002.00"
+
+
+def test_hamilton_query_skips_pieces_without_a_gislink():
+    hamilton = load_aoi("hamilton_tn")
+    assert parcels.source(hamilton).where(hamilton) == "GISLINK<>' '"
+    with pytest.raises(ValueError, match="GISLINK"):
+        parcels.parse_hamilton_feature(hamilton_feature(" "), "47065")
+
+
+def test_unknown_parcel_source_is_refused():
+    aoi = load_aoi("sequatchie_tn").model_copy(update={"parcel_source": "ga_parcels"})
+    with pytest.raises(ValueError, match="no parcel source 'ga_parcels'"):
+        parcels.source(aoi)

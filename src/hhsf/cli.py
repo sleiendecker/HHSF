@@ -158,9 +158,10 @@ def ingest_parcels(
         False, help="Download again instead of using data/raw/ (the layer updates monthly)."
     ),
 ) -> None:
-    """Load the AOI county's property parcels and owners from the Tennessee Comptroller."""
+    """Load the AOI county's property parcels and owners (the Tennessee Comptroller's layer,
+    or the county's own: AOI parcel_source)."""
     area = load_aoi(aoi)
-    typer.echo(f"Fetching parcels for {area.name} from the Tennessee Comptroller...")
+    typer.echo(f"Fetching parcels for {area.name} ({area.parcel_source})...")
     records = parcels.fetch_parcels(area, refresh, echo=typer.echo)
     with engine().begin() as conn:
         n = parcels.load_parcels(conn, area, records)

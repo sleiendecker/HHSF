@@ -1,0 +1,9 @@
+# Area of interest: Bradley County, TN (see sequatchie_tn.yaml for what each field means).
+# 70% of it is inside the 1-hour drive from downtown Chattanooga (D-02), more than any
+# other county in the state parcel layer.
+key: bradley_tn
+name: Bradley County, TN
+county_geoid: "47011"   # state FIPS 47 + county FIPS 011
+buffer_m: 500
+# No reference gauge: none of the county drains to the Sequatchie River. Small basins
+# use the regional yield (D-09); the rest need StreamStats.
