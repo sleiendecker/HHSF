@@ -328,7 +328,7 @@ def checks(s: Stretch, fl: tuple[str, ...]) -> tuple[dict, ...]:
         add(
             "Road access",
             True,
-            f"{'; '.join(road).capitalize()}. Check the legal access and the road in.",
+            f"{(r := '; '.join(road))[0].upper()}{r[1:]}. Check the legal access and the road in.",
         )
     else:
         add("Road access", False, "Check the legal access and the road in.")

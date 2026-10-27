@@ -243,6 +243,26 @@ def turbine_parcels(conn: Connection, hydro_run_id: int) -> list[tuple[str, Base
     return [(gislink, shapely.from_wkb(bytes(wkb))) for gislink, wkb in rows]
 
 
+def by_state(
+    conn: Connection, parcels: list[tuple[str, BaseGeometry]]
+) -> dict[str, list[tuple[str, BaseGeometry]]]:
+    """`parcels` grouped by their own state's FIPS code, for its septic rating (D-20).
+
+    A stretch near the state line can end on a parcel in the next state: the rating is the
+    parcel's state's, not the AOI's.
+    """
+    states = dict(
+        conn.execute(
+            text("SELECT gislink, left(county_geoid, 2) FROM parcels WHERE gislink = ANY(:g)"),
+            {"g": [g for g, _ in parcels]},
+        ).all()
+    )
+    out: dict[str, list[tuple[str, BaseGeometry]]] = {}
+    for parcel in parcels:
+        out.setdefault(states[parcel[0]], []).append(parcel)
+    return dict(sorted(out.items()))
+
+
 def latest_hydro_run(conn: Connection, aoi_key: str) -> int | None:
     return conn.execute(
         text(
