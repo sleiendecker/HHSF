@@ -57,7 +57,8 @@ Candidates from the plan: Hamilton, Sequatchie, Marion, Bledsoe, Rhea (TN); poss
 
 - **Decided (owner, 2026-10-20: "whatever is in the reqs"): flagged only, for now.** The requirements put drive time in the **Logistics** score (10% of the overall score, FR-7) and road access in the **Buildability** score (20%, FR-4), not in the hydro score. Neither exists yet: buildability also needs slope and septic soils, and the overall score also needs agriculture and privacy. So drive time and road distance stay columns and flags (`outside_drive_area`, `nearest_road_not_public`), and nothing is dropped or re-ranked on them. The 1-hour area decides which counties to load, not which streams to keep: dropping stretches outside it would remove four of the six 1 kW streams over an edge that assumes no traffic and a placeholder origin. When the overall score is built, drive time becomes its Logistics part and road distance part of Buildability.
 - **Built (PART 19, 2026-10-21):** the overall score now uses drive time as its Logistics part and the nearest public road as part of Buildability, ranking corridors within each confidence tier (D-15). Still not a filter.
-- **Open (owner):** which counties to add next. The biggest unanalyzed shares are Hamilton (needs its own parcel source) and the north Georgia counties (need Georgia parcel and flood sources). Counties with under ~10% inside may not be worth a full ingest.
+- **Built (PART 24, 2026-10-27):** Bradley (TN parcel layer) and Hamilton (the county's own `Live_Parcels` service) are analyzed. Neither has a 1 kW stream: Bradley lists 933 parcels (696 within 60 minutes, best hydro score 16), Hamilton 1,324 (1,154 within 60 minutes, best 53, all low-flow estimates). The shortlist now holds 4,947 parcels.
+- **Open (owner):** which counties to add next. The biggest unanalyzed shares are the north Georgia counties (need Georgia parcel and flood sources, and D-19 and D-20). Counties with under ~10% inside may not be worth a full ingest.
 
 ### D-03 · Minimum acreage, budget, privacy weight: **Owner** (not needed until parcels are added)
 
@@ -262,6 +263,7 @@ Decisions that barely move the top 20 keep their default and stop being discusse
 
 | Date | Decision | Change |
 | --- | --- | --- |
+| 2026-10-27 | D-02 | Added Bradley and Hamilton (PART 24); Hamilton's parcels from the county's own map service. No 1 kW stream in either |
 | 2026-10-22 | D-18 | New default (PART 22): subdivision feasibility (FR-9). A homestead piece can be cut with 50 ft of public road frontage, 90% of the stretch on the turbine parcel, buildable ground, and turbine end, house site and frontage on one part of the parcel; 0–100 score, a quarter each for frontage, stretch, buildable acres and driveway length. Not in the overall score |
 | 2026-10-21 | D-17 | New default (PART 21, profile `hydro_v6`): privacy gets its 10%: buildings within 1/4 mile of the home site 35%, the nearest 15%, density within 1 mile 20%, woods toward the nearest public road 20%, that road's distance 10% |
 | 2026-10-21 | D-16 | New default (PART 20, profile `hydro_v5`): the agriculture part counts class 1–3 cropland that's open now (NLCD 2021) at 30%, prime farmland 30%, cropland 20%, pasture 20% |
