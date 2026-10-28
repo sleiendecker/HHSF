@@ -232,6 +232,14 @@ def _ft(m: float) -> str:
     return f"{units.m_to_ft(m):,.0f} ft"
 
 
+def _acres(acres: float | None, kind: str) -> str:
+    """'1 buildable acre', '12 buildable acres', or 'Some buildable acres' when unknown."""
+    if acres is None:
+        return f"Some {kind} acres"
+    n = f"{acres:,.0f}"
+    return f"{n} {kind} acre" + ("" if n == "1" else "s")
+
+
 def checks(s: Stretch, fl: tuple[str, ...]) -> tuple[dict, ...]:
     """The "check on the visit" list: one entry per topic, worded from the flags.
 
@@ -293,13 +301,12 @@ def checks(s: Stretch, fl: tuple[str, ...]) -> tuple[dict, ...]:
             "Look for a house site and ask about a perc test.",
         )
     elif SEPTIC_NOT_SCREENED in fl:
-        acres = f"{s.buildable_acres:,.0f}" if s.buildable_acres is not None else "Some"
         add(
             "Septic soils",
             True,
-            f"{acres} gentle acres out of the floodplain, but not screened for septic: "
-            "Georgia's soil survey has only the national rating, which rules out about twice "
-            "the ground Tennessee's does. Ask for a perc test early.",
+            f"{_acres(s.buildable_acres, 'gentle')} out of the floodplain, but not screened "
+            "for septic: Georgia's soil survey has only the national rating, which rules out "
+            "about twice the ground Tennessee's does. Ask for a perc test early.",
         )
     elif export.SOILS_NOT_LOADED in fl:
         add(
@@ -308,12 +315,11 @@ def checks(s: Stretch, fl: tuple[str, ...]) -> tuple[dict, ...]:
             "Part of the parcel has no soil survey loaded. Ask for a perc test.",
         )
     else:
-        acres = f"{s.buildable_acres:,.0f}" if s.buildable_acres is not None else "Some"
         add(
             "Septic soils",
             False,
-            f"{acres} buildable acres on the soil survey's septic rating (1:24,000). A perc "
-            "test decides.",
+            f"{_acres(s.buildable_acres, 'buildable')} on the soil survey's septic rating "
+            "(1:24,000). A perc test decides.",
         )
     road = []
     if subdivision.NO_ROAD_FRONTAGE in fl:
