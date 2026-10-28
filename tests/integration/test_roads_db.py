@@ -135,3 +135,14 @@ def test_export_flags_access(engine, turbine, tmp_path):  # noqa: F811
         ("75.0", "55.9", "False")
     ]
     assert "Roads and drive time (ranked corridors" in (out_dir / "report.md").read_text()
+
+
+def test_a_drive_within_the_minutes_counts_as_inside(engine, turbine, tmp_path):  # noqa: F811
+    # The outline misses both turbine ends, but both drives are under 60 minutes.
+    save_area(engine, box(-80.0, 30.0, -79.9, 30.1), drive_time.DriveTime(45.0, 60.0, 10.0))
+    scoring_run.score_hydro(engine, AREA, PROFILE)
+    _, out_dir, _ = export_run.export_hydro(engine, AREA, out_root=tmp_path)
+    with (out_dir / "all_corridors.csv").open() as f:
+        rows = list(csv.DictReader(f))
+    assert {r["in_drive_area"] for r in rows} == {"True"}
+    assert not any("outside_drive_area" in r["access_flags"] for r in rows)

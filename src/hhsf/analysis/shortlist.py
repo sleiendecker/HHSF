@@ -358,7 +358,7 @@ LOAD_SQL = """
            l.turbine_parcel_acres AS acres, l.turbine_parcel_deed_acres AS deed_acres,
            l.turbine_parcel_distance_m, l.turbine_buildable_acres AS buildable_acres,
            b.no_soil_acres, 'Very limited' = ANY(b.septic_excluded) AS septic_screened,
-           l.drive_minutes, l.in_drive_area, l.turbine_road_m,
+           l.drive_minutes, da.in_drive_area, l.turbine_road_m,
            l.turbine_public_road_m, l.turbine_in_sfha, l.stretch_sfha_m,
            l.turbine_open_acres AS open_acres,
            l.turbine_open_cropland_acres AS open_cropland_acres,
@@ -372,8 +372,16 @@ LOAD_SQL = """
     LEFT JOIN hydro_scores h ON h.run_id = l.score_run_id AND h.corridor_id = l.corridor_id
     LEFT JOIN parcel_buildable b ON b.gislink = l.turbine_parcel_gislink
     CROSS JOIN LATERAL (SELECT ST_Envelope(ST_Collect(p.geom, l.geom)) AS box) e
+    -- Not the map layer's in_drive_area: that one is the outline's alone.
+    CROSS JOIN LATERAL (
+        SELECT {in_area} AS in_drive_area FROM drive_time_areas a
+    ) da
     WHERE l.rank IS NOT NULL
-"""
+""".format(
+    in_area=export.IN_DRIVE_AREA_SQL.format(
+        minutes="l.drive_minutes", pt="ST_EndPoint(ST_GeometryN(l.geom, ST_NumGeometries(l.geom)))"
+    )
+)
 
 
 def _split(value: str | None) -> tuple[str, ...]:
