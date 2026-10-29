@@ -157,7 +157,16 @@ TURBINE_IN_SFHA = "turbine_in_sfha"  # the 1% annual chance ("100-year") floodpl
 STRETCH_IN_SFHA = "stretch_in_sfha"  # some of the stretch is in it
 
 # access_flags values. Flags only: nothing is filtered or re-ranked on roads or drive time.
-OUTSIDE_DRIVE_AREA = "outside_drive_area"  # the turbine end is outside the D-02 drive area
+OUTSIDE_DRIVE_AREA = "outside_drive_area"  # over the D-02 drive's minutes
+
+# Whether a turbine end is within the drive (SQL over `drive_time_areas a`, given its drive
+# `minutes` and turbine end `pt`): its own drive time when it has one, so the flag agrees
+# with the minutes shown; the area's outline only when it has none. The outline is drawn
+# around the road network, and points near its edge fall on the wrong side of it.
+IN_DRIVE_AREA_SQL = """
+    CASE WHEN {minutes} IS NOT NULL AND count(a.*) > 0 THEN {minutes} <= max(a.minutes)
+         ELSE bool_or(ST_Intersects(a.geom, {pt})) END
+"""
 NO_DRIVE_TIME = "no_drive_time"  # not computed yet, or Valhalla found no route
 ROAD_NOT_PUBLIC = "nearest_road_not_public"  # a 4WD trail or private road is nearer
 DRIVE_ENDS_ON_TRACK = "drive_ends_on_track"  # no route to the nearest public road; see below
@@ -966,8 +975,9 @@ def _drive_caveat(info: RunInfo) -> str:
         "tracks TIGER lacks). Drives end on the nearest public road; "
         "`drive_ends_on_track` marks the few that had no route to it (a gated or private "
         "section) and end on the nearest track or driveway instead. "
-        f"`in_drive_area` is whether the turbine end is inside the {a.minutes}-minute area, "
-        f"the search region; `outside_drive_area` flags the ones that aren't. Flagged only: "
+        f"`in_drive_area` is whether the drive is {a.minutes} minutes or less (the search "
+        "region; without a drive time, whether the turbine end is inside the area's "
+        "outline); `outside_drive_area` flags the ones that aren't. Flagged only: "
         "nothing is filtered or re-ranked on drive time or road distance. "
         "`no_drive_time` means drive times weren't computed for this run yet (`make "
         "drive-time`) or Valhalla found no route."

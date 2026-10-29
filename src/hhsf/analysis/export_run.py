@@ -373,7 +373,7 @@ def load_rows(
     min_acres = min_homestead_acres()
     rows = conn.execute(
         text(
-            """
+            f"""
             SELECT s.corridor_id, c.nhdplusid, st.stream_name, s.status, s.tier, s.rank,
                    s.tier_rank, s.hydro_score, s.head_subscore, s.power_subscore,
                    s.net_head_ft, c.firm_power_w, c.firm_flow_cfs, c.flow_method,
@@ -456,7 +456,8 @@ def load_rows(
             LEFT JOIN corridor_privacy pv USING (corridor_id)
             LEFT JOIN corridor_subdivision sd USING (corridor_id)
             CROSS JOIN LATERAL (
-                SELECT bool_or(ST_Intersects(a.geom, o.pt)) AS in_drive_area
+                SELECT {export.IN_DRIVE_AREA_SQL.format(minutes="dt.minutes", pt="o.pt")}
+                       AS in_drive_area
                 FROM drive_time_areas a
             ) da
             WHERE s.run_id = :r

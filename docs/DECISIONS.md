@@ -288,6 +288,7 @@ Decisions that barely move the top 20 keep their default and stop being discusse
 
 | Date | Decision | Change |
 | --- | --- | --- |
+| 2026-10-27 | D-02 | Inside or outside the 1-hour drive now goes by the drive time where there is one, not the area's outline: 171 parcels at 60 min or less had been flagged over an hour, and 64 over 60 min had not (PART 26) |
 | 2026-10-27 | D-02 | Added Bradley and Hamilton (PART 24); Hamilton's parcels from the county's own map service. No 1 kW stream in either |
 | 2026-10-27 | D-19, D-20 | Decided by the owner: D-19 A, Georgia streams get the regional yield from Hamilton's and Bradley's StreamStats reaches; D-20 B, Very limited soils count in Georgia, flagged `septic_not_screened` |
 | 2026-10-27 | D-19, D-20 | New, open (PART 25): how to estimate low flow in Georgia, which has no StreamStats Q90, and which septic rating counts there. Catoosa and Whitfield are loaded but not analyzed until decided |

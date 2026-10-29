@@ -204,3 +204,9 @@ def test_georgia_parcels_say_septic_and_low_flow_need_checking():
     assert "across the state line" in checks["Dry-season flow"]["text"]
     [tn] = shortlist.build([stretch(septic_screened=True)])
     assert shortlist.SEPTIC_NOT_SCREENED not in tn.flags
+
+
+def test_acre_counts_read_naturally() -> None:
+    assert shortlist._acres(1.2, "buildable") == "1 buildable acre"
+    assert shortlist._acres(12, "gentle") == "12 gentle acres"
+    assert shortlist._acres(None, "buildable") == "Some buildable acres"

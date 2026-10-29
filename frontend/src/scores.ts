@@ -5,6 +5,7 @@ import type { ExpressionSpecification, LayerSpecification, MapGeoJSONFeature } f
 export const CFS_TO_GPM = 448.831;
 const FT_PER_M = 3.28084;
 const FT_PER_MI = 5280;
+const DRIVE_MINUTES = 60; // config/drive_time.yaml (D-02)
 
 // Score color ramp, low to high (light amber to dark brown). Scored corridors run from
 // about 35 (1 kW, almost no head) to 100. Shared with the legend.
@@ -371,9 +372,12 @@ function roadText(p: Record<string, unknown>): string {
   return `${nearest}; public road ${distance(pub)}`;
 }
 
-// The drive from downtown Chattanooga to the road nearest the turbine end (D-02).
+// The drive from downtown Chattanooga to the road nearest the turbine end (D-02). Inside
+// or outside goes by the drive time when there is one, as in the parcel list: the area's
+// outline is drawn around the road network, and points near its edge fall on the wrong side.
 function driveText(p: Record<string, unknown>): string {
-  const area = p.in_drive_area === true ? "inside the 1-hour area" : p.in_drive_area === false ? "<b>outside the 1-hour area</b>" : "";
+  const inside = typeof p.drive_minutes === "number" && p.in_drive_area != null ? p.drive_minutes <= DRIVE_MINUTES : p.in_drive_area;
+  const area = inside === true ? "inside the 1-hour area" : inside === false ? "<b>outside the 1-hour area</b>" : "";
   if (typeof p.drive_minutes !== "number") return area ? `Not computed; ${area}` : "Not computed";
   const miles = typeof p.drive_km === "number" ? ` (${fmt(p.drive_km / 1.609344)} mi)` : "";
   return `${fmt(p.drive_minutes)} min${miles}${area ? `, ${area}` : ""}`;
