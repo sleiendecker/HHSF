@@ -458,21 +458,32 @@ button.close {
   cursor: pointer;
 }
 
+/* Every threshold and dropdown is the same width, with the unit in a slot of its own, so
+   the inputs line up down each column whatever the unit (W, min, ac, ft, or none). */
 .filter .threshold {
   display: flex;
+  flex: none;
   align-items: center;
   gap: 3px;
+  width: 100px;
   white-space: nowrap;
 }
 
 .filter input[type="number"] {
-  width: 58px;
+  box-sizing: border-box;
+  width: 66px;
   padding: 1px 4px;
   font: 12px system-ui, -apple-system, sans-serif;
 }
 
+.filter .unit {
+  width: 31px;
+}
+
 .filter select {
-  max-width: 120px;
+  box-sizing: border-box;
+  flex: none;
+  width: 100px;
   padding: 1px 2px;
   font: 12px system-ui, -apple-system, sans-serif;
 }

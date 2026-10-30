@@ -141,7 +141,7 @@ function FilterBar(props: { filters: Filters; counties: string[]; onChange: (f: 
                   // Changing the threshold turns the filter on.
                   onChange={(e) => e.target.value !== "" && set(f.id, { value: Number(e.target.value), on: true })}
                 />
-                {f.unit}
+                <span className="unit">{f.unit}</span>
               </span>
             )}
             {f.kind === "choice" && (
